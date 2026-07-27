@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+
 package uz.darsly.mentor.ui.room
 
 import android.Manifest
@@ -48,6 +50,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material3.Icon
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.TopAppBar
+import androidx.compose.ui.text.style.TextOverflow
+import uz.darsly.mentor.BuildConfig
+import uz.darsly.mentor.data.livekit.LessonSessionHolder
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -60,7 +75,6 @@ import uz.darsly.mentor.data.store.PrefsUiPrefs
  * TODO(R1 · M20/M43): haqiqiy sahna (VideoTrackView/gallery), telefon+planshet
  *   portret/landscape layout, suzuvchi boshqaruv paneli.
  */
-@OptIn(ExperimentalLayoutApi::class) // FlowRow — boshqaruv tugmalari o'ralishi uchun
 @Composable
 fun RoomScreen(
     lessonId: String,
@@ -234,203 +248,217 @@ fun RoomScreen(
         )
     }
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .padding(16.dp)
-            .verticalScroll(rememberScrollState()),
-    ) {
-        Text("Xona", style = MaterialTheme.typography.headlineSmall)
-        Spacer(Modifier.height(8.dp))
+    // ─── YANGI MAKET (R-1…R-5) ────────────────────────────────────────────────
+    // Avval bu ekran diagnostika paneli edi: UUID qatorlari, uzun matnli tugmalar
+    // ro'yxati va monospace jurnal. Endi Zoom naqshi: sarlavha → sahna → boshqaruv.
+    Scaffold(
+        topBar = { RoomTopBar(state, onLeave = { if (state.lessonActive) confirmLeave = true else { vm.leave(); onLeave() } }) },
+        bottomBar = {
+            ControlBar(
+                micOn = state.micOn,
+                camOn = state.camOn,
+                screenOn = state.screenOn,
+                enabled = state.connState == "connected",
+                onToggleMic = { vm.toggleMic() },
+                onToggleCam = { vm.toggleCam() },
+                onFlipCamera = { vm.flipCamera() },
+                onToggleShare = { if (state.screenOn) vm.stopScreenShare() else requestScreenShare() },
+                onLeave = { if (state.lessonActive) confirmLeave = true else { vm.leave(); onLeave() } },
+            )
+        },
+    ) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding)) {
 
-        if (state.connecting) {
-            LinearProgressIndicator(Modifier.fillMaxWidth())
-            Spacer(Modifier.height(8.dp))
-        }
+            if (state.connecting) LinearProgressIndicator(Modifier.fillMaxWidth())
 
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(12.dp)) {
-                Row2("Holat", state.connState)
-                Row2("Xona", state.roomName ?: "—")
-                Row2("Identity", state.identity ?: "—")
-                Row2("Ishtirokchi", state.participantCount.toString())
-                Row2("Mikrofon", if (state.micOn) "yoniq" else "o'chiq")
-                Row2(
-                    "Kamera",
-                    if (state.camOn) {
-                        if (state.cameraFront) "yoniq (old)" else "yoniq (orqa)"
-                    } else {
-                        "o'chiq"
-                    },
-                )
-                Row2("Ekran", if (state.screenOn) "ULASHILMOQDA" else "o'chiq")
-                // B-4: bu qator YOLG'ON gapirmasligi kerak — mikrofon o'chirilgan bo'lsa
-                // "yoniq" emas, sababi bilan ko'rsatiladi (ScreenAudioPolicy).
-                Row2("Ekran audiosi", state.screenAudioLabel)
-            }
-        }
-
-        // M16: aloqa indikatori. Yaxshi bo'lganda KO'RINMAYDI (Zoom xulqi) — faqat
-        // qayta ulanish yoki sifat pasayganda chiqadi, aks holda bezovta qiladi.
-        state.linkLabel?.let { label ->
-            Spacer(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (state.reconnecting) {
-                    CircularProgressIndicator(Modifier.height(16.dp))
-                    Spacer(Modifier.width(8.dp))
-                }
-                Text(
-                    label,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (state.linkIsWarning) {
-                        MaterialTheme.colorScheme.error
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                )
-            }
-        }
-
-        // B-6: dars tugadi — resurslar (MediaProjection, FGS) allaqachon bo'shatilgan.
-        // Ustoz nima bo'lganini va endi nima qilishni bilishi kerak.
-        state.endedMessage?.let { message ->
-            Spacer(Modifier.height(12.dp))
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(12.dp)) {
-                    Text(
-                        "Dars tugadi",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(message, style = MaterialTheme.typography.bodySmall)
-                    Spacer(Modifier.height(8.dp))
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = {
-                            vm.retryJoin(lessonId, withCamera = granted(Manifest.permission.CAMERA))
-                        }) { Text("Qayta boshlash") }
-                        OutlinedButton(onClick = { vm.leave(); onLeave() }) { Text("Darslarga qaytish") }
-                    }
-                }
-            }
-        }
-
-        state.error?.let {
-            Spacer(Modifier.height(8.dp))
-            Text(it, color = MaterialTheme.colorScheme.error)
-            // Ulanish xatosidan keyin qayta urinish MUMKIN bo'lishi kerak
-            // (avval qorovul bloklab qo'yardi — QA 🟡2).
-            if (!state.connecting && state.connState != "connected") {
-                Spacer(Modifier.height(8.dp))
-                Button(onClick = {
-                    vm.retryJoin(lessonId, withCamera = granted(Manifest.permission.CAMERA))
-                }) { Text("Qayta urinish") }
-            }
-        }
-
-        // B-2: mikrofonsiz dars o'tib bo'lmaydi — tushunarli xabar va yo'l ko'rsatish.
-        if (state.micDenied) {
-            Spacer(Modifier.height(12.dp))
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(12.dp)) {
-                    Text(
-                        "Mikrofonga ruxsat berilmadi",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "Mikrofonsiz darsni boshlab bo'lmaydi. \"Ruxsat so'rash\" tugmasini " +
-                            "bosing yoki telefon sozlamalarida Darsly Mentor uchun mikrofonni yoqing.",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = {
-                            vm.clearPermissionError()
-                            permissionLauncher.launch(permissions)
-                        }) { Text("Ruxsat so'rash") }
-                        OutlinedButton(onClick = {
-                            ctx.startActivity(
-                                Intent(
-                                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                                    Uri.fromParts("package", ctx.packageName, null),
-                                ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            // M16: aloqa indikatori — yaxshi bo'lganda ko'rinmaydi (Zoom xulqi).
+            state.linkLabel?.let { label ->
+                Surface(color = MaterialTheme.colorScheme.errorContainer, modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (state.reconnecting) {
+                            CircularProgressIndicator(
+                                Modifier.size(14.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
                             )
-                        }) { Text("Sozlamalar") }
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        Text(
+                            label,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
                     }
                 }
             }
-        }
 
-        Spacer(Modifier.height(16.dp))
-
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = { vm.toggleMic() }) {
-                Text(if (state.micOn) "Mikrofonni o'chirish" else "Mikrofon")
+            // B-2: mikrofonsiz dars o'tib bo'lmaydi.
+            if (state.micDenied) {
+                RoomNotice(
+                    title = "Mikrofonga ruxsat berilmadi",
+                    body = "Mikrofonsiz darsni boshlab bo'lmaydi. \"Ruxsat so'rash\" tugmasini bosing " +
+                        "yoki telefon sozlamalarida Darsly Mentor uchun mikrofonni yoqing.",
+                    primaryText = "Ruxsat so'rash",
+                    onPrimary = {
+                        vm.clearPermissionError()
+                        permissionLauncher.launch(permissions)
+                    },
+                    secondaryText = "Sozlamalar",
+                    onSecondary = {
+                        ctx.startActivity(
+                            Intent(
+                                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                Uri.fromParts("package", ctx.packageName, null),
+                            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                        )
+                    },
+                )
             }
-            OutlinedButton(onClick = { vm.toggleCam() }) {
-                Text(if (state.camOn) "Kamerani o'chirish" else "Kamera")
+
+            // B-6: dars tugadi — resurslar bo'shatilgan.
+            state.endedMessage?.let { message ->
+                RoomNotice(
+                    title = "Dars tugadi",
+                    body = message,
+                    primaryText = "Qayta boshlash",
+                    onPrimary = { vm.retryJoin(lessonId, withCamera = granted(Manifest.permission.CAMERA)) },
+                    secondaryText = "Darslarga qaytish",
+                    onSecondary = { vm.leave(); onLeave() },
+                )
             }
-            // M12: yozuv QAYERGA o'tishni aytadi, hozirgi holatni emas; kamera
-            // o'chiq bo'lsa almashtirishning ma'nosi yo'q — tugma ham o'chiq.
-            OutlinedButton(onClick = { vm.flipCamera() }, enabled = state.camOn) {
-                Text(if (state.cameraFront) "Orqa kameraga" else "Old kameraga")
-            }
-        }
 
-        Spacer(Modifier.height(12.dp))
-
-        // ⭐ Spike'ning asosiy tugmasi.
-        Button(
-            onClick = {
-                if (state.screenOn) vm.stopScreenShare() else requestScreenShare()
-            },
-            enabled = state.connState == "connected",
-            modifier = Modifier.fillMaxWidth().height(56.dp),
-            colors = if (state.screenOn) {
-                ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-            } else {
-                ButtonDefaults.buttonColors()
-            },
-        ) {
-            Text(if (state.screenOn) "EKRAN ULASHISHNI TO'XTATISH" else "EKRANNI ULASHISH")
-        }
-
-        Spacer(Modifier.height(12.dp))
-        OutlinedButton(
-            onClick = { vm.leave(); onLeave() },
-            modifier = Modifier.fillMaxWidth(),
-        ) { Text("Chiqish") }
-
-        Spacer(Modifier.height(20.dp))
-        Text("Diagnostika", style = MaterialTheme.typography.titleSmall)
-        Spacer(Modifier.height(4.dp))
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(10.dp)) {
-                if (state.log.isEmpty()) {
-                    Text("—", style = MaterialTheme.typography.bodySmall)
-                }
-                state.log.forEach {
-                    Text(
-                        it,
-                        style = MaterialTheme.typography.bodySmall,
-                        fontFamily = FontFamily.Monospace,
+            // Ulanish xatosi.
+            state.error?.let { message ->
+                if (state.endedMessage == null) {
+                    RoomNotice(
+                        title = "Ulanmadi",
+                        body = message,
+                        primaryText = "Qayta urinish",
+                        onPrimary = { vm.retryJoin(lessonId, withCamera = granted(Manifest.permission.CAMERA)) },
                     )
+                }
+            }
+
+            // ⭐ Asosiy sahna — o'quvchilar videosi yoki ulashish holati.
+            RoomStage(
+                room = LessonSessionHolder.session?.room,
+                state = state,
+                modifier = Modifier.weight(1f),
+            )
+
+            // R-4: diagnostika faqat DEBUG build'da va bosib ochiladigan qilib.
+            if (BuildConfig.DEBUG) {
+                DiagnosticsPanel(state.log)
+            }
+        }
+    }
+}
+
+/**
+ * Sarlavha (R-5): **dars nomi**, UUID emas.
+ *
+ * Avval bu yerda `lesson_cd16acaf-4d8b-…` va `Ideac246b01-…` qatorlari turardi va
+ * ular maketni buzib, satr o'rtasidan uzilib ketardi (QA topilmasi B-7).
+ */
+@Composable
+private fun RoomTopBar(state: RoomUiState, onLeave: () -> Unit) {
+    TopAppBar(
+        navigationIcon = {
+            IconButton(onClick = onLeave) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Orqaga")
+            }
+        },
+        title = {
+            Column {
+                Text(
+                    state.lessonTitle ?: "Dars",
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    when {
+                        state.connecting -> "ulanmoqda…"
+                        state.connState == "connected" -> "${state.participantCount} ishtirokchi"
+                        else -> state.connState
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        actions = {
+            if (state.screenOn) {
+                Surface(
+                    color = MaterialTheme.colorScheme.primary,
+                    shape = RoundedCornerShape(percent = 50),
+                    modifier = Modifier.padding(end = 12.dp),
+                ) {
+                    Text(
+                        "EFIRDA",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                    )
+                }
+            }
+        },
+    )
+}
+
+/** Xona ekranidagi xabar kartasi — bir xil ko'rinish uchun yagona komponent. */
+@Composable
+private fun RoomNotice(
+    title: String,
+    body: String,
+    primaryText: String,
+    onPrimary: () -> Unit,
+    secondaryText: String? = null,
+    onSecondary: (() -> Unit)? = null,
+) {
+    Card(Modifier.fillMaxWidth().padding(12.dp)) {
+        Column(Modifier.padding(14.dp)) {
+            Text(title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.error)
+            Spacer(Modifier.height(4.dp))
+            Text(body, style = MaterialTheme.typography.bodySmall)
+            Spacer(Modifier.height(10.dp))
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onPrimary) { Text(primaryText) }
+                if (secondaryText != null && onSecondary != null) {
+                    OutlinedButton(onClick = onSecondary) { Text(secondaryText) }
                 }
             }
         }
     }
 }
 
+/**
+ * Diagnostika — R-4: faqat DEBUG build'da va **yig'ilgan holda**.
+ *
+ * QA uchun kerak, ustozga esa keraksiz: avval monospace jurnal xona ekranining
+ * pastini doim egallab turardi.
+ */
 @Composable
-private fun Row2(label: String, value: String) {
-    androidx.compose.foundation.layout.Row(Modifier.fillMaxWidth()) {
-        Text(
-            label,
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.weight(1f),
-        )
-        Text(value, style = MaterialTheme.typography.bodyMedium)
+private fun DiagnosticsPanel(log: List<String>) {
+    var open by rememberSaveable { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
+        TextButton(onClick = { open = !open }) {
+            Text(
+                if (open) "Diagnostikani yashirish" else "Diagnostika (debug)",
+                style = MaterialTheme.typography.labelSmall,
+            )
+        }
+        if (open) {
+            Card(Modifier.fillMaxWidth().height(140.dp)) {
+                Column(Modifier.padding(10.dp).verticalScroll(rememberScrollState())) {
+                    log.forEach {
+                        Text(it, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                    }
+                }
+            }
+        }
     }
 }

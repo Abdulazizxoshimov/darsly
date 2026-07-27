@@ -8,6 +8,8 @@ import androidx.lifecycle.viewModelScope
 import io.livekit.android.events.RoomEvent
 import io.livekit.android.events.collect
 import io.livekit.android.room.Room
+import io.livekit.android.room.track.Track
+import io.livekit.android.room.track.VideoTrack
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,6 +24,21 @@ import uz.darsly.mentor.data.livekit.LessonSessionHolder
 import uz.darsly.mentor.data.livekit.ScreenAudioPolicy
 import uz.darsly.mentor.service.LessonNotifications
 import uz.darsly.mentor.service.LessonService
+
+/**
+ * Ekranda ko'rsatiladigan ishtirokchi (M20).
+ *
+ * `videoTrack` — SDK turi: uni UI qatlamiga olib chiqish ataylab. Video kadrni
+ * ko'rsatish uchun trekning o'ziga renderer ulash kerak; uni "sof" turga o'rash
+ * faqat ortiqcha qatlam qo'shardi va hech narsani soddalashtirmasdi.
+ */
+data class ParticipantUi(
+    val identity: String,
+    val name: String,
+    val videoTrack: VideoTrack?,
+    val micMuted: Boolean,
+    val speaking: Boolean,
+)
 
 data class RoomUiState(
     val connecting: Boolean = false,
@@ -43,6 +60,12 @@ data class RoomUiState(
     val endedMessage: String? = null,
     /** M12: old kamera faolmi (`false` = orqa kamera). */
     val cameraFront: Boolean = true,
+    /** M20: xonadagi o'quvchilar (o'zimizdan tashqari). */
+    val participants: List<ParticipantUi> = emptyList(),
+    /** M20: o'z kameramiz treki — kichik oynada ko'rsatiladi. */
+    val localVideo: VideoTrack? = null,
+    /** Dars nomi — sarlavhada UUID o'rniga shu ko'rsatiladi. */
+    val lessonTitle: String? = null,
     val error: String? = null,
     /** B-2: mikrofonga ruxsat berilmadi — dars boshlanmaydi. */
     val micDenied: Boolean = false,
@@ -167,6 +190,12 @@ class RoomViewModel(app: Application) : AndroidViewModel(app) {
                     return@launch
                 }
                 log("token OK · room=${token.roomName} · ws=${token.wsUrl}")
+
+                // Sarlavha uchun dars nomi (UUID emas). Alohida, muvaffaqiyatsizlikka
+                // chidamli so'rov: nom kelmasa ham dars boshlanaverishi kerak.
+                runCatching { Net.api.lessons(limit = 50).data.orEmpty().firstOrNull { it.id == lessonId } }
+                    .getOrNull()
+                    ?.let { lesson -> _state.update { it.copy(lessonTitle = lesson.title) } }
 
                 val s = LessonSessionHolder.start(ctx, lessonId, token)
                 session = s
@@ -334,7 +363,16 @@ class RoomViewModel(app: Application) : AndroidViewModel(app) {
                     is RoomEvent.ParticipantConnected,
                     is RoomEvent.ParticipantDisconnected,
                     -> setConn(s.room)
-                    is RoomEvent.TrackPublished -> log("track e'lon qilindi: ${event.publication.source}")
+                    is RoomEvent.TrackPublished -> {
+                        log("track e'lon qilindi: ${event.publication.source}")
+                        refreshParticipants(s.room)
+                    }
+                    // M20: video plitkalari aynan shu hodisalarda paydo bo'ladi/yo'qoladi.
+                    is RoomEvent.TrackSubscribed,
+                    is RoomEvent.TrackUnsubscribed,
+                    is RoomEvent.TrackMuted,
+                    is RoomEvent.TrackUnmuted,
+                    -> refreshParticipants(s.room)
                     // DIQQAT: TrackPublicationFailed'da exception `val` emas (SDK 2.27.0),
                     // shuning uchun faqat track nomini log qilamiz.
                     is RoomEvent.TrackPublicationFailed -> log("TRACK E'LON XATOSI: ${event.track.name}")
@@ -369,6 +407,37 @@ class RoomViewModel(app: Application) : AndroidViewModel(app) {
                 participantCount = room.remoteParticipants.size + 1,
             )
         }
+        refreshParticipants(room)
+    }
+
+    /**
+     * O'quvchilar ro'yxatini LiveKit holatidan qayta yig'adi (M20).
+     *
+     * Nega har hodisada TO'LIQ qayta yig'iladi (inkremental emas): xona 25-30 kishilik,
+     * ro'yxat kichik, va LiveKit holati yagona haqiqat manbai. Inkremental yangilash
+     * "qo'shildi/chiqdi/trek keldi/trek ketdi" hodisalarining har birini to'g'ri
+     * ushlashni talab qiladi — bitta o'tkazib yuborilgan hodisa ekranda **qotib qolgan
+     * plitka** qoldiradi va buni foydalanuvchi darhol ko'radi.
+     */
+    private fun refreshParticipants(room: Room) {
+        val list = room.remoteParticipants.values.map { p ->
+            val cameraTrack = p.videoTrackPublications
+                .firstOrNull { (pub, _) -> pub.source == Track.Source.CAMERA }
+                ?.second as? VideoTrack
+            ParticipantUi(
+                identity = p.identity?.value.orEmpty(),
+                name = p.name?.takeIf { it.isNotBlank() } ?: "O'quvchi",
+                videoTrack = cameraTrack,
+                micMuted = !p.isMicrophoneEnabled,
+                speaking = p.isSpeaking,
+            )
+        }.sortedBy { it.name }
+
+        val local = room.localParticipant.videoTrackPublications
+            .firstOrNull { (pub, _) -> pub.source == Track.Source.CAMERA }
+            ?.second as? VideoTrack
+
+        _state.update { it.copy(participants = list, localVideo = local) }
     }
 
     fun toggleMic() = viewModelScope.launch {
