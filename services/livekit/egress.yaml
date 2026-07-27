@@ -1,0 +1,17 @@
+# LiveKit Egress (dars yozib olish) konfiguratsiyasi.
+# Egress Chrome (headless) orqali xonani kompozitsiya qiladi va MinIO'ga (S3) yozadi.
+# LiveKit server bilan Redis orqali muloqot qiladi.
+redis:
+  address: redis:6379
+
+# DEV kalitlari (bu fayl faqat LOCAL dev docker-compose.yml tomonidan mount qilinadi).
+# DIQQAT: LiveKit/egress config faylда ${ENV} EXPANSION QILMAYDI (empirik tekshirilgan) —
+# shu sabab prod bu faylni ISHLATMAYDI. Prod docker-compose.prod.yml egress'ni
+# EGRESS_CONFIG_BODY env (compose ${...} ni interpolatsiya qiladi) orqali beradi.
+api_key: devkey
+api_secret: secret_at_least_32_characters_long_000000
+ws_url: ws://livekit:7880
+
+# S3/MinIO manzili backend StartRoomRecording so'rovida (S3Upload) uzatiladi,
+# shuning uchun bu yerda alohida ko'rsatish shart emas.
+log_level: info

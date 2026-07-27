@@ -1,0 +1,159 @@
+package uz.darsly.mentor.ui.lessons
+
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import uz.darsly.mentor.data.api.ApiErrors
+import uz.darsly.mentor.data.api.AuthRepository
+import uz.darsly.mentor.data.api.Lesson
+import uz.darsly.mentor.data.repo.LessonsRepository
+import uz.darsly.mentor.util.LessonFormat
+
+data class LessonsUiState(
+    /** Birinchi yuklash — ekranda hali hech narsa yo'q (kesh ham bo'sh). */
+    val loading: Boolean = false,
+    /** Pull-to-refresh aylanasi — ro'yxat ko'rinib turadi. */
+    val refreshing: Boolean = false,
+    val loggingOut: Boolean = false,
+    val lessons: List<Lesson> = emptyList(),
+    /** To'liq ekranli xato — FAQAT ko'rsatadigan hech narsa bo'lmaganda. */
+    val error: String? = null,
+    /** Tarmoq yo'q va ekrandagi ro'yxat keshdan (B-4 belgisi). */
+    val offline: Boolean = false,
+    /** Kesh qachon saqlangan (epoch millis, 0 = noma'lum). */
+    val cachedAtMillis: Long = 0L,
+    /** Bir martalik xabar (snackbar): "yangilanmadi", "dars yaratildi"… */
+    val notice: String? = null,
+)
+
+/**
+ * Darslar ro'yxati (M6).
+ *
+ * OQIM: kesh → ekran (bir zumda) → tarmoq → ekran + kesh.
+ * Tarmoq yiqilsa keshdagi ro'yxat **qoladi** va yuqorida "internet yo'q" chizig'i chiqadi:
+ * ustoz koridorda ro'yxatni ko'ra olishi kerak.
+ */
+class LessonsViewModel @JvmOverloads constructor(
+    app: Application,
+    // @JvmOverloads MAJBURIY: Compose'ning `viewModel()` standart fabrikasi
+    // AYNAN `(Application)` konstruktorini reflektsiya bilan qidiradi. Kotlin
+    // default argument o'zi bunday konstruktor yasamaydi — ilova ishga tushishida
+    // `NoSuchMethodException` bilan yiqilardi.
+    private val repo: LessonsRepository = LessonsRepository.create(app),
+) : AndroidViewModel(app) {
+
+    private val _state = MutableStateFlow(LessonsUiState())
+    val state: StateFlow<LessonsUiState> = _state.asStateFlow()
+
+    /**
+     * Ekran ochilganda: keshni ko'rsatib, so'ng serverdan **jimgina** yangilaydi.
+     *
+     * Darsdan qaytganda ham chaqiriladi (ekran qayta kompozitsiyaga kiradi) —
+     * shu tufayli yakunlangan dars ro'yxatda `Tugagan` bo'lib ko'rinadi, ustoz
+     * buning uchun pastga tortishi shart emas.
+     */
+    fun start() {
+        if (_state.value.loading || _state.value.refreshing) return
+        if (_state.value.lessons.isEmpty()) {
+            repo.cached()?.let { cached ->
+                _state.update {
+                    it.copy(
+                        lessons = LessonFormat.sortForDisplay(cached.lessons),
+                        cachedAtMillis = cached.savedAtMillis,
+                    )
+                }
+            }
+        }
+        refresh(userInitiated = false)
+    }
+
+    /** Pull-to-refresh va "Qayta urinish" tugmasi. */
+    fun refresh(userInitiated: Boolean = true) {
+        val current = _state.value
+        if (current.loading || current.refreshing) return
+        val hasContent = current.lessons.isNotEmpty()
+        _state.update {
+            it.copy(
+                loading = !hasContent,
+                refreshing = hasContent && userInitiated,
+                error = null,
+            )
+        }
+        viewModelScope.launch {
+            repo.refresh()
+                .onSuccess { page ->
+                    _state.update {
+                        it.copy(
+                            loading = false,
+                            refreshing = false,
+                            lessons = LessonFormat.sortForDisplay(page.lessons),
+                            error = null,
+                            offline = false,
+                            cachedAtMillis = System.currentTimeMillis(),
+                            // 🟡E: chegara oshib ketgan bo'lsa jim qolmaymiz.
+                            notice = if (page.truncated) {
+                                "Juda ko'p dars — birinchi ${page.lessons.size} tasi ko'rsatildi"
+                            } else {
+                                it.notice
+                            },
+                        )
+                    }
+                }
+                .onFailure { t ->
+                    val offline = LessonsRepository.isOffline(t)
+                    val message = ApiErrors.humanError(t)
+                    _state.update {
+                        it.copy(
+                            loading = false,
+                            refreshing = false,
+                            offline = offline && it.lessons.isNotEmpty(),
+                            // Keshdagi ro'yxat bor ekan — uni xato ekrani bilan
+                            // almashtirmaymiz, faqat qisqa xabar beramiz.
+                            error = if (it.lessons.isEmpty()) message else null,
+                            notice = if (it.lessons.isEmpty()) null else message,
+                        )
+                    }
+                }
+        }
+    }
+
+    /** M7: yaratilgan dars ro'yxat boshiga qo'yiladi — server javobini kutmasdan. */
+    fun onLessonCreated(lesson: Lesson) {
+        _state.update {
+            it.copy(
+                lessons = LessonFormat.sortForDisplay(
+                    listOf(lesson) + it.lessons.filterNot { l -> l.id == lesson.id },
+                ),
+                notice = "Dars yaratildi",
+            )
+        }
+        refresh(userInitiated = false)
+    }
+
+    /** Ekran tomonidan yuboriladigan qisqa xabar ("Havola nusxalandi"). */
+    fun showNotice(message: String) = _state.update { it.copy(notice = message) }
+
+    fun noticeShown() = _state.update { it.copy(notice = null) }
+
+    /**
+     * M3 — chiqish. Serverga xabar beramiz, lekin natijadan qat'i nazar lokal
+     * tozalash bajariladi; navigatsiyani `Session` signali qo'zg'atadi.
+     *
+     * Darslar keshini bu yer tozalamaydi — u `DarslyApp.observeLogoutCleanup()` da,
+     * `Session.loggedIn == false` bo'yicha markazlashtirilgan (🟡B). Aks holda
+     * **qattiq** logout (refresh o'lgani) yo'lida kesh diskda qolib ketardi.
+     */
+    fun logout() {
+        if (_state.value.loggingOut) return
+        _state.update { it.copy(loggingOut = true) }
+        viewModelScope.launch {
+            AuthRepository.logout()
+            _state.update { it.copy(loggingOut = false, lessons = emptyList()) }
+        }
+    }
+}

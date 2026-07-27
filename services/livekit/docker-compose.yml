@@ -1,0 +1,54 @@
+# LiveKit SFU (video-dars media server) — local dev.
+#
+# Faqat video (Bosqich 3-4):   docker compose up -d
+# Video + yozib olish (Bosqich 5):  docker compose --profile recording up -d
+#
+# ⚠️ DIQQAT: livekit.yaml da top-level `redis:` bloki server'ni DISTRIBUTED rejimga o'tkazadi
+# va Redis'ni MAJBURIY qiladi (redis servisi bilan bir tarmoqda bo'lishi shart). Agar bitta-node
+# media test/dev kerak bo'lsa (Redis'siz), `livekit.standalone.yaml` (redis bloksiz) ishlating:
+#   docker run -d --name lk --network host \
+#     -v $(pwd)/livekit.standalone.yaml:/etc/livekit.yaml:ro \
+#     livekit/livekit-server:latest --config /etc/livekit.yaml
+# (Redis faqat MULTI-NODE routing va Egress↔LiveKit aloqasi uchun kerak.)
+#
+# Backend .env: LIVEKIT_HOST=ws://localhost:7880, LIVEKIT_API_KEY/SECRET mos bo'lsin.
+# Egress MinIO'ga yozadi — backend .env'ga MINIO_S3_ENDPOINT=http://<docker-reachable-minio> qo'shing
+# (masalan host-gateway orqali: http://172.17.0.1:9020).
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: darsly-livekit-redis
+    restart: unless-stopped
+
+  livekit:
+    image: livekit/livekit-server:latest
+    container_name: darsly-livekit
+    restart: unless-stopped
+    command: --config /etc/livekit.yaml
+    depends_on:
+      - redis
+    ports:
+      - "7880:7880"                    # signal / API (ws)
+      - "7881:7881"                    # RTC over TCP
+      - "3478:3478/udp"                # TURN relay (yomon internet/NAT uchun)
+      - "50000-60000:50000-60000/udp"  # RTC media (UDP)
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+
+  # Egress (dars yozib olish → MinIO). Og'ir: Chrome headless ishlatadi.
+  # Faqat 'recording' profili bilan ishga tushadi.
+  egress:
+    image: livekit/egress:latest
+    container_name: darsly-egress
+    restart: unless-stopped
+    profiles: ["recording"]
+    depends_on:
+      - redis
+      - livekit
+    environment:
+      EGRESS_CONFIG_FILE: /etc/egress.yaml
+    volumes:
+      - ./egress.yaml:/etc/egress.yaml:ro
+    cap_add:
+      - SYS_ADMIN

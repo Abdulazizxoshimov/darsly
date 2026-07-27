@@ -1,0 +1,62 @@
+# ─── Rollar (meros) ───────────────────────────────────────────────────────────
+# mentor student'ning barcha huquqlarini meros oladi
+g, mentor, student
+# admin mentor'ning (va u orqali student'ning) barcha huquqlarini meros oladi.
+# Foydalanuvchilarni boshqarish (users CRUD) faqat admin'da — mentor global admin EMAS.
+g, admin, mentor
+
+# ─── student (o'quvchi) — o'z profili ─────────────────────────────────────────
+p, student, /api/v1/auth/logout,          POST
+p, student, /api/v1/auth/me,              GET
+p, student, /api/v1/users/me,             GET
+p, student, /api/v1/users/me,             PUT
+p, student, /api/v1/users/me/password,    PUT
+p, student, /api/v1/users/:id,            GET
+
+# Bildirishnomalar (student + mentor meros oladi)
+p, student, /api/v1/notifications,               GET
+p, student, /api/v1/notifications/unread-count,  GET
+p, student, /api/v1/notifications/:id/read,      POST
+p, student, /api/v1/notifications/read-all,      POST
+
+# ─── admin — foydalanuvchilarni boshqarish (mentor EMAS) ─────────────────────
+# User-management endi faqat admin'da. Bitta mentor buzilsa ham butun user bazasini
+# o'chira/deaktivatsiya/parol-reset qila olmaydi (tenant izolyatsiyasi, H-2).
+p, admin, /api/v1/users,                 GET
+p, admin, /api/v1/users,                 POST
+p, admin, /api/v1/users/:id,             PUT
+p, admin, /api/v1/users/:id,             DELETE
+p, admin, /api/v1/users/:id/password,    PUT
+p, admin, /api/v1/users/:id/activate,    POST
+p, admin, /api/v1/users/:id/deactivate,  POST
+
+# ─── mentor — darslarni boshqarish ───────────────────────────────────────────
+p, mentor, /api/v1/lessons,               POST
+p, mentor, /api/v1/lessons,               GET
+p, mentor, /api/v1/lessons/:id,           GET
+p, mentor, /api/v1/lessons/:id,           PATCH
+p, mentor, /api/v1/lessons/:id,           DELETE
+p, mentor, /api/v1/lessons/:id/token,     POST
+p, mentor, /api/v1/lessons/:id/end,       POST
+p, mentor, /api/v1/lessons/:id/waitingroom, GET
+p, mentor, /api/v1/lessons/:id/participants, GET
+p, mentor, /api/v1/lessons/:id/mute-all,  POST
+p, mentor, /api/v1/lessons/:id/participants/:identity/mute,   POST
+p, mentor, /api/v1/lessons/:id/participants/:identity/remove, POST
+p, mentor, /api/v1/lessons/:id/participants/:identity/allow-speak,  POST
+p, mentor, /api/v1/lessons/:id/participants/:identity/revoke-speak, POST
+p, mentor, /api/v1/lessons/:id/chat, GET
+p, mentor, /api/v1/lessons/:id/chat, POST
+p, mentor, /api/v1/lessons/:id/polls, GET
+p, mentor, /api/v1/lessons/:id/polls, POST
+p, mentor, /api/v1/polls/:id/close, POST
+
+# ─── mentor — kutish xonasi qarorlari ────────────────────────────────────────
+p, mentor, /api/v1/waitingroom/:id/admit,  POST
+p, mentor, /api/v1/waitingroom/:id/reject, POST
+
+# ─── mentor — yozib olish ────────────────────────────────────────────────────
+p, mentor, /api/v1/lessons/:id/recording/start, POST
+p, mentor, /api/v1/lessons/:id/recordings,      GET
+p, mentor, /api/v1/recordings/:id/stop,         POST
+p, mentor, /api/v1/recordings/:id/download,     GET

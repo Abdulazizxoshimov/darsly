@@ -1,0 +1,176 @@
+# Darsly — backend PRODUCTION stack (app + infra + observability).
+#
+# Reverse-proxy (80/443, TLS) bu stackda EMAS: yagona edge — services/livekit
+# stackdagi Caddy (A1.4 qarori). Caddy app.darsly.uz'da SPA + /api ni, api./files./
+# livekit.darsly.uz'ni beradi. Shu sabab bu stack nginx/certbot'siz; app va minio
+# `darsly_net` ULASHILGAN tarmog'i orqali Caddy'ga ochiladi.
+#
+# Ishga tushirish (backend/ ichidan):
+#   docker network create darsly_net           # bir marta (ikkala stack umumiy)
+#   docker volume  create darsly_frontend_dist  # bir marta (SPA build → Caddy)
+#   cp deployments/.env.prod.example deployments/.env.prod   # va to'ldiring
+#   docker compose --env-file deployments/.env.prod -f deployments/docker-compose.yml up -d
+#   # so'ng: cd ../services/livekit && docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+#
+# frontend-builder bir martalik: SPA'ni build qilib darsly_frontend_dist volume'ga
+# yozadi; Caddy o'sha volume'dan statik beradi (A1.2).
+
+services:
+  # ── Frontend build (bir martalik) → darsly_frontend_dist volume (A1.2) ──
+  frontend-builder:
+    image: node:20-alpine
+    working_dir: /build
+    # VITE_API_URL bo'sh → SPA relativ /api/v1 ga uradi (Caddy same-origin proxy).
+    environment:
+      VITE_API_URL: ${VITE_API_URL:-}
+    volumes:
+      - ../../frontend:/src:ro         # frontend manbasi (faqat o'qish)
+      - frontend_dist:/out             # build natijasi (nginx/Caddy shundan beradi)
+    command: >
+      sh -ceu '
+        cp -r /src /tmp/app && cd /tmp/app;
+        npm ci;
+        npm run build;
+        rm -rf /out/*;
+        cp -r dist/. /out/;
+        echo "frontend build → /out DONE"
+      '
+    restart: "no"
+
+  app:
+    build:
+      context: ..
+      dockerfile: deployments/Dockerfile
+    expose:
+      - "8080"
+    env_file:
+      # A1.1 — prod env (dev ../.env EMAS). Konteyner tarmog'i qiymatlari.
+      - .env.prod
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - default       # postgres/redis/minio/rabbitmq (stack ichi)
+      - darsly_net    # Caddy edge → app:8080
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${DB_NAME:-darsly}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    volumes:
+      - minio_data:/data
+    networks:
+      - default       # app → minio:9000 (stack ichi)
+      - darsly_net    # Caddy (files.darsly.uz) va egress → minio:9000
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  loki:
+    image: grafana/loki:2.9.0
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/loki-config.yaml
+    volumes:
+      - loki_data:/loki
+      - ../deployments/loki/loki-config.yaml:/etc/loki/loki-config.yaml:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3100/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  grafana:
+    image: grafana/grafana:10.2.0
+    ports:
+      - "3030:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/darsly-logs.json
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ../deployments/grafana/provisioning:/etc/grafana/provisioning
+      - ../deployments/grafana/dashboards:/etc/grafana/dashboards:ro
+    restart: unless-stopped
+    depends_on:
+      loki:
+        condition: service_healthy
+
+networks:
+  default:
+  # A1.4 — ikkala stack (backend + services/livekit) umumiy edge tarmog'i.
+  # Oldindan yarating: docker network create darsly_net
+  darsly_net:
+    external: true
+
+volumes:
+  pg_data:
+  redis_data:
+  minio_data:
+  rabbitmq_data:
+  loki_data:
+  grafana_data:
+  # A1.2/A1.4 — SPA build natijasi; Caddy (boshqa stack) ham mount qiladi.
+  # Oldindan yarating: docker volume create darsly_frontend_dist
+  frontend_dist:
+    external: true
+    name: darsly_frontend_dist

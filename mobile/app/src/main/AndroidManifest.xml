@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+
+    <!-- Fon rejimi: ekran ulashish + mikrofon + kamera dars davomida uzilmasligi uchun -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+
+    <!-- Android 13+ (API 33): bildirishnoma ko'rsatish uchun runtime ruxsat -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+
+    <application
+        android:name=".DarslyApp"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.DarslyMentor"
+        tools:targetApi="35">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize|uiMode"
+            android:theme="@style/Theme.DarslyMentor">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!--
+          Dars foreground service'i — LiveKit Room shu servis "ichida" yashaydi
+          (LessonSessionHolder orqali), ustoz boshqa ilovaga o'tsa dars uzilmaydi.
+          Tип: mediaProjection|microphone|camera — uchtasi ham kerak, chunki
+          ekran ulashish + mikrofon + kamera bir vaqtda fon rejimida ishlaydi.
+        -->
+        <service
+            android:name=".service.LessonService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection|microphone|camera" />
+
+        <!--
+          LiveKit SDK o'zining ScreenCaptureService'ini AndroidManifest'ida
+          android:foregroundServiceType="mediaProjection" bilan e'lon qiladi.
+          Ekran AUDIOSI (AudioPlaybackCapture) fon rejimida ishlashi uchun esa
+          `microphone` tipi ham kerak (SDK hujjatidagi talab), shuning uchun
+          manifest merger orqali tipni kengaytiramiz.
+        -->
+        <service
+            android:name="io.livekit.android.room.track.screencapture.ScreenCaptureService"
+            android:foregroundServiceType="mediaProjection|microphone"
+            tools:replace="android:foregroundServiceType" />
+    </application>
+</manifest>

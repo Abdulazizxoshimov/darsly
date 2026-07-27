@@ -1,0 +1,53 @@
+# LiveKit SFU server konfiguratsiyasi.
+# Dev uchun default qiymatlar; PRODUCTION uchun pastdagi izohlarга rioya qiling.
+port: 7880
+bind_addresses:
+  - "0.0.0.0"
+
+rtc:
+  tcp_port: 7881
+  # UDP media diapazoni kengaytirildi (guruh darsida ko'p track uchun).
+  # docker-compose.yml portlari shu diapazonga mos bo'lishi shart.
+  port_range_start: 50000
+  port_range_end: 60000
+  # DEV: false (localhost). PRODUCTION: true qiling yoki node_ip ga ochiq IP bering,
+  # aks holda internetdagi klientlar media portlariga umuman yeta olmaydi.
+  use_external_ip: false
+  # node_ip: "SERVERNING_OCHIQ_IP"   # production'da use_external_ip o'rniga
+
+# ── TURN relay — YOMON INTERNET / SIMMETRIK NAT / KORPORATIV FIREWALL uchun KRITIK ──
+# Bularsiz cheklovchi tarmoq ortidagi foydalanuvchilarda media umuman ulanmaydi (ICE fail).
+# DEV: 3478/udp yetarli. PRODUCTION: TLS TURN (443/tcp) — mobil/korporativ proksilar
+# faqat 443'ni o'tkazadi; domen + sertifikat kerak.
+#
+# IZCHILLIK: test/staging serveri ham AYNI xatti-harakatda bo'lishi shart —
+# `deploy/server/livekit.yaml.example` da ham `turn.enabled: true` + `udp_port: 3478`
+# (u yerda qo'shimcha `domain: livekit.<IP>.sslip.io`, chunki mobil klientga real
+# DNS nomli TURN URI kerak). Dev'da `domain` yo'q → LiveKit node IP'ni (localhost)
+# e'lon qiladi, bu local test uchun yetarli.
+turn:
+  enabled: true
+  udp_port: 3478
+  # PRODUCTION uchun (443 ustidan TURNS):
+  # tls_port: 5349
+  # domain: turn.darsly.uz
+  # external_tls: true          # TLS'ni reverse-proxy/LB tugatsa
+
+# API kalitlar — backend token generatsiyasi (.env: LIVEKIT_API_KEY/SECRET) bilan mos bo'lsin.
+keys:
+  devkey: secret_at_least_32_characters_long_000000
+
+# Egress (yozib olish) uchun Redis. 'recording' profili bilan ishga tushiriladi.
+redis:
+  address: redis:6379
+
+# Egress tugagach LiveKit shu URL'ga webhook yuboradi → backend yozuvni 'ready'
+# holatiga o'tkazadi. Bu blok bo'lmasa recording'lar abadiy 'processing'da qoladi.
+# host.docker.internal — LiveKit konteyneridan xost mashinadagi backend (8087) ga.
+webhook:
+  api_key: devkey
+  urls:
+    - http://host.docker.internal:8087/api/v1/webhooks/livekit
+
+logging:
+  level: info

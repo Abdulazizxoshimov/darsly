@@ -1,0 +1,52 @@
+# LiveKit — PRODUCTION konfiguratsiyasi (yomon internet / NAT ortidagi foydalanuvchilar uchun).
+# Dev uchun livekit.yaml ni ishlating. Bu faylni real server + domen + sertifikat bilan yuklang.
+#
+# Ishga tushirish: docker compose -f docker-compose.prod.yml up -d
+port: 7880
+bind_addresses:
+  - "0.0.0.0"
+
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 60000
+  # MAJBURIY: serverning OCHIQ IP'sini bering (aks holda internetdagi klient media'ga yeta olmaydi).
+  use_external_ip: true
+  # yoki aniq: node_ip: "203.0.113.10"
+
+# ── TURN relay — YOMON INTERNET UCHUN ENG MUHIM ──
+# Simmetrik NAT / UDP-bloklangan / korporativ-mobil firewall faqat 443/tcp'ni o'tkazadi.
+turn:
+  enabled: true
+  domain: turn.darsly.uz          # ← o'zingizning domeningiz
+  udp_port: 3478                  # UDP TURN (tez yo'l)
+  tls_port: 5349                  # TURNS (TLS) — LB 443→5349 yo'naltiradi
+  # TLS'ni LB/reverse-proxy (Caddy) tugatsa:
+  external_tls: true
+  # yoki LiveKit o'zi TLS tugatsa (external_tls'siz):
+  # cert_file: /etc/livekit/tls/fullchain.pem
+  # key_file:  /etc/livekit/tls/privkey.pem
+
+# Ko'p-node / egress uchun Redis (majburiy).
+redis:
+  address: redis:6379
+
+# ── Webhook — MAJBURIY (aks holda recording'lar abadiy 'processing'da qoladi) ──
+# LiveKit egress/room hodisalarini backend'ga POST qiladi; backend imzoni project
+# kaliti bilan tekshiradi (/api/v1/webhooks/livekit).
+# DIQQAT: api_key MAJBURIY va keys map'idagi identifikator bilan mos bo'lishi shart.
+# api_key — OMMAVIY identifikator (sir emas), shu sabab bu yerда literal turadi.
+# Faqat api_SECRET sirли — u LIVEKIT_KEYS env orqali (compose interpolatsiyasi) keladi.
+webhook:
+  api_key: darsly
+  urls:
+    - https://api.darsly.uz/api/v1/webhooks/livekit
+
+# API kalitlar bu yerда EMAS. MUHIM: LiveKit config fayl ${ENV} ni KENGAYTIRMAYDI
+# (empirik tekshirilgan) — shu sabab kalitlar `LIVEKIT_KEYS` env orqali beriladi
+# (docker-compose.prod.yml, compose ${LIVEKIT_API_SECRET} ni interpolatsiya qiladi):
+#   LIVEKIT_KEYS: "darsly: <api_secret>"
+# api_key ("darsly") yuqoridagi webhook.api_key va backend LIVEKIT_API_KEY bilan mos.
+
+logging:
+  level: info

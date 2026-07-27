@@ -1,0 +1,60 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Darsly — ildiz .gitignore
+#
+# DIQQAT: bu fayl birinchi commit'dan OLDIN yozilgan. Sabab: sir yoki katta
+# artefakt bir marta commit bo'lsa, git tarixidan uni olib tashlash og'riqli
+# (filter-repo + force push + hamma klonni qayta olish).
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Sirlar (hech qachon commit qilinmaydi) ──────────────────────────────────
+.env
+.env.*
+!.env.example
+**/local.properties
+*.jks
+*.keystore
+keystore.properties
+*.pem
+*.key
+!**/testdata/**/*.key
+
+# ── Qurilish artefaktlari ───────────────────────────────────────────────────
+# mobile/app/build ~333 MB, backend/bin ~80 MB — git uchun yaroqsiz.
+build/
+bin/
+dist/
+out/
+target/
+*.apk
+*.aab
+*.class
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+
+# Deploy'ga ko'chiriladigan frontend build natijasi (manba: frontend/)
+deploy/server/www/
+
+# ── Bog'liqliklar ───────────────────────────────────────────────────────────
+node_modules/
+vendor/
+.gradle/
+.kotlin/
+
+# ── IDE / OS ────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# ── Log va vaqtinchalik ─────────────────────────────────────────────────────
+*.log
+tmp/
+temp/
+coverage.out
+*.coverprofile
+
+# ── Media/sinov artefaktlari ────────────────────────────────────────────────
+*.wav
+*.mp4
+*.webm

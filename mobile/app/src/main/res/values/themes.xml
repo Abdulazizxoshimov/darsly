@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Compose o'z temasini boshqaradi; bu faqat oyna fonini beradi. -->
+    <style name="Theme.DarslyMentor" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@android:color/black</item>
+    </style>
+</resources>

@@ -1,0 +1,60 @@
+# Darsly — Caddy (avtomatik Let's Encrypt HTTPS).
+# app.<IP>.sslip.io  → SPA + /api + /ws (yagona origin, CORS yo'q)
+# livekit.<IP>.sslip.io → LiveKit signaling (wss), host-network livekit:7880 ga.
+#
+# sslip.io: <anything>.194.163.139.242.sslip.io → 194.163.139.242 (real DNS).
+# HTTP-01 ACME uchun 80/443 ochiq bo'lishi shart (ufw).
+
+app.194.163.139.242.sslip.io {
+	encode zstd gzip
+
+	# API + WebSocket (backend konteyneri, bir tarmoqda).
+	handle /api/* {
+		reverse_proxy darsly-backend:8080
+	}
+
+	# Mobil ilova APK'sini tarqatish (QR kod → shu URL). deploy/server/dl katalogi.
+	# SPA fallback'dan OLDIN turishi shart, aks holda index.html qaytardi.
+	handle /download/* {
+		root * /srv-dl
+		uri strip_prefix /download
+		file_server browse
+	}
+
+	# SPA (Vite build). Klient-side routing uchun index.html fallback.
+	handle {
+		root * /srv
+		# Hash'li assetlar — abadiy keshlanadi (fayl nomi kontent bilan o'zgaradi).
+		@static path /assets/*
+		header @static Cache-Control "public, max-age=31536000, immutable"
+		# index.html va SPA marshrutlari — HECH QACHON keshlanmaydi (har deploy darhol yetadi).
+		@nostore {
+			not path /assets/*
+		}
+		header @nostore Cache-Control "no-cache, must-revalidate"
+		try_files {path} /index.html
+		file_server
+	}
+}
+
+livekit.194.163.139.242.sslip.io {
+	# host-network'dagi LiveKit'ga (7880) host-gateway orqali.
+	reverse_proxy host.docker.internal:7880
+}
+
+# MinIO ochiq yuzi — FAQAT presigned URL'lar uchun (yozuvlarni yuklab olish).
+# Nega kerak: presigned URL SigV4 imzosi Host header'ni ham qamrab oladi. Backend
+# ichki 'minio:9000' ga imzolasa, brauzer bu hostga umuman yeta olmaydi → yozuv
+# yuklanmaydi (web'da ham, mobilda ham). Shu sabab backend .env da
+# MINIO_PUBLIC_ENDPOINT=files.<IP>.sslip.io + MINIO_PUBLIC_USE_SSL=true bo'ladi
+# (backend config nomlari: internal/pkg/config/config.go:213-214).
+#
+# MUHIM: Caddy reverse_proxy Host header'ni DEFAULT saqlaydi (nginx'dan farqli) —
+# shuning uchun MinIO imzoni aynan shu host bilan tekshiradi va imzo to'g'ri chiqadi.
+# Bucket ochiq QILINMAYDI: imzosiz so'rov MinIO'ning o'zi tomonidan 403 bo'ladi.
+files.194.163.139.242.sslip.io {
+	# Yozuvlar yirik (100 MB+) — bufferlash YO'Q, oqim bilan uzatiladi.
+	reverse_proxy darsly-minio:9000 {
+		flush_interval -1
+	}
+}

@@ -1,0 +1,52 @@
+# Darsly — local dev infratuzilmasi.
+# Go server terminalda alohida: make run  (yoki go run ./cmd)
+# LiveKit alohida: services/livekit/docker-compose.yml
+# Portlar boshqa loyihalar bilan to'qnashmasligi uchun maxsus blok tanlangan.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: darsly-postgres
+    ports:
+      - "5442:5432"
+    environment:
+      POSTGRES_DB: darsly
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - pg_dev_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: darsly-redis
+    ports:
+      - "6399:6379"
+
+  minio:
+    image: minio/minio:latest
+    container_name: darsly-minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "9020:9000"
+      - "9021:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio_dev_data:/data
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: darsly-rabbitmq
+    ports:
+      - "5682:5672"
+      - "15682:15672"
+
+volumes:
+  pg_dev_data:
+  minio_dev_data:

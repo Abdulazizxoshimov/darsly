@@ -1,0 +1,10 @@
+# Serverda yasaladigan sirlar va artefaktlar — git'ga tushmasin.
+.env
+SERVER-CREDENTIALS.txt
+livekit.yaml
+livekit.yaml.bak
+www/
+# Yuklab olish uchun binarlar (APK) — katalog o'zi va izohi qoladi.
+dl/*
+!dl/.gitkeep
+!dl/README.txt

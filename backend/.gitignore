@@ -1,0 +1,29 @@
+# Binary
+/bin/
+/dist/
+*.exe
+
+# Environment (faqat .example commit qilinadi)
+.env
+.env.local
+.env.prod
+deployments/.env.prod
+
+# Go artifacts
+vendor/
+*.test
+*.out
+coverage.html
+
+# Logs
+logs/
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

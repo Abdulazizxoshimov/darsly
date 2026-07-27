@@ -1,0 +1,161 @@
+# Darsly — server test/staging stack (Contabo VPS, ko'p-qurilma sinov uchun).
+#
+# Yagona origin: app.<IP>.sslip.io (SPA + /api + /ws), livekit.<IP>.sslip.io (signaling).
+# Caddy avtomatik Let's Encrypt HTTPS beradi (kamera uchun majburiy).
+# LiveKit host-network'da (media UDP to'g'ridan-to'g'ri public IP'ga).
+#
+# Ishga tushirish: deploy/server/remote-setup.sh (secret + .env + livekit.yaml yasaydi),
+# so'ng: docker compose -f docker-compose.yml up -d --build
+#
+# tgbot (systemd) va eduverse'ga TEGMAYDI — alohida darsly_ prefiks, alohida tarmoq.
+
+name: darsly
+
+networks:
+  darsly_net:
+    driver: bridge
+
+volumes:
+  darsly_pg:
+  darsly_redis:
+  darsly_minio:
+  darsly_caddy_data:
+  darsly_caddy_config:
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: darsly-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: darsly
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: darsly
+    volumes:
+      - darsly_pg:/var/lib/postgresql/data
+    networks: [darsly_net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U darsly -d darsly"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: darsly-redis
+    restart: unless-stopped
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}", "--appendonly", "yes"]
+    volumes:
+      - darsly_redis:/data
+    networks: [darsly_net]
+    # FAQAT loopback'ga publish (public internetga OCHILMAYDI). Sababi: LiveKit
+    # host-network'da ishlaydi va darsly_net'dagi 'redis' nomini resolve qila olmaydi,
+    # lekin egress recording uchun LiveKit bilan AYNI Redis kerak → 127.0.0.1:6399.
+    # 6399 — darsly'ning dev konvensiyasi (CLAUDE.md port jadvali), tgbot/eduverse
+    # standart 6379 bilan to'qnashmasin.
+    ports:
+      - "127.0.0.1:6399:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    container_name: darsly-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
+    volumes:
+      - darsly_minio:/data
+    networks: [darsly_net]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ../../backend
+      dockerfile: deployments/Dockerfile
+    container_name: darsly-backend
+    restart: unless-stopped
+    env_file: [.env]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      minio: {condition: service_healthy}
+    networks: [darsly_net]
+    expose: ["8080"]
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: darsly-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./www:/srv:ro          # Vite build (deploy/server/www) — to'g'ridan-to'g'ri
+      - ./dl:/srv-dl:ro        # yuklab olish uchun statik fayllar (mobil APK, QR bilan)
+      - darsly_caddy_data:/data
+      - darsly_caddy_config:/config
+    networks: [darsly_net]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on: [backend]
+
+  livekit:
+    image: livekit/livekit-server:latest
+    container_name: darsly-livekit
+    restart: unless-stopped
+    network_mode: host
+    command: ["--config", "/etc/livekit.yaml"]
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+    # livekit.yaml da `redis:` bloki yoqilgan bo'lsa (ENABLE_RECORDING=1) LiveKit
+    # Redis'siz ISHGA TUSHMAYDI → Redis sog'lom bo'lgandan keyin startlaydi.
+    # (network_mode: host bilan depends_on muammosiz ishlaydi — u tarmoqqa bog'liq emas.)
+    depends_on:
+      redis: {condition: service_healthy}
+
+  # ── Egress (dars yozib olish → MinIO) — FAQAT 'recording' profilida ──────────
+  # docker compose --profile recording up -d
+  # Og'ir konteyner (Chrome headless). Shartlar:
+  #   1) livekit.yaml da `redis:` bloki YOQILGAN bo'lishi shart (ENABLE_RECORDING=1
+  #      ./remote-setup.sh) — egress ↔ LiveKit AYNI Redis orqali gaplashadi.
+  #   2) LiveKit signaling'ga darsly_net'dan chiqish: host.docker.internal:7880
+  #      (ufw da 172.16.0.0/12 → 7880/tcp allaqachon ochilgan — remote-setup.sh).
+  #   3) S3 (MinIO) manzili backend'dan StartRoomRecording so'rovida keladi
+  #      (http://minio:9000) — egress darsly_net'da bo'lgani uchun resolve qiladi.
+  # DIQQAT: LiveKit/egress config ${ENV} ni KENGAYTIRMAYDI — shu sabab config
+  # EGRESS_CONFIG_BODY orqali beriladi (compose ${...} ni O'ZI interpolatsiya qiladi).
+  egress:
+    image: livekit/egress:latest
+    container_name: darsly-egress
+    restart: unless-stopped
+    profiles: ["recording"]
+    depends_on:
+      redis: {condition: service_healthy}
+    networks: [darsly_net]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      EGRESS_CONFIG_BODY: |
+        redis:
+          address: redis:6379
+          password: ${REDIS_PASSWORD}
+          db: 0
+        api_key: darslykey
+        api_secret: ${LIVEKIT_API_SECRET}
+        ws_url: ws://host.docker.internal:7880
+        log_level: info
+    cap_add:
+      - SYS_ADMIN
+    # Chrome headless /dev/shm ni to'ldiradi → tab crash. 1G yetarli.
+    shm_size: "1gb"

@@ -1,0 +1,75 @@
+# Darsly LiveKit — server (host-network, single-node).
+#
+# remote-setup.sh bundan livekit.yaml yasaydi va o'rin egallovchilarni almashtiradi
+# (izohda ATAYLAB qo'sh-pastki-chiziqsiz yozilgan — sed ularni ham almashtirib
+#  yuborardi va sir izohga tushib qolardi):
+#   LIVEKIT_SECRET  → .env dagi LIVEKIT_API_SECRET
+#   TURN_DOMAIN     → livekit.<IP>.sslip.io
+#   APP_HOST        → app.<IP>.sslip.io  (webhook URL)
+#   REDIS_PASSWORD  → .env dagi REDIS_PASSWORD  (faqat recording yoqilganda)
+#
+# ⚠️ MUHIM: LiveKit config fayli `${ENV}` ni KENGAYTIRMAYDI (bu loyihada empirik
+# tasdiqlangan — `services/livekit/livekit.prod.yaml:45-49` izohiga qara). Shu sabab
+# domen/parol kabi qiymatlar env orqali EMAS, fayl yasalayotganda sed bilan qo'yiladi.
+#
+# API key = "darslykey" (ommaviy identifikator), secret esa generatsiya qilinadi.
+
+port: 7880
+bind_addresses:
+  - ""            # barcha interfeyslar (host-network)
+
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 60000
+  use_external_ip: true   # public IP'ni STUN orqali aniqlaydi → media candidate'lar to'g'ri
+
+# ── TURN relay — MOBIL / 4G / CGNAT / SIMMETRIK NAT uchun KRITIK ──────────────
+# Bularsiz mobil o'qituvchi (4G, CGNAT ortida) ICE fail bo'ladi va audio/video
+# UMUMAN ulanmaydi — faqat 7881/tcp fallback qoladi, u har doim yetarli emas.
+# `domain` klientga e'lon qilinadigan TURN URI'da ishlatiladi:
+#   turn:livekit.<IP>.sslip.io:3478?transport=udp
+# sslip.io real DNS bo'lgani uchun mobil klient domenni muammosiz resolve qiladi.
+#
+# UFW: 3478/udp ochiq bo'lishi SHART (remote-setup.sh buni qiladi).
+turn:
+  enabled: true
+  domain: __TURN_DOMAIN__
+  udp_port: 3478
+  # TLS TURN (TURNS) — korporativ/mehmonxona proksilari faqat 443'ni o'tkazadigan
+  # holatlar uchun. sslip.io test muhitida HOZIR YOQILMAYDI: 443 Caddy'da (SPA+API)
+  # band va TURNS uchun alohida sertifikat + port yo'naltirish kerak bo'ladi.
+  # Yoqish tartibi (kelajakda, real domen bilan):
+  #   1) `ufw allow 5349/tcp`
+  #   2) pastdagi ikki satrni oching va Caddy'da turn.<domen> uchun TLS tugatib,
+  #      443 → 5349 stream proxy qo'ying (yoki alohida IP/port ishlatilsin).
+  # tls_port: 5349
+  # external_tls: true        # TLS'ni Caddy/LB tugatsa
+
+keys:
+  darslykey: __LIVEKIT_SECRET__
+
+# ── Egress (dars yozib olish) uchun Redis — FAQAT recording yoqilganda ────────
+# Egress ↔ LiveKit Redis orqali gaplashadi, shu sabab egress uchun MAJBURIY.
+# DIQQAT: bu blok LiveKit'ni "distributed" rejimga o'tkazadi va Redis'ni
+# MAJBURIY qiladi — Redis yetib bo'lmasa LiveKit ISHGA TUSHMAYDI (video buziladi).
+# Shu sabab default O'CHIRILGAN (izohda). Yoqish:
+#   ENABLE_RECORDING=1 ./remote-setup.sh   → #RECORDING# prefiksi olib tashlanadi
+# LiveKit host-network'da bo'lgani uchun Redis'ga 127.0.0.1:6399 (docker-compose
+# darsly-redis'ni faqat loopback'ga publish qiladi) orqali ulanadi.
+#RECORDING# redis:
+#RECORDING#   address: 127.0.0.1:6399
+#RECORDING#   password: __REDIS_PASSWORD__
+#RECORDING#   db: 0
+
+# ── Webhook — MAJBURIY (aks holda recording'lar abadiy 'processing'da qoladi) ──
+# LiveKit egress/room hodisalarini backend'ga POST qiladi; backend imzoni
+# api_key + secret bilan tekshiradi (.env: LIVEKIT_WEBHOOK_API_KEY=darslykey).
+# LiveKit host-network'da → o'zining ochiq HTTPS hostiga (Caddy) chiqadi.
+webhook:
+  api_key: darslykey
+  urls:
+    - https://__APP_HOST__/api/v1/webhooks/livekit
+
+logging:
+  level: info

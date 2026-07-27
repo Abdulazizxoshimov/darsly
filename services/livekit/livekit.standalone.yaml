@@ -1,0 +1,19 @@
+# LiveKit — bitta-node STANDALONE (redis'siz) config, media sig'imini lokal sinash uchun.
+# redis bloki YO'Q → server in-memory (single-node) ishlaydi, tashqi bog'liqlik yo'q.
+# (redis faqat MULTI-NODE routing uchun kerak; bitta node uchun shart emas.)
+# host tarmog'ida ishlaydi (--network host) — 7880/7881 + UDP 50000-60000 to'g'ridan-to'g'ri.
+port: 7880
+bind_addresses:
+  - "0.0.0.0"
+
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 60000
+  use_external_ip: false
+
+keys:
+  devkey: secret_at_least_32_characters_long_000000
+
+logging:
+  level: info

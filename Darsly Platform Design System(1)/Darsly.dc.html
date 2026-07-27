@@ -1,0 +1,1150 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; }
+  a { color: #8b7cf6; text-decoration: none; }
+  a:hover { color: #a89bff; }
+  ::placeholder { color: #6b7688; }
+  @keyframes pulseDot { 0%,100% { opacity: .35; transform: scale(.85); } 50% { opacity: 1; transform: scale(1.1); } }
+  @keyframes blinkRec { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
+  @keyframes floatUp { 0% { transform: translateY(0) scale(.6); opacity: 0; } 15% { opacity: 1; transform: scale(1); } 100% { transform: translateY(-160px) scale(1.2); opacity: 0; } }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+</style>
+</helmet>
+
+<div style="font-family:'Manrope',sans-serif; background:#141414; min-height:100vh; width:100%; display:flex; align-items:center; justify-content:center; padding:24px">
+<div style="width:1440px; max-width:100%; height:900px; border-radius:14px; overflow:hidden; box-shadow:0 0 0 1px rgba(255,255,255,.06), 0 30px 80px rgba(0,0,0,.5); display:flex; flex-direction:column">
+  <div style="flex-shrink:0; height:34px; background:#161616; display:flex; align-items:center; padding:0 14px; gap:8px">
+    <span style="width:12px; height:12px; border-radius:50%; background:#ff5f57"></span>
+    <span style="width:12px; height:12px; border-radius:50%; background:#febc2e"></span>
+    <span style="width:12px; height:12px; border-radius:50%; background:#28c840"></span>
+    <span style="margin:0 auto; transform:translateX(-24px); font-size:12.5px; color:#8a8a8a; font-weight:600">Darsly</span>
+  </div>
+<div style="font-family:'Manrope',sans-serif; background:#0a0e14; color:#eef1f6; height:100%; width:100%; position:relative; overflow:hidden; display:flex; flex-direction:column">
+
+<sc-if value="{{ isLanding }}" hint-placeholder-val="{{ true }}">
+<div style="height:100%; overflow:auto; display:flex; flex-direction:column">
+  <div style="display:flex; align-items:center; justify-content:space-between; padding:22px 48px; border-bottom:1px solid #1c2430">
+    <div style="display:flex; align-items:center; gap:10px; font-weight:800; font-size:20px; letter-spacing:-0.02em">
+      <div style="width:30px; height:30px; border-radius:8px; background:linear-gradient(135deg,#6c5ce7,#8b7cf6); display:flex; align-items:center; justify-content:center; font-size:15px; font-weight:800">D</div>
+      Darsly
+    </div>
+    <div style="display:flex; gap:28px; align-items:center; font-size:14px; color:#97a3b3">
+      <span>Imkoniyatlar</span><span>Narxlar</span><span>Ustozlar</span>
+      <button onClick="{{ () => nav('auth') }}" style="background:transparent; border:1px solid #333e4d; color:#eef1f6; padding:9px 18px; border-radius:8px; font-size:14px; font-weight:600; cursor:pointer" style-hover="border-color:#6c5ce7">Kirish</button>
+    </div>
+  </div>
+
+  <div style="display:grid; grid-template-columns:1.1fr 0.9fr; gap:48px; padding:72px 48px; align-items:center; max-width:1280px; margin:0 auto; width:100%">
+    <div>
+      <div style="display:inline-flex; align-items:center; gap:8px; background:#161c26; border:1px solid #262f3b; padding:6px 14px; border-radius:20px; font-size:13px; color:#a89bff; margin-bottom:20px">
+        <span style="width:7px; height:7px; border-radius:50%; background:#34d399"></span> Zoom'ga to'liq muqobil, o'zimizning video tizim
+      </div>
+      <h1 style="font-size:52px; line-height:1.08; font-weight:800; letter-spacing:-0.03em; margin:0 0 20px">Jonli darslarni <span style="color:#8b7cf6">bir platformada</span> o'tkazing</h1>
+      <p style="font-size:18px; color:#97a3b3; line-height:1.6; max-width:520px; margin:0 0 32px">Video-chat, yozib olish, breakout xonalar, doska va so'rovnomalar — barchasi brauzerda, ilova o'rnatmasdan.</p>
+      <div style="display:flex; gap:14px; margin-bottom:40px">
+        <button onClick="{{ () => nav('auth') }}" style="background:#6c5ce7; border:none; color:#fff; padding:15px 26px; border-radius:10px; font-size:15px; font-weight:700; cursor:pointer" style-hover="background:#7d6ff2">Darsga yozilish</button>
+        <button onClick="{{ () => nav('liveRoom') }}" style="background:transparent; border:1px solid #333e4d; color:#eef1f6; padding:15px 26px; border-radius:10px; font-size:15px; font-weight:600; cursor:pointer">Live Room'ni ko'rish</button>
+      </div>
+      <div style="display:flex; align-items:center; gap:10px; background:#12171f; border:1px solid #232b37; border-radius:11px; padding:6px 6px 6px 16px; max-width:440px; margin-bottom:12px">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6b7688" stroke-width="1.8" style="flex-shrink:0"><path d="M8 12l6-6a3 3 0 0 1 4 4l-8 8a5 5 0 0 1-7-7l8-8"/></svg>
+        <input type="text" placeholder="darsly.uz/r/... havolasini joylashtiring" style="flex:1; background:none; border:none; color:#eef1f6; font-size:13.5px; outline:none"/>
+        <button onClick="{{ () => nav('waitingRoom') }}" style="background:#232b37; border:none; color:#eef1f6; padding:10px 16px; border-radius:8px; font-size:13px; font-weight:700; cursor:pointer; white-space:nowrap">Havola orqali kirish</button>
+      </div>
+      <div style="display:flex; gap:36px">
+        <div><div style="font-size:26px; font-weight:800">540+</div><div style="font-size:13px; color:#6b7688">faol o'quvchi</div></div>
+        <div><div style="font-size:26px; font-weight:800">4.9 / 5</div><div style="font-size:13px; color:#6b7688">o'rtacha reyting</div></div>
+        <div><div style="font-size:26px; font-weight:800">1200+</div><div style="font-size:13px; color:#6b7688">o'tkazilgan dars</div></div>
+      </div>
+    </div>
+    <div style="background:#12171f; border:1px solid #232b37; border-radius:20px; padding:28px">
+      <div style="display:flex; gap:16px; align-items:center; margin-bottom:20px">
+        <image-slot id="mentor-photo" shape="circle" style="width:64px; height:64px" placeholder="Ustoz surati"></image-slot>
+        <div>
+          <div style="font-weight:700; font-size:16px">Aziz Karimov</div>
+          <div style="font-size:13px; color:#97a3b3">Matematika o'qituvchisi · 8 yillik tajriba</div>
+        </div>
+      </div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:20px">
+        <div style="background:#161c26; border-radius:10px; padding:14px"><div style="font-size:20px; font-weight:800">312</div><div style="font-size:12px; color:#6b7688">o'quvchi</div></div>
+        <div style="background:#161c26; border-radius:10px; padding:14px"><div style="font-size:20px; font-weight:800">4.9</div><div style="font-size:12px; color:#6b7688">reyting</div></div>
+      </div>
+      <div style="font-size:13px; font-weight:700; color:#97a3b3; margin-bottom:10px">Platformada mavjud:</div>
+      <div style="display:flex; flex-direction:column; gap:8px">
+        <div style="display:flex; align-items:center; gap:8px; font-size:13.5px; color:#cdd5e0"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2"><path d="M5 12l5 5L19 6"/></svg> Dars yozib olish va yuklab olish</div>
+        <div style="display:flex; align-items:center; gap:8px; font-size:13.5px; color:#cdd5e0"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2"><path d="M5 12l5 5L19 6"/></svg> Breakout xonalar va doska</div>
+        <div style="display:flex; align-items:center; gap:8px; font-size:13.5px; color:#cdd5e0"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2"><path d="M5 12l5 5L19 6"/></svg> Subtitr va so'rovnomalar</div>
+      </div>
+    </div>
+  </div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isAuth }}" hint-placeholder-val="{{ false }}">
+<div style="height:100%; overflow:auto; display:grid; grid-template-columns:1fr 1fr">
+  <div style="background:linear-gradient(160deg,#161226,#0a0e14); padding:56px; display:flex; flex-direction:column; justify-content:space-between">
+    <div style="display:flex; align-items:center; gap:10px; font-weight:800; font-size:20px"><div style="width:30px; height:30px; border-radius:8px; background:linear-gradient(135deg,#6c5ce7,#8b7cf6); display:flex; align-items:center; justify-content:center; font-size:15px">D</div>Darsly</div>
+    <div>
+      <div style="font-size:30px; font-weight:800; line-height:1.25; margin-bottom:16px">"Zoom'dan ko'chib o'tganimizga afsuslanmadim — hammasi bitta joyda."</div>
+      <div style="display:flex; align-items:center; gap:10px">
+        <image-slot id="testimonial-photo" shape="circle" style="width:40px; height:40px" placeholder="Foto"></image-slot>
+        <div style="font-size:13.5px; color:#97a3b3">Aziz Karimov, Matematika o'qituvchisi</div>
+      </div>
+    </div>
+    <div></div>
+  </div>
+  <div style="display:flex; align-items:center; justify-content:center; padding:40px">
+    <div style="width:100%; max-width:380px">
+      <div style="display:flex; background:#12171f; border:1px solid #232b37; border-radius:10px; padding:4px; margin-bottom:28px">
+        <button onClick="{{ () => setAuthTab('login') }}" style="flex:1; padding:9px; border-radius:8px; border:none; font-size:14px; font-weight:700; cursor:pointer; background:{{ loginTabBg }}; color:{{ loginTabColor }}">Kirish</button>
+        <button onClick="{{ () => setAuthTab('register') }}" style="flex:1; padding:9px; border-radius:8px; border:none; font-size:14px; font-weight:700; cursor:pointer; background:{{ registerTabBg }}; color:{{ registerTabColor }}">Ro'yxatdan o'tish</button>
+      </div>
+      <div style="font-size:13px; font-weight:600; color:#97a3b3; margin-bottom:6px">Email yoki telefon</div>
+      <input type="text" placeholder="email@misol.uz" style="width:100%; background:#12171f; border:1px solid #262f3b; color:#eef1f6; padding:12px 14px; border-radius:9px; font-size:14px; margin-bottom:16px" style-focus="border-color:#6c5ce7"/>
+      <sc-if value="{{ isMagicLink }}" hint-placeholder-val="{{ false }}">
+        <div></div>
+      </sc-if>
+      <sc-if value="{{ notMagicLink }}" hint-placeholder-val="{{ true }}">
+        <div style="font-size:13px; font-weight:600; color:#97a3b3; margin-bottom:6px">Parol</div>
+        <input type="password" placeholder="••••••••" style="width:100%; background:#12171f; border:1px solid #262f3b; color:#eef1f6; padding:12px 14px; border-radius:9px; font-size:14px; margin-bottom:16px"/>
+      </sc-if>
+      <button onClick="{{ toggleMagicLink }}" style="background:none; border:none; color:#8b7cf6; font-size:13px; font-weight:600; cursor:pointer; padding:0 0 20px; display:block">{{ magicLinkLabel }}</button>
+      <button onClick="{{ () => nav('mentorDash') }}" style="width:100%; background:#6c5ce7; border:none; color:#fff; padding:13px; border-radius:9px; font-size:15px; font-weight:700; cursor:pointer; margin-bottom:12px" style-hover="background:#7d6ff2">{{ authButtonLabel }}</button>
+      <div style="text-align:center; font-size:12.5px; color:#6b7688">Demo: istalgan sahifadan davom eting →
+        <a href="javascript:void(0)" onClick="{{ () => nav('studentDash') }}" style="margin-left:4px">O'quvchi sifatida</a>
+      </div>
+    </div>
+  </div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isShell }}" hint-placeholder-val="{{ false }}">
+<div style="display:grid; grid-template-columns:240px 1fr; height:100%">
+  <div style="background:#0d1219; border-right:1px solid #1c2430; padding:24px 16px; display:flex; flex-direction:column">
+    <div style="display:flex; align-items:center; gap:10px; font-weight:800; font-size:18px; padding:0 8px 28px"><div style="width:26px; height:26px; border-radius:7px; background:linear-gradient(135deg,#6c5ce7,#8b7cf6); display:flex; align-items:center; justify-content:center; font-size:13px">D</div>Darsly</div>
+    <div style="display:flex; align-items:center; gap:6px; background:#161c26; border-radius:9px; padding:4px; margin-bottom:22px">
+      <button onClick="{{ () => setRole('mentor') }}" style="flex:1; padding:7px; border:none; border-radius:7px; font-size:12.5px; font-weight:700; cursor:pointer; background:{{ mentorRoleBg }}; color:{{ mentorRoleColor }}">Ustoz</button>
+      <button onClick="{{ () => setRole('student') }}" style="flex:1; padding:7px; border:none; border-radius:7px; font-size:12.5px; font-weight:700; cursor:pointer; background:{{ studentRoleBg }}; color:{{ studentRoleColor }}">O'quvchi</button>
+    </div>
+    <div style="display:flex; flex-direction:column; gap:2px">
+      <button onClick="{{ () => nav(dashScreen) }}" style="display:flex; align-items:center; gap:11px; padding:10px 12px; border-radius:9px; border:none; cursor:pointer; text-align:left; font-size:14px; font-weight:600; background:{{ navBg.dash }}; color:{{ navColor.dash }}">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 11l8-7 8 7"/><path d="M6 10v10h12V10"/></svg> Boshqaruv paneli
+      </button>
+      <sc-if value="{{ isMentor }}" hint-placeholder-val="{{ true }}">
+      <button onClick="{{ () => nav('schedule') }}" style="display:flex; align-items:center; gap:11px; padding:10px 12px; border-radius:9px; border:none; cursor:pointer; text-align:left; font-size:14px; font-weight:600; background:{{ navBg.schedule }}; color:{{ navColor.schedule }}">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 9h18M8 3v4M16 3v4"/></svg> Dars rejalash
+      </button>
+      </sc-if>
+      <button onClick="{{ () => nav('recordings') }}" style="display:flex; align-items:center; gap:11px; padding:10px 12px; border-radius:9px; border:none; cursor:pointer; text-align:left; font-size:14px; font-weight:600; background:{{ navBg.recordings }}; color:{{ navColor.recordings }}">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 8l7 4-7 4V8z" fill="currentColor" stroke="none"/></svg> Yozuvlar
+      </button>
+      <button onClick="{{ () => nav('notifications') }}" style="display:flex; align-items:center; gap:11px; padding:10px 12px; border-radius:9px; border:none; cursor:pointer; text-align:left; font-size:14px; font-weight:600; background:{{ navBg.notifications }}; color:{{ navColor.notifications }}">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 10a6 6 0 0 1 12 0c0 4 1.5 5.5 1.5 5.5H4.5S6 14 6 10z"/><path d="M10 18a2 2 0 0 0 4 0"/></svg> Bildirishnomalar
+        <sc-if value="{{ hasUnread }}" hint-placeholder-val="{{ false }}"><span style="margin-left:auto; background:#ef4444; color:#fff; font-size:10.5px; font-weight:800; border-radius:10px; padding:1px 6px">{{ unreadCount }}</span></sc-if>
+      </button>
+      <button onClick="{{ () => nav('profile') }}" style="display:flex; align-items:center; gap:11px; padding:10px 12px; border-radius:9px; border:none; cursor:pointer; text-align:left; font-size:14px; font-weight:600; background:{{ navBg.profile }}; color:{{ navColor.profile }}">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="9" r="4"/><path d="M4 20c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg> Profil sozlamalari
+      </button>
+    </div>
+    <div style="margin-top:auto; display:flex; align-items:center; gap:10px; padding:12px 8px; border-top:1px solid #1c2430">
+      <image-slot id="sidebar-avatar" shape="circle" style="width:34px; height:34px" placeholder="Foto"></image-slot>
+      <div style="overflow:hidden">
+        <div style="font-size:13px; font-weight:700; white-space:nowrap">{{ currentUserName }}</div>
+        <div style="font-size:11.5px; color:#6b7688">{{ currentUserRoleLabel }}</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="padding:32px 40px; overflow:auto">
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:28px">
+      <div>
+        <div style="font-size:24px; font-weight:800">{{ pageTitle }}</div>
+        <div style="font-size:14px; color:#6b7688; margin-top:4px">{{ pageSubtitle }}</div>
+      </div>
+      <div style="display:flex; align-items:center; gap:6px; background:#12171f; border:1px solid #232b37; border-radius:9px; padding:4px">
+        <button onClick="{{ () => setDemoState('filled') }}" style="padding:6px 12px; border:none; border-radius:6px; font-size:11.5px; font-weight:700; cursor:pointer; background:{{ demoFilledBg }}; color:{{ demoFilledColor }}">To'liq</button>
+        <button onClick="{{ () => setDemoState('empty') }}" style="padding:6px 12px; border:none; border-radius:6px; font-size:11.5px; font-weight:700; cursor:pointer; background:{{ demoEmptyBg }}; color:{{ demoEmptyColor }}">Bo'sh</button>
+        <button onClick="{{ () => setDemoState('loading') }}" style="padding:6px 12px; border:none; border-radius:6px; font-size:11.5px; font-weight:700; cursor:pointer; background:{{ demoLoadingBg }}; color:{{ demoLoadingColor }}">Yuklanmoqda</button>
+      </div>
+    </div>
+
+    <sc-if value="{{ isLoadingState }}" hint-placeholder-val="{{ false }}">
+      <div style="display:flex; flex-direction:column; gap:14px">
+        <sc-for list="{{ skeletonRows }}" as="row" hint-placeholder-count="4">
+          <div style="height:78px; border-radius:12px; background:linear-gradient(90deg,#12171f,#171e28,#12171f); background-size:200% 100%; animation:pulseDot 1.4s ease-in-out infinite; border:1px solid #1c2430"></div>
+        </sc-for>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isMentorDashScreen }}" hint-placeholder-val="{{ false }}">
+      <sc-if value="{{ isNormalState }}" hint-placeholder-val="{{ true }}">
+      <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:28px">
+        <div style="background:#12171f; border:1px solid #232b37; border-radius:14px; padding:18px"><div style="font-size:12.5px; color:#6b7688; margin-bottom:8px">Jami o'quvchilar</div><div style="font-size:26px; font-weight:800">312</div></div>
+        <div style="background:#12171f; border:1px solid #232b37; border-radius:14px; padding:18px"><div style="font-size:12.5px; color:#6b7688; margin-bottom:8px">Bu oy darslar</div><div style="font-size:26px; font-weight:800">47</div></div>
+        <div style="background:#12171f; border:1px solid #232b37; border-radius:14px; padding:18px"><div style="font-size:12.5px; color:#6b7688; margin-bottom:8px">O'rtacha davomat</div><div style="font-size:26px; font-weight:800">91%</div></div>
+        <div style="background:#12171f; border:1px solid #232b37; border-radius:14px; padding:18px"><div style="font-size:12.5px; color:#6b7688; margin-bottom:8px">Reyting</div><div style="font-size:26px; font-weight:800">4.9</div></div>
+      </div>
+      <div style="font-size:16px; font-weight:700; margin-bottom:14px">Rejalashtirilgan darslar</div>
+      <div style="display:flex; flex-direction:column; gap:12px; margin-bottom:32px">
+        <sc-for list="{{ upcomingLessons }}" as="lesson" hint-placeholder-count="3">
+          <div style="display:flex; align-items:center; justify-content:space-between; background:#12171f; border:1px solid #232b37; border-radius:14px; padding:18px 20px">
+            <div style="display:flex; align-items:center; gap:16px">
+              <div style="width:44px; height:44px; border-radius:10px; background:#1b2230; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; color:#8b7cf6; text-align:center; line-height:1.2">{{ lesson.dateShort }}</div>
+              <div>
+                <div style="font-weight:700; font-size:15px">{{ lesson.title }}</div>
+                <div style="font-size:13px; color:#6b7688; margin-top:2px">{{ lesson.time }} · {{ lesson.count }} ishtirokchi</div>
+              </div>
+            </div>
+            <button onClick="{{ () => nav('liveRoom') }}" style="background:#6c5ce7; border:none; color:#fff; padding:10px 18px; border-radius:8px; font-size:13.5px; font-weight:700; cursor:pointer" style-hover="background:#7d6ff2">Xonaga kirish</button>
+          </div>
+        </sc-for>
+      </div>
+      <div style="font-size:16px; font-weight:700; margin-bottom:14px">O'quvchilar</div>
+      <div style="background:#12171f; border:1px solid #232b37; border-radius:14px; overflow:hidden">
+        <sc-for list="{{ students }}" as="st" hint-placeholder-count="5">
+          <div style="display:flex; align-items:center; justify-content:space-between; padding:14px 20px; border-bottom:1px solid #1c2430">
+            <div style="display:flex; align-items:center; gap:12px">
+              <div style="width:34px; height:34px; border-radius:50%; background:#1b2230; display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:700; color:#a89bff">{{ st.initials }}</div>
+              <div style="font-size:14px; font-weight:600">{{ st.name }}</div>
+            </div>
+            <div style="font-size:13px; color:#97a3b3">{{ st.attendance }} davomat</div>
+          </div>
+        </sc-for>
+      </div>
+      </sc-if>
+      <sc-if value="{{ isEmptyState }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; padding:100px 0; text-align:center">
+          <div style="width:56px; height:56px; border-radius:14px; background:#161c26; display:flex; align-items:center; justify-content:center; margin-bottom:18px"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#6b7688" stroke-width="1.8"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 9h18M8 3v4M16 3v4"/></svg></div>
+          <div style="font-size:16px; font-weight:700; margin-bottom:6px">Hali darslar rejalashtirilmagan</div>
+          <div style="font-size:13.5px; color:#6b7688; margin-bottom:20px">Birinchi darsingizni rejalashtiring va o'quvchilarni taklif qiling</div>
+          <button onClick="{{ () => nav('schedule') }}" style="background:#6c5ce7; border:none; color:#fff; padding:11px 20px; border-radius:9px; font-size:14px; font-weight:700; cursor:pointer">Dars rejalash</button>
+        </div>
+      </sc-if>
+    </sc-if>
+
+    <sc-if value="{{ isScheduleScreen }}" hint-placeholder-val="{{ false }}">
+      <div style="display:grid; grid-template-columns:1fr 380px; gap:24px">
+        <div style="background:#12171f; border:1px solid #232b37; border-radius:14px; padding:26px">
+          <div style="font-size:13px; font-weight:700; color:#97a3b3; margin-bottom:8px">Dars nomi</div>
+          <input type="text" value="Kvadrat tenglamalar - guruh darsi" style="width:100%; background:#161c26; border:1px solid #262f3b; color:#eef1f6; padding:11px 13px; border-radius:8px; font-size:14px; margin-bottom:20px"/>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:20px">
+            <div><div style="font-size:13px; font-weight:700; color:#97a3b3; margin-bottom:8px">Sana</div><input type="date" value="2026-07-25" style="width:100%; background:#161c26; border:1px solid #262f3b; color:#eef1f6; padding:11px 13px; border-radius:8px; font-size:14px"/></div>
+            <div><div style="font-size:13px; font-weight:700; color:#97a3b3; margin-bottom:8px">Vaqt</div><input type="time" value="18:00" style="width:100%; background:#161c26; border:1px solid #262f3b; color:#eef1f6; padding:11px 13px; border-radius:8px; font-size:14px"/></div>
+          </div>
+          <div style="font-size:13px; font-weight:700; color:#97a3b3; margin-bottom:8px">Takrorlanish</div>
+          <div style="display:flex; gap:6px; background:#161c26; border-radius:9px; padding:4px; margin-bottom:20px; width:fit-content">
+            <button onClick="{{ () => setRepeat('once') }}" style="padding:8px 16px; border:none; border-radius:7px; font-size:13px; font-weight:700; cursor:pointer; background:{{ repeatOnceBg }}; color:{{ repeatOnceColor }}">Bir marta</button>
+            <button onClick="{{ () => setRepeat('weekly') }}" style="padding:8px 16px; border:none; border-radius:7px; font-size:13px; font-weight:700; cursor:pointer; background:{{ repeatWeeklyBg }}; color:{{ repeatWeeklyColor }}">Har hafta</button>
+          </div>
+          <div style="font-size:13px; font-weight:700; color:#97a3b3; margin-bottom:8px">O'quvchilarni taklif qilish</div>
+          <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:24px">
+            <sc-for list="{{ students }}" as="st" hint-placeholder-count="6">
+              <button onClick="{{ () => toggleStudentInvite(st.id) }}" style="display:flex; align-items:center; gap:6px; padding:7px 12px 7px 7px; border-radius:20px; border:1px solid {{ st.inviteBorder }}; background:{{ st.inviteBg }}; color:{{ st.inviteColor }}; font-size:12.5px; font-weight:600; cursor:pointer">
+                <span style="width:20px; height:20px; border-radius:50%; background:#232b37; display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:700">{{ st.initials }}</span>{{ st.name }}
+              </button>
+            </sc-for>
+          </div>
+          <button onClick="{{ generateLink }}" style="background:#6c5ce7; border:none; color:#fff; padding:12px 20px; border-radius:9px; font-size:14px; font-weight:700; cursor:pointer">Havola generatsiya qilish</button>
+        </div>
+        <div style="background:#12171f; border:1px solid #232b37; border-radius:14px; padding:24px; align-self:start">
+          <div style="font-size:14px; font-weight:700; margin-bottom:14px">Dars havolasi</div>
+          <sc-if value="{{ linkGenerated }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex; align-items:center; gap:8px; background:#161c26; border:1px solid #262f3b; border-radius:9px; padding:10px 12px; margin-bottom:12px">
+              <div style="font-size:12.5px; color:#a89bff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1">darsly.uz/r/kv-teng-25iy</div>
+              <button onClick="{{ copyLink }}" style="background:#232b37; border:none; color:#eef1f6; padding:6px 10px; border-radius:6px; font-size:11.5px; font-weight:700; cursor:pointer">Nusxalash</button>
+            </div>
+            <div style="font-size:12.5px; color:#6b7688">{{ invitedCount }} o'quvchiga taklifnoma yuboriladi</div>
+          </sc-if>
+          <sc-if value="{{ linkNotGenerated }}" hint-placeholder-val="{{ true }}">
+            <div style="font-size:13px; color:#6b7688">Havola hali yaratilmagan</div>
+          </sc-if>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isStudentDashScreen }}" hint-placeholder-val="{{ false }}">
+      <sc-if value="{{ isNormalState }}" hint-placeholder-val="{{ true }}">
+      <div style="background:linear-gradient(120deg,#221a3d,#161c26); border:1px solid #2c2450; border-radius:16px; padding:24px 28px; display:flex; align-items:center; justify-content:space-between; margin-bottom:28px">
+        <div>
+          <div style="font-size:13px; color:#a89bff; font-weight:700; margin-bottom:6px">Keyingi darsingiz · Bugun 18:00</div>
+          <div style="font-size:19px; font-weight:800">Kvadrat tenglamalar - guruh darsi</div>
+        </div>
+        <button onClick="{{ () => nav('waitingRoom') }}" style="background:#6c5ce7; border:none; color:#fff; padding:12px 22px; border-radius:9px; font-size:14px; font-weight:700; cursor:pointer">Darsga qo'shilish</button>
+      </div>
+      <div style="font-size:16px; font-weight:700; margin-bottom:14px">Bo'lajak darslar</div>
+      <div style="display:flex; flex-direction:column; gap:12px; margin-bottom:32px">
+        <sc-for list="{{ upcomingLessons }}" as="lesson" hint-placeholder-count="3">
+          <div style="display:flex; align-items:center; justify-content:space-between; background:#12171f; border:1px solid #232b37; border-radius:14px; padding:16px 20px">
+            <div><div style="font-weight:700; font-size:14.5px">{{ lesson.title }}</div><div style="font-size:12.5px; color:#6b7688; margin-top:2px">{{ lesson.time }}</div></div>
+            <div style="font-size:12px; color:#6b7688">Aziz Karimov</div>
+          </div>
+        </sc-for>
+      </div>
+      <div style="font-size:16px; font-weight:700; margin-bottom:14px">So'nggi yozuvlar</div>
+      <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:14px">
+        <sc-for list="{{ recentRecordings }}" as="rec" hint-placeholder-count="3">
+          <div style="background:#12171f; border:1px solid #232b37; border-radius:12px; overflow:hidden">
+            <div style="height:90px; background:#161c26; display:flex; align-items:center; justify-content:center"><svg width="26" height="26" viewBox="0 0 24 24" fill="#8b7cf6" stroke="none"><path d="M7 4l13 8-13 8V4z"/></svg></div>
+            <div style="padding:12px"><div style="font-size:13px; font-weight:700; margin-bottom:4px">{{ rec.title }}</div><div style="font-size:11.5px; color:#6b7688">{{ rec.duration }}</div></div>
+          </div>
+        </sc-for>
+      </div>
+      </sc-if>
+      <sc-if value="{{ isEmptyState }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; padding:100px 0; text-align:center">
+          <div style="width:56px; height:56px; border-radius:14px; background:#161c26; display:flex; align-items:center; justify-content:center; margin-bottom:18px"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#6b7688" stroke-width="1.8"><path d="M4 11l8-7 8 7"/><path d="M6 10v10h12V10"/></svg></div>
+          <div style="font-size:16px; font-weight:700; margin-bottom:6px">Rejalashtirilgan darslar yo'q</div>
+          <div style="font-size:13.5px; color:#6b7688">Ustozingiz sizni darsga taklif qilganda shu yerda ko'rinadi</div>
+        </div>
+      </sc-if>
+    </sc-if>
+
+    <sc-if value="{{ isRecordingsScreen }}" hint-placeholder-val="{{ false }}">
+      <sc-if value="{{ isNormalState }}" hint-placeholder-val="{{ true }}">
+      <div style="display:flex; align-items:center; gap:10px; background:#12171f; border:1px solid #232b37; border-radius:9px; padding:10px 14px; margin-bottom:22px; max-width:340px">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6b7688" stroke-width="1.8"><circle cx="10" cy="10" r="6"/><line x1="15" y1="15" x2="20" y2="20"/></svg>
+        <input type="text" placeholder="Yozuvlarni qidirish..." style="background:none; border:none; color:#eef1f6; font-size:13.5px; flex:1; outline:none"/>
+      </div>
+      <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:16px">
+        <sc-for list="{{ recordings }}" as="rec" hint-placeholder-count="6">
+          <div style="background:#12171f; border:1px solid #232b37; border-radius:14px; overflow:hidden">
+            <div style="height:120px; background:#161c26; display:flex; align-items:center; justify-content:center; position:relative">
+              <svg width="30" height="30" viewBox="0 0 24 24" fill="#8b7cf6" stroke="none"><path d="M7 4l13 8-13 8V4z"/></svg>
+              <div style="position:absolute; bottom:8px; right:8px; background:rgba(0,0,0,.6); padding:2px 7px; border-radius:5px; font-size:11px; font-weight:600">{{ rec.duration }}</div>
+            </div>
+            <div style="padding:16px">
+              <div style="font-size:14.5px; font-weight:700; margin-bottom:4px">{{ rec.title }}</div>
+              <div style="font-size:12px; color:#6b7688; margin-bottom:14px">{{ rec.date }} · {{ rec.size }}</div>
+              <div style="display:flex; gap:8px">
+                <button style="flex:1; display:flex; align-items:center; justify-content:center; gap:6px; background:#232b37; border:none; color:#eef1f6; padding:9px; border-radius:8px; font-size:12.5px; font-weight:700; cursor:pointer"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M7 4l13 8-13 8V4z"/></svg> Ko'rish</button>
+                <button style="flex:1; display:flex; align-items:center; justify-content:center; gap:6px; background:#6c5ce7; border:none; color:#fff; padding:9px; border-radius:8px; font-size:12.5px; font-weight:700; cursor:pointer"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v10m0 0-4-4m4 4 4-4"/><path d="M5 19h14"/></svg> Yuklab olish</button>
+              </div>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+      </sc-if>
+      <sc-if value="{{ isEmptyState }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; padding:100px 0; text-align:center">
+          <div style="width:56px; height:56px; border-radius:14px; background:#161c26; display:flex; align-items:center; justify-content:center; margin-bottom:18px"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#6b7688" stroke-width="1.8"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 8l7 4-7 4V8z"/></svg></div>
+          <div style="font-size:16px; font-weight:700; margin-bottom:6px">Hali yozuvlar yo'q</div>
+          <div style="font-size:13.5px; color:#6b7688">Darsni yozib olsangiz, u shu yerda paydo bo'ladi</div>
+        </div>
+      </sc-if>
+    </sc-if>
+
+    <sc-if value="{{ isProfileScreen }}" hint-placeholder-val="{{ false }}">
+      <div style="display:grid; grid-template-columns:1fr 320px; gap:24px; max-width:900px">
+        <div style="background:#12171f; border:1px solid #232b37; border-radius:14px; padding:26px">
+          <div style="font-size:13px; font-weight:700; color:#97a3b3; margin-bottom:8px">Ism familiya</div>
+          <input type="text" value="{{ currentUserName }}" style="width:100%; background:#161c26; border:1px solid #262f3b; color:#eef1f6; padding:11px 13px; border-radius:8px; font-size:14px; margin-bottom:18px"/>
+          <div style="font-size:13px; font-weight:700; color:#97a3b3; margin-bottom:8px">Bio</div>
+          <textarea rows="3" style="width:100%; background:#161c26; border:1px solid #262f3b; color:#eef1f6; padding:11px 13px; border-radius:8px; font-size:14px; margin-bottom:22px; resize:vertical; font-family:inherit">Matematikadan repetitor, 8 yillik tajriba. Kvadrat tenglamalar, trigonometriya va ehtimollar nazariyasi bo'yicha mutaxassis.</textarea>
+          <div style="font-size:14px; font-weight:700; margin-bottom:12px">Bildirishnoma sozlamalari</div>
+          <div style="display:flex; flex-direction:column; gap:10px; margin-bottom:22px">
+            <div style="display:flex; align-items:center; justify-content:space-between"><span style="font-size:13.5px">Email orqali eslatma</span><button onClick="{{ () => toggleNotifPref('email') }}" style="width:40px; height:22px; border-radius:11px; border:none; cursor:pointer; background:{{ notifEmailBg }}; position:relative"><span style="position:absolute; top:2px; left:{{ notifEmailPos }}; width:18px; height:18px; border-radius:50%; background:#fff; transition:left .15s"></span></button></div>
+            <div style="display:flex; align-items:center; justify-content:space-between"><span style="font-size:13.5px">SMS orqali eslatma</span><button onClick="{{ () => toggleNotifPref('sms') }}" style="width:40px; height:22px; border-radius:11px; border:none; cursor:pointer; background:{{ notifSmsBg }}; position:relative"><span style="position:absolute; top:2px; left:{{ notifSmsPos }}; width:18px; height:18px; border-radius:50%; background:#fff; transition:left .15s"></span></button></div>
+            <div style="display:flex; align-items:center; justify-content:space-between"><span style="font-size:13.5px">Push bildirishnoma</span><button onClick="{{ () => toggleNotifPref('push') }}" style="width:40px; height:22px; border-radius:11px; border:none; cursor:pointer; background:{{ notifPushBg }}; position:relative"><span style="position:absolute; top:2px; left:{{ notifPushPos }}; width:18px; height:18px; border-radius:50%; background:#fff; transition:left .15s"></span></button></div>
+          </div>
+          <button onClick="{{ saveProfile }}" style="background:#6c5ce7; border:none; color:#fff; padding:11px 22px; border-radius:9px; font-size:14px; font-weight:700; cursor:pointer">Saqlash</button>
+        </div>
+        <div style="background:#12171f; border:1px solid #232b37; border-radius:14px; padding:24px; align-self:start; text-align:center">
+          <image-slot id="profile-photo" shape="circle" style="width:96px; height:96px; margin:0 auto 14px" placeholder="Rasm yuklash"></image-slot>
+          <div style="font-size:12.5px; color:#6b7688">JPG yoki PNG, 2MB gacha</div>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isNotificationsScreen }}" hint-placeholder-val="{{ false }}">
+      <sc-if value="{{ isNormalState }}" hint-placeholder-val="{{ true }}">
+      <div style="display:flex; justify-content:flex-end; margin-bottom:16px"><button onClick="{{ markAllRead }}" style="background:none; border:none; color:#8b7cf6; font-size:13px; font-weight:700; cursor:pointer">Hammasini o'qilgan qilish</button></div>
+      <div style="display:flex; flex-direction:column; gap:2px; background:#12171f; border:1px solid #232b37; border-radius:14px; overflow:hidden">
+        <sc-for list="{{ notifications }}" as="n" hint-placeholder-count="5">
+          <div onClick="{{ () => markOneRead(n.id) }}" style="display:flex; align-items:flex-start; gap:14px; padding:16px 20px; border-bottom:1px solid #1c2430; cursor:pointer; background:{{ n.rowBg }}">
+            <span style="width:8px; height:8px; border-radius:50%; margin-top:6px; background:{{ n.dotColor }}; flex-shrink:0"></span>
+            <div style="flex:1"><div style="font-size:14px; font-weight:{{ n.weight }}">{{ n.text }}</div><div style="font-size:12px; color:#6b7688; margin-top:3px">{{ n.time }}</div></div>
+          </div>
+        </sc-for>
+      </div>
+      </sc-if>
+      <sc-if value="{{ isEmptyState }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; padding:100px 0; text-align:center">
+          <div style="width:56px; height:56px; border-radius:14px; background:#161c26; display:flex; align-items:center; justify-content:center; margin-bottom:18px"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#6b7688" stroke-width="1.8"><path d="M6 10a6 6 0 0 1 12 0c0 4 1.5 5.5 1.5 5.5H4.5S6 14 6 10z"/><path d="M10 18a2 2 0 0 0 4 0"/></svg></div>
+          <div style="font-size:16px; font-weight:700">Bildirishnomalar yo'q</div>
+        </div>
+      </sc-if>
+    </sc-if>
+  </div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isJoinLink }}" hint-placeholder-val="{{ false }}">
+<div style="height:100%; overflow:hidden; display:flex; align-items:center; justify-content:center; background:#0a0e14; position:relative">
+  <div style="position:absolute; top:20px; left:50%; transform:translateX(-50%); display:flex; gap:6px; background:#12171f; border:1px dashed #333e4d; border-radius:9px; padding:4px">
+    <button onClick="{{ () => setJoinLinkMode('normal') }}" style="padding:6px 11px; border:none; border-radius:6px; font-size:11px; font-weight:700; cursor:pointer; background:{{ joinModeNormalBg }}; color:{{ joinModeNormalColor }}">Oddiy</button>
+    <button onClick="{{ () => setJoinLinkMode('passcode') }}" style="padding:6px 11px; border:none; border-radius:6px; font-size:11px; font-weight:700; cursor:pointer; background:{{ joinModePasscodeBg }}; color:{{ joinModePasscodeColor }}">Parol talab qilinadi</button>
+    <button onClick="{{ () => setJoinLinkMode('invalid') }}" style="padding:6px 11px; border:none; border-radius:6px; font-size:11px; font-weight:700; cursor:pointer; background:{{ joinModeInvalidBg }}; color:{{ joinModeInvalidColor }}">Yaroqsiz havola</button>
+  </div>
+
+  <sc-if value="{{ isJoinInvalid }}" hint-placeholder-val="{{ false }}">
+    <div style="display:flex; flex-direction:column; align-items:center; text-align:center">
+      <div style="width:56px; height:56px; border-radius:14px; background:#161c26; display:flex; align-items:center; justify-content:center; margin-bottom:18px"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#6b7688" stroke-width="1.8"><path d="M8 12l6-6a3 3 0 0 1 4 4l-8 8a5 5 0 0 1-7-7l8-8"/><line x1="4" y1="4" x2="20" y2="20"/></svg></div>
+      <div style="font-size:16px; font-weight:700; margin-bottom:6px">Bu havola yaroqsiz yoki muddati o'tgan</div>
+      <div style="font-size:13.5px; color:#6b7688; margin-bottom:20px; max-width:300px">Ustozingizdan yangi havola so'rang yoki bosh sahifaga qayting</div>
+      <button onClick="{{ () => nav('landing') }}" style="background:#6c5ce7; border:none; color:#fff; padding:11px 22px; border-radius:9px; font-size:14px; font-weight:700; cursor:pointer">Bosh sahifaga qaytish</button>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ isJoinForm }}" hint-placeholder-val="{{ true }}">
+  <div style="width:380px; background:#12171f; border:1px solid #232b37; border-radius:16px; padding:30px">
+    <div style="font-size:19px; font-weight:800; margin-bottom:6px">Darsga qo'shilish</div>
+    <div style="font-size:13.5px; color:#97a3b3; margin-bottom:24px">{{ joinLessonTitle }}</div>
+    <div style="font-size:13px; font-weight:700; color:#97a3b3; margin-bottom:8px">Ismingiz</div>
+    <input type="text" value="{{ joinName }}" onChange="{{ onJoinNameChange }}" placeholder="Ismingizni kiriting" style="width:100%; background:#161c26; border:1px solid #262f3b; color:#eef1f6; padding:11px 13px; border-radius:8px; font-size:14px; margin-bottom:18px"/>
+    <sc-if value="{{ needsPasscode }}" hint-placeholder-val="{{ false }}">
+      <div style="font-size:13px; font-weight:700; color:#97a3b3; margin-bottom:8px">Dars paroli</div>
+      <input type="text" value="{{ joinPassword }}" onChange="{{ onJoinPasswordChange }}" placeholder="Parolni kiriting" style="width:100%; background:#161c26; border:1px solid {{ joinPasswordBorder }}; color:#eef1f6; padding:11px 13px; border-radius:8px; font-size:14px; margin-bottom:8px"/>
+      <sc-if value="{{ joinPasswordError }}" hint-placeholder-val="{{ false }}">
+        <div style="font-size:12.5px; color:#ef4444; margin-bottom:10px">Parol noto'g'ri. Qaytadan urinib ko'ring.</div>
+      </sc-if>
+    </sc-if>
+    <button onClick="{{ submitJoin }}" style="width:100%; background:#6c5ce7; border:none; color:#fff; padding:13px; border-radius:9px; font-size:15px; font-weight:700; cursor:pointer; margin-top:6px; margin-bottom:16px" style-hover="background:#7d6ff2">Davom etish</button>
+    <div style="text-align:center; font-size:12.5px; color:#6b7688">Hisobingiz bormi? <a href="javascript:void(0)" onClick="{{ () => nav('auth') }}">Kirish</a></div>
+  </div>
+  </sc-if>
+</div>
+</sc-if>
+
+<sc-if value="{{ isWaitingRoom }}" hint-placeholder-val="{{ false }}">
+<div style="height:100%; overflow:hidden; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:24px; background:#0a0e14">
+  <div style="width:340px; height:220px; border-radius:16px; background:#12171f; border:1px solid #232b37; display:flex; align-items:center; justify-content:center; position:relative">
+    <sc-if value="{{ camOn }}" hint-placeholder-val="{{ true }}"><div style="width:70px; height:70px; border-radius:50%; background:#232b37; display:flex; align-items:center; justify-content:center; font-size:24px; font-weight:700; color:#a89bff">MY</div></sc-if>
+    <sc-if value="{{ camOff }}" hint-placeholder-val="{{ false }}"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#6b7688" stroke-width="1.8"><path d="M4 7a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7z"/><line x1="2" y1="2" x2="22" y2="22"/></svg></sc-if>
+    <div style="position:absolute; bottom:12px; display:flex; gap:10px">
+      <button onClick="{{ toggleMic }}" style="width:38px; height:38px; border-radius:50%; border:none; cursor:pointer; background:{{ micBtnBg }}; color:#fff; display:flex; align-items:center; justify-content:center"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3z"/><path d="M19 11a7 7 0 0 1-14 0"/></svg></button>
+      <button onClick="{{ toggleCam }}" style="width:38px; height:38px; border-radius:50%; border:none; cursor:pointer; background:{{ camBtnBg }}; color:#fff; display:flex; align-items:center; justify-content:center"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7z"/></svg></button>
+    </div>
+  </div>
+  <div style="display:flex; align-items:center; gap:10px">
+    <span style="width:9px; height:9px; border-radius:50%; background:#f59e0b; animation:pulseDot 1.4s ease-in-out infinite"></span>
+    <div style="font-size:16px; font-weight:700">Kutish xonasi</div>
+  </div>
+  <div style="font-size:14px; color:#97a3b3; text-align:center; max-width:320px">Aziz Karimov sizni tez orada darsga qabul qiladi. Iltimos kuting.</div>
+  <div style="display:flex; gap:12px">
+    <button onClick="{{ () => nav('studentDash') }}" style="background:transparent; border:1px solid #333e4d; color:#eef1f6; padding:11px 20px; border-radius:9px; font-size:13.5px; font-weight:600; cursor:pointer">Bekor qilish</button>
+    <button onClick="{{ () => nav('liveRoom') }}" style="background:#232b37; border:1px dashed #3d4757; color:#97a3b3; padding:11px 20px; border-radius:9px; font-size:12.5px; font-weight:600; cursor:pointer">Demo: qabul qilindi →</button>
+  </div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isLiveRoom }}" hint-placeholder-val="{{ false }}">
+<div style="height:100%; overflow:hidden; display:flex; flex-direction:column; background:#05070a">
+  <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 20px; background:#0d1219; border-bottom:1px solid #1c2430">
+    <div style="display:flex; align-items:center; gap:14px">
+      <div style="font-size:14.5px; font-weight:700">Kvadrat tenglamalar - guruh darsi</div>
+      <sc-if value="{{ isRecording }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex; align-items:center; gap:6px; background:rgba(239,68,68,.15); padding:4px 10px; border-radius:6px"><span style="width:8px; height:8px; border-radius:50%; background:#ef4444; animation:blinkRec 1.2s ease-in-out infinite"></span><span style="font-size:12px; font-weight:800; color:#ef4444">REC</span></div>
+      </sc-if>
+      <sc-if value="{{ isSharing }}" hint-placeholder-val="{{ false }}">
+        <div style="background:rgba(52,211,153,.15); color:#34d399; padding:4px 10px; border-radius:6px; font-size:12px; font-weight:700">Ekran ulashilmoqda</div>
+      </sc-if>
+    </div>
+    <div style="display:flex; align-items:center; gap:16px">
+      <button onClick="{{ cycleConnection }}" style="display:flex; align-items:center; gap:6px; background:none; border:none; cursor:pointer; color:{{ connColor }}">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="3" y="14" width="3" height="6"/><rect x="9" y="9" width="3" height="11"/><rect x="15" y="4" width="3" height="16"/></svg>
+        <span style="font-size:12px; font-weight:600">{{ connLabel }}</span>
+      </button>
+      <div style="display:flex; align-items:center; gap:6px; background:#161c26; border-radius:8px; padding:4px">
+        <button onClick="{{ () => setViewMode('gallery') }}" style="padding:6px 10px; border:none; border-radius:6px; cursor:pointer; background:{{ galleryBg }}; color:{{ galleryColor }}; display:flex; align-items:center"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></button>
+        <button onClick="{{ () => setViewMode('speaker') }}" style="padding:6px 10px; border:none; border-radius:6px; cursor:pointer; background:{{ speakerBg }}; color:{{ speakerColor }}; display:flex; align-items:center"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="12" rx="1"/><rect x="3" y="17" width="5" height="4" rx="1"/><rect x="10" y="17" width="5" height="4" rx="1"/><rect x="17" y="17" width="4" height="4" rx="1"/></svg></button>
+      </div>
+      <div style="font-size:12.5px; color:#6b7688">{{ participantCountLabel }}</div>
+    </div>
+  </div>
+
+  <div style="display:flex; flex:1; overflow:hidden; position:relative">
+    <div style="flex:1; padding:16px; overflow:auto; position:relative">
+      <sc-if value="{{ isGalleryView }}" hint-placeholder-val="{{ true }}">
+        <div style="display:grid; grid-template-columns:{{ gridCols }}; gap:10px; height:100%">
+          <sc-for list="{{ visibleParticipants }}" as="p" hint-placeholder-count="9">
+            <div style="background:#12171f; border-radius:12px; position:relative; display:flex; align-items:center; justify-content:center; aspect-ratio:4/3; border:{{ p.speakBorder }}">
+              <sc-if value="{{ p.camOn }}" hint-placeholder-val="{{ true }}"><div style="width:56px; height:56px; border-radius:50%; background:#232b37; display:flex; align-items:center; justify-content:center; font-size:18px; font-weight:700; color:#a89bff">{{ p.initials }}</div></sc-if>
+              <sc-if value="{{ p.camOff }}" hint-placeholder-val="{{ false }}"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#4a5568" stroke-width="1.6"><path d="M4 7a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7z"/><line x1="2" y1="2" x2="22" y2="22"/></svg></sc-if>
+              <div style="position:absolute; bottom:6px; left:6px; display:flex; align-items:center; gap:5px; background:rgba(0,0,0,.55); padding:3px 7px; border-radius:6px">
+                <sc-if value="{{ p.muted }}" hint-placeholder-val="{{ false }}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3z"/><line x1="4" y1="4" x2="20" y2="20"/></svg></sc-if>
+                <span style="font-size:11px; font-weight:600">{{ p.name }}</span>
+              </div>
+              <sc-if value="{{ p.hand }}" hint-placeholder-val="{{ false }}"><div style="position:absolute; top:6px; right:6px; font-size:15px">✋</div></sc-if>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+      <sc-if value="{{ isSpeakerView }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex; flex-direction:column; gap:10px; height:100%">
+          <div style="flex:1; background:#12171f; border-radius:14px; display:flex; align-items:center; justify-content:center; position:relative">
+            <div style="width:110px; height:110px; border-radius:50%; background:#232b37; display:flex; align-items:center; justify-content:center; font-size:32px; font-weight:700; color:#a89bff">AK</div>
+            <div style="position:absolute; bottom:14px; left:14px; background:rgba(0,0,0,.55); padding:5px 12px; border-radius:8px; font-size:13px; font-weight:700">Aziz Karimov (Ustoz)</div>
+          </div>
+          <div style="display:flex; gap:10px; height:110px">
+            <sc-for list="{{ speakerStrip }}" as="p" hint-placeholder-count="5">
+              <div style="flex:1; background:#12171f; border-radius:10px; display:flex; align-items:center; justify-content:center; position:relative">
+                <div style="width:34px; height:34px; border-radius:50%; background:#232b37; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; color:#a89bff">{{ p.initials }}</div>
+                <div style="position:absolute; bottom:4px; left:4px; font-size:10px; font-weight:600; background:rgba(0,0,0,.55); padding:2px 5px; border-radius:4px">{{ p.name }}</div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ floatEmoji }}" hint-placeholder-val="{{ false }}">
+        <div style="position:absolute; bottom:60px; left:50%; font-size:42px; animation:floatUp 1.6s ease-out forwards; pointer-events:none">{{ floatEmoji }}</div>
+      </sc-if>
+
+      <sc-if value="{{ captionsOn }}" hint-placeholder-val="{{ false }}">
+        <div style="position:absolute; bottom:14px; left:50%; transform:translateX(-50%); background:rgba(0,0,0,.7); padding:10px 20px; border-radius:10px; font-size:14.5px; max-width:70%; text-align:center">Aziz Karimov: ...demak, diskriminant manfiy bo'lsa, tenglamaning haqiqiy ildizi yo'q...</div>
+      </sc-if>
+    </div>
+
+    <sc-if value="{{ isChatOpen }}" hint-placeholder-val="{{ false }}">
+      <div style="width:300px; background:#0d1219; border-left:1px solid #1c2430; display:flex; flex-direction:column">
+        <div style="padding:14px 16px; border-bottom:1px solid #1c2430; font-size:14px; font-weight:700; display:flex; justify-content:space-between; align-items:center">Chat <button onClick="{{ closeDrawer }}" style="background:none; border:none; color:#6b7688; cursor:pointer"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button></div>
+        <div style="flex:1; overflow:auto; padding:12px 16px; display:flex; flex-direction:column; gap:10px">
+          <sc-for list="{{ chatMessages }}" as="m" hint-placeholder-count="4">
+            <div><div style="font-size:11.5px; font-weight:700; color:#8b7cf6; margin-bottom:2px">{{ m.from }}</div><div style="font-size:13px; background:#161c26; padding:8px 10px; border-radius:8px; display:inline-block">{{ m.text }}</div></div>
+          </sc-for>
+        </div>
+        <div style="padding:12px; border-top:1px solid #1c2430; display:flex; gap:8px">
+          <button onClick="{{ attachFile }}" style="background:none; border:none; color:#6b7688; cursor:pointer"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 12l6-6a3 3 0 0 1 4 4l-8 8a5 5 0 0 1-7-7l8-8"/></svg></button>
+          <input value="{{ chatInput }}" onChange="{{ onChatInputChange }}" type="text" placeholder="Xabar yozing..." style="flex:1; background:#161c26; border:1px solid #262f3b; color:#eef1f6; padding:8px 10px; border-radius:8px; font-size:13px"/>
+          <button onClick="{{ sendChat }}" style="background:#6c5ce7; border:none; color:#fff; border-radius:8px; width:34px; display:flex; align-items:center; justify-content:center; cursor:pointer"><svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M3 11l17-8-8 17-2-7-7-2z"/></svg></button>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isParticipantsOpen }}" hint-placeholder-val="{{ false }}">
+      <div style="width:300px; background:#0d1219; border-left:1px solid #1c2430; display:flex; flex-direction:column">
+        <div style="padding:14px 16px; border-bottom:1px solid #1c2430; font-size:14px; font-weight:700; display:flex; justify-content:space-between; align-items:center">Ishtirokchilar ({{ participantCount }}) <button onClick="{{ closeDrawer }}" style="background:none; border:none; color:#6b7688; cursor:pointer"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button></div>
+        <sc-if value="{{ hasWaiting }}" hint-placeholder-val="{{ false }}">
+          <div style="padding:12px 16px; border-bottom:1px solid #1c2430">
+            <div style="font-size:11.5px; font-weight:700; color:#f59e0b; margin-bottom:8px">KUTISH XONASIDA ({{ waitingCount }})</div>
+            <sc-for list="{{ waitingList }}" as="w" hint-placeholder-count="2">
+              <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px">
+                <span style="font-size:13px">{{ w.name }}</span>
+                <div style="display:flex; gap:6px">
+                  <button onClick="{{ () => admitWaiting(w.id) }}" style="background:#34d399; border:none; color:#05070a; font-size:11px; font-weight:700; padding:5px 9px; border-radius:6px; cursor:pointer">Qabul qilish</button>
+                  <button onClick="{{ () => denyWaiting(w.id) }}" style="background:#232b37; border:none; color:#97a3b3; font-size:11px; font-weight:700; padding:5px 9px; border-radius:6px; cursor:pointer">Rad etish</button>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </sc-if>
+        <div style="padding:10px 16px"><button onClick="{{ muteAll }}" style="width:100%; background:#161c26; border:1px solid #262f3b; color:#eef1f6; padding:8px; border-radius:7px; font-size:12.5px; font-weight:700; cursor:pointer">Hammasini ovozsiz qilish</button></div>
+        <div style="flex:1; overflow:auto; padding:4px 16px">
+          <sc-for list="{{ participantsAll }}" as="p" hint-placeholder-count="8">
+            <div style="display:flex; align-items:center; justify-content:space-between; padding:9px 0; border-bottom:1px solid #161c26">
+              <div style="display:flex; align-items:center; gap:9px"><span style="width:28px; height:28px; border-radius:50%; background:#232b37; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; color:#a89bff">{{ p.initials }}</span><span style="font-size:13px">{{ p.name }}</span></div>
+              <div style="display:flex; align-items:center; gap:8px">
+                <sc-if value="{{ p.muted }}" hint-placeholder-val="{{ false }}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6b7688" stroke-width="1.8"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3z"/><line x1="4" y1="4" x2="20" y2="20"/></svg></sc-if>
+                <sc-if value="{{ p.hand }}" hint-placeholder-val="{{ false }}"><span style="font-size:13px">✋</span></sc-if>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ whiteboardOpen }}" hint-placeholder-val="{{ false }}">
+      <div style="position:absolute; inset:0; background:#f4f6f9; display:flex; flex-direction:column; z-index:20">
+        <div style="display:flex; align-items:center; justify-content:space-between; padding:10px 16px; background:#e7ebf0; border-bottom:1px solid #d6dce3">
+          <div style="display:flex; gap:8px; align-items:center">
+            <span style="font-size:13px; font-weight:700; color:#1a2330">Doska</span>
+            <sc-for list="{{ boardColors }}" as="c" hint-placeholder-count="4">
+              <button onClick="{{ () => setBoardColor(c.val) }}" style="width:22px; height:22px; border-radius:50%; background:{{ c.val }}; border:2px solid {{ c.border }}; cursor:pointer"></button>
+            </sc-for>
+          </div>
+          <div style="display:flex; gap:10px">
+            <button onClick="{{ clearBoard }}" style="background:#fff; border:1px solid #c9d1db; color:#1a2330; padding:7px 14px; border-radius:7px; font-size:12.5px; font-weight:700; cursor:pointer">Tozalash</button>
+            <button onClick="{{ closeWhiteboard }}" style="background:#1a2330; border:none; color:#fff; padding:7px 14px; border-radius:7px; font-size:12.5px; font-weight:700; cursor:pointer">Yopish</button>
+          </div>
+        </div>
+        <canvas ref="{{ wireCanvas }}" width="1400" height="760" style="flex:1; width:100%; cursor:crosshair; touch-action:none"></canvas>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ pollOpen }}" hint-placeholder-val="{{ false }}">
+      <div style="position:absolute; inset:0; background:rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; z-index:20">
+        <div style="width:420px; background:#12171f; border:1px solid #232b37; border-radius:16px; padding:24px">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:18px"><div style="font-size:15px; font-weight:700">So'rovnoma yaratish</div><button onClick="{{ closePoll }}" style="background:none; border:none; color:#6b7688; cursor:pointer"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button></div>
+          <input type="text" value="Diskriminant ishorasi qanday bo'lsa, ildiz bo'lmaydi?" style="width:100%; background:#161c26; border:1px solid #262f3b; color:#eef1f6; padding:10px 12px; border-radius:8px; font-size:13.5px; margin-bottom:12px"/>
+          <div style="display:flex; flex-direction:column; gap:8px; margin-bottom:16px">
+            <input type="text" value="D > 0" style="background:#161c26; border:1px solid #262f3b; color:#eef1f6; padding:9px 12px; border-radius:8px; font-size:13px"/>
+            <input type="text" value="D = 0" style="background:#161c26; border:1px solid #262f3b; color:#eef1f6; padding:9px 12px; border-radius:8px; font-size:13px"/>
+            <input type="text" value="D < 0" style="background:#161c26; border:1px solid #262f3b; color:#eef1f6; padding:9px 12px; border-radius:8px; font-size:13px"/>
+          </div>
+          <button onClick="{{ launchPoll }}" style="width:100%; background:#6c5ce7; border:none; color:#fff; padding:11px; border-radius:9px; font-size:14px; font-weight:700; cursor:pointer; margin-bottom:18px">So'rovnomani boshlash</button>
+          <sc-if value="{{ pollLaunched }}" hint-placeholder-val="{{ false }}">
+            <div style="border-top:1px solid #1c2430; padding-top:16px">
+              <div style="font-size:12px; font-weight:700; color:#97a3b3; margin-bottom:10px">Faol so'rovnoma · 18 ovoz</div>
+              <div style="display:flex; flex-direction:column; gap:8px">
+                <div><div style="display:flex; justify-content:space-between; font-size:12.5px; margin-bottom:4px"><span>D &lt; 0</span><span>67%</span></div><div style="height:7px; background:#232b37; border-radius:4px"><div style="width:67%; height:100%; background:#6c5ce7; border-radius:4px"></div></div></div>
+                <div><div style="display:flex; justify-content:space-between; font-size:12.5px; margin-bottom:4px"><span>D = 0</span><span>22%</span></div><div style="height:7px; background:#232b37; border-radius:4px"><div style="width:22%; height:100%; background:#6c5ce7; border-radius:4px"></div></div></div>
+                <div><div style="display:flex; justify-content:space-between; font-size:12.5px; margin-bottom:4px"><span>D &gt; 0</span><span>11%</span></div><div style="height:7px; background:#232b37; border-radius:4px"><div style="width:11%; height:100%; background:#6c5ce7; border-radius:4px"></div></div></div>
+              </div>
+            </div>
+          </sc-if>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ breakoutOpen }}" hint-placeholder-val="{{ false }}">
+      <div style="position:absolute; inset:0; background:rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; z-index:20">
+        <div style="width:460px; background:#12171f; border:1px solid #232b37; border-radius:16px; padding:24px">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px"><div style="font-size:15px; font-weight:700">Breakout xonalar</div><button onClick="{{ closeBreakout }}" style="background:none; border:none; color:#6b7688; cursor:pointer"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button></div>
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px">
+            <span style="font-size:13.5px; color:#97a3b3">Xonalar soni</span>
+            <div style="display:flex; align-items:center; gap:10px">
+              <button onClick="{{ decBreakoutRooms }}" style="width:28px; height:28px; border-radius:7px; background:#232b37; border:none; color:#fff; cursor:pointer; font-weight:700">−</button>
+              <span style="font-size:15px; font-weight:700; width:16px; text-align:center">{{ breakoutRoomsCount }}</span>
+              <button onClick="{{ incBreakoutRooms }}" style="width:28px; height:28px; border-radius:7px; background:#232b37; border:none; color:#fff; cursor:pointer; font-weight:700">+</button>
+            </div>
+          </div>
+          <div style="display:flex; flex-direction:column; gap:8px; margin-bottom:18px; max-height:220px; overflow:auto">
+            <sc-for list="{{ breakoutRooms }}" as="room" hint-placeholder-count="3">
+              <div style="background:#161c26; border-radius:9px; padding:10px 12px"><div style="font-size:13px; font-weight:700; margin-bottom:3px">Xona {{ room.n }}</div><div style="font-size:12px; color:#6b7688">{{ room.members }}</div></div>
+            </sc-for>
+          </div>
+          <button onClick="{{ openBreakouts }}" style="width:100%; background:#6c5ce7; border:none; color:#fff; padding:11px; border-radius:9px; font-size:14px; font-weight:700; cursor:pointer">Xonalarni ochish</button>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ shareModalOpen }}" hint-placeholder-val="{{ false }}">
+      <div style="position:absolute; inset:0; background:rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; z-index:20">
+        <div style="width:420px; background:#12171f; border:1px solid #232b37; border-radius:16px; padding:24px">
+          <div style="font-size:15px; font-weight:700; margin-bottom:16px">Nimani ulashmoqchisiz?</div>
+          <div style="display:flex; flex-direction:column; gap:8px; margin-bottom:18px">
+            <button onClick="{{ () => confirmShare('screen') }}" style="display:flex; align-items:center; gap:10px; background:#161c26; border:1px solid #262f3b; color:#eef1f6; padding:12px; border-radius:9px; cursor:pointer; text-align:left; font-size:13.5px; font-weight:600"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="12" rx="2"/></svg>Butun ekran</button>
+            <button onClick="{{ () => confirmShare('window') }}" style="display:flex; align-items:center; gap:10px; background:#161c26; border:1px solid #262f3b; color:#eef1f6; padding:12px; border-radius:9px; cursor:pointer; text-align:left; font-size:13.5px; font-weight:600"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="6" width="16" height="12" rx="1"/></svg>Bitta oyna</button>
+            <button onClick="{{ () => confirmShare('tab') }}" style="display:flex; align-items:center; gap:10px; background:#161c26; border:1px solid #262f3b; color:#eef1f6; padding:12px; border-radius:9px; cursor:pointer; text-align:left; font-size:13.5px; font-weight:600"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M3 7l4-4h6l4 4"/></svg>Brauzer tab</button>
+          </div>
+          <button onClick="{{ closeShareModal }}" style="width:100%; background:none; border:1px solid #333e4d; color:#97a3b3; padding:10px; border-radius:9px; font-size:13px; font-weight:600; cursor:pointer">Bekor qilish</button>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ securityOpen }}" hint-placeholder-val="{{ false }}">
+      <div style="position:absolute; bottom:90px; right:20px; width:270px; background:#12171f; border:1px solid #232b37; border-radius:12px; padding:16px; z-index:20">
+        <div style="font-size:13.5px; font-weight:700; margin-bottom:14px">Xavfsizlik</div>
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px"><span style="font-size:13px">Kutish xonasi</span><button onClick="{{ () => toggleSecOpt('waiting') }}" style="width:36px; height:20px; border-radius:10px; border:none; cursor:pointer; background:{{ secWaitingBg }}; position:relative"><span style="position:absolute; top:2px; left:{{ secWaitingPos }}; width:16px; height:16px; border-radius:50%; background:#fff"></span></button></div>
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px"><span style="font-size:13px">Parol bilan himoya</span><button onClick="{{ () => toggleSecOpt('passcode') }}" style="width:36px; height:20px; border-radius:10px; border:none; cursor:pointer; background:{{ secPasscodeBg }}; position:relative"><span style="position:absolute; top:2px; left:{{ secPasscodePos }}; width:16px; height:16px; border-radius:50%; background:#fff"></span></button></div>
+        <sc-if value="{{ showPasscodeDetail }}" hint-placeholder-val="{{ false }}">
+          <div style="background:#161c26; border-radius:8px; padding:10px 12px; margin-bottom:12px">
+            <sc-if value="{{ passcodeEditing }}" hint-placeholder-val="{{ false }}">
+              <div style="display:flex; gap:6px">
+                <input type="text" value="{{ newPasscode }}" onChange="{{ onNewPasscodeChange }}" style="flex:1; background:#0a0e14; border:1px solid #262f3b; color:#eef1f6; padding:6px 8px; border-radius:6px; font-size:12.5px"/>
+                <button onClick="{{ savePasscode }}" style="background:#6c5ce7; border:none; color:#fff; padding:6px 10px; border-radius:6px; font-size:11.5px; font-weight:700; cursor:pointer">Saqlash</button>
+              </div>
+            </sc-if>
+            <sc-if value="{{ passcodeEditing }}" hint-placeholder-val="{{ true }}">
+              <div style="display:flex; align-items:center; justify-content:space-between">
+                <span style="font-size:12.5px; color:#97a3b3">Joriy parol: <span style="color:#eef1f6; font-weight:700">{{ currentPasscode }}</span></span>
+                <button onClick="{{ startEditPasscode }}" style="background:#232b37; border:none; color:#eef1f6; padding:5px 10px; border-radius:6px; font-size:11px; font-weight:700; cursor:pointer">O'zgartirish</button>
+              </div>
+            </sc-if>
+          </div>
+        </sc-if>
+        <div style="display:flex; align-items:center; justify-content:space-between"><span style="font-size:13px">Xonani qulflash</span><button onClick="{{ () => toggleSecOpt('lock') }}" style="width:36px; height:20px; border-radius:10px; border:none; cursor:pointer; background:{{ secLockBg }}; position:relative"><span style="position:absolute; top:2px; left:{{ secLockPos }}; width:16px; height:16px; border-radius:50%; background:#fff"></span></button></div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ bgOpen }}" hint-placeholder-val="{{ false }}">
+      <div style="position:absolute; bottom:90px; left:50%; transform:translateX(-50%); background:#12171f; border:1px solid #232b37; border-radius:12px; padding:14px; z-index:20; display:flex; gap:10px">
+        <sc-for list="{{ virtualBgOptions }}" as="bg" hint-placeholder-count="4">
+          <button onClick="{{ () => setVirtualBg(bg.val) }}" style="width:66px; height:44px; border-radius:8px; background:{{ bg.preview }}; border:2px solid {{ bg.border }}; cursor:pointer; font-size:10px; color:#fff; display:flex; align-items:end; justify-content:center; padding-bottom:3px; font-weight:700">{{ bg.label }}</button>
+        </sc-for>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ reactionsOpen }}" hint-placeholder-val="{{ false }}">
+      <div style="position:absolute; bottom:90px; left:50%; transform:translateX(-50%); background:#12171f; border:1px solid #232b37; border-radius:30px; padding:8px 12px; z-index:20; display:flex; gap:6px">
+        <sc-for list="{{ emojiList }}" as="e" hint-placeholder-count="5">
+          <button onClick="{{ () => sendReaction(e) }}" style="background:none; border:none; font-size:22px; cursor:pointer; padding:4px">{{ e }}</button>
+        </sc-for>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ moreOpen }}" hint-placeholder-val="{{ false }}">
+      <div style="position:absolute; bottom:90px; right:150px; width:210px; background:#12171f; border:1px solid #232b37; border-radius:12px; padding:8px; z-index:20; display:flex; flex-direction:column">
+        <button onClick="{{ () => { toggleBg(); setMoreOpen(false); } }}" style="display:flex; align-items:center; gap:10px; background:none; border:none; color:#eef1f6; padding:10px; border-radius:8px; cursor:pointer; text-align:left; font-size:13.5px" style-hover="background:#1b222c"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="12" rx="2"/></svg> Virtual fon / Blur</button>
+        <button onClick="{{ () => { toggleBreakout(); setMoreOpen(false); } }}" style="display:flex; align-items:center; gap:10px; background:none; border:none; color:#eef1f6; padding:10px; border-radius:8px; cursor:pointer; text-align:left; font-size:13.5px" style-hover="background:#1b222c"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="8" r="2.5"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/></svg> Breakout xonalar</button>
+        <button onClick="{{ () => { toggleWhiteboard(); setMoreOpen(false); } }}" style="display:flex; align-items:center; gap:10px; background:none; border:none; color:#eef1f6; padding:10px; border-radius:8px; cursor:pointer; text-align:left; font-size:13.5px" style-hover="background:#1b222c"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20l1-4L16 5l3 3L8 19l-4 1z"/></svg> Doska</button>
+        <button onClick="{{ () => { togglePoll(); setMoreOpen(false); } }}" style="display:flex; align-items:center; gap:10px; background:none; border:none; color:#eef1f6; padding:10px; border-radius:8px; cursor:pointer; text-align:left; font-size:13.5px" style-hover="background:#1b222c"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20V10M12 20V4M20 20v-7"/></svg> So'rovnoma yaratish</button>
+        <button onClick="{{ () => { toggleSecurity(); setMoreOpen(false); } }}" style="display:flex; align-items:center; gap:10px; background:none; border:none; color:#eef1f6; padding:10px; border-radius:8px; cursor:pointer; text-align:left; font-size:13.5px" style-hover="background:#1b222c"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg> Xavfsizlik</button>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ leaveConfirmOpen }}" hint-placeholder-val="{{ false }}">
+      <div style="position:absolute; inset:0; background:rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; z-index:30">
+        <div style="width:340px; background:#12171f; border:1px solid #232b37; border-radius:16px; padding:22px; text-align:center">
+          <div style="font-size:15px; font-weight:700; margin-bottom:18px">Darsni tark etmoqchimisiz?</div>
+          <div style="display:flex; flex-direction:column; gap:8px">
+            <button onClick="{{ doLeave }}" style="background:#232b37; border:none; color:#eef1f6; padding:11px; border-radius:9px; font-size:13.5px; font-weight:700; cursor:pointer">Faqat men tark etaman</button>
+            <sc-if value="{{ isMentor }}" hint-placeholder-val="{{ true }}"><button onClick="{{ doLeave }}" style="background:#ef4444; border:none; color:#fff; padding:11px; border-radius:9px; font-size:13.5px; font-weight:700; cursor:pointer">Darsni barcha uchun tugatish</button></sc-if>
+            <button onClick="{{ closeLeaveConfirm }}" style="background:none; border:1px solid #333e4d; color:#97a3b3; padding:10px; border-radius:9px; font-size:13px; cursor:pointer">Bekor qilish</button>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+  </div>
+
+  <div style="display:flex; align-items:center; justify-content:center; gap:8px; padding:14px; background:#0d1219; border-top:1px solid #1c2430">
+    <button onClick="{{ toggleMic }}" style="display:flex; flex-direction:column; align-items:center; gap:3px; background:none; border:none; cursor:pointer; color:{{ micIconColor }}; padding:8px 12px; border-radius:10px" style-hover="background:#161c26">
+      <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3z"/><path d="M19 11a7 7 0 0 1-14 0"/><path d="M12 19v3"/><sc-if value="{{ micOff }}" hint-placeholder-val="{{ false }}"><line x1="4" y1="4" x2="20" y2="20"/></sc-if></svg>
+      <span style="font-size:10.5px; font-weight:600">{{ micLabel }}</span>
+    </button>
+    <button onClick="{{ toggleCam }}" style="display:flex; flex-direction:column; align-items:center; gap:3px; background:none; border:none; cursor:pointer; color:{{ camIconColor }}; padding:8px 12px; border-radius:10px" style-hover="background:#161c26">
+      <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7z"/><path d="M20 9.5 23 7v10l-3-2.5"/><sc-if value="{{ camOff }}" hint-placeholder-val="{{ false }}"><line x1="2" y1="2" x2="22" y2="22"/></sc-if></svg>
+      <span style="font-size:10.5px; font-weight:600">{{ camLabel }}</span>
+    </button>
+    <button onClick="{{ toggleHand }}" style="display:flex; flex-direction:column; align-items:center; gap:3px; background:none; border:none; cursor:pointer; color:{{ handIconColor }}; padding:8px 12px; border-radius:10px" style-hover="background:#161c26">
+      <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 13V6a1.5 1.5 0 0 1 3 0v5M11 11V4.5a1.5 1.5 0 0 1 3 0V11M14 11.5V6a1.5 1.5 0 0 1 3 0v7c0 3.5-2.5 6-6 6h-1c-2 0-3-1-4-2.5L4 13a1.3 1.3 0 0 1 2-1.6L8 13"/></svg>
+      <span style="font-size:10.5px; font-weight:600">Qo'l</span>
+    </button>
+    <button onClick="{{ toggleReactions }}" style="display:flex; flex-direction:column; align-items:center; gap:3px; background:none; border:none; cursor:pointer; color:#cdd5e0; padding:8px 12px; border-radius:10px" style-hover="background:#161c26">
+      <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M8 13c1 1.5 2.5 2.5 4 2.5s3-1 4-2.5"/><circle cx="9" cy="10" r="1" fill="currentColor" stroke="none"/><circle cx="15" cy="10" r="1" fill="currentColor" stroke="none"/></svg>
+      <span style="font-size:10.5px; font-weight:600">Reaksiya</span>
+    </button>
+    <button onClick="{{ toggleShareModal }}" style="display:flex; flex-direction:column; align-items:center; gap:3px; background:none; border:none; cursor:pointer; color:{{ shareIconColor }}; padding:8px 12px; border-radius:10px" style-hover="background:#161c26">
+      <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M12 12V7m0 0-2.5 2.5M12 7l2.5 2.5"/><path d="M8 20h8"/></svg>
+      <span style="font-size:10.5px; font-weight:600">Ulashish</span>
+    </button>
+    <button onClick="{{ toggleRecording }}" style="display:flex; flex-direction:column; align-items:center; gap:3px; background:none; border:none; cursor:pointer; color:{{ recIconColor }}; padding:8px 12px; border-radius:10px" style-hover="background:#161c26">
+      <svg width="21" height="21" viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="12" cy="12" r="7"/></svg>
+      <span style="font-size:10.5px; font-weight:600">{{ recLabel }}</span>
+    </button>
+    <button onClick="{{ toggleCaptions }}" style="display:flex; flex-direction:column; align-items:center; gap:3px; background:none; border:none; cursor:pointer; color:{{ ccIconColor }}; padding:8px 12px; border-radius:10px" style-hover="background:#161c26">
+      <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="6" width="20" height="12" rx="2"/><text x="12" y="15" font-size="7" text-anchor="middle" fill="currentColor" stroke="none">CC</text></svg>
+      <span style="font-size:10.5px; font-weight:600">Subtitr</span>
+    </button>
+    <button onClick="{{ () => toggleDrawer('chat') }}" style="display:flex; flex-direction:column; align-items:center; gap:3px; background:none; border:none; cursor:pointer; color:{{ chatIconColor }}; padding:8px 12px; border-radius:10px" style-hover="background:#161c26">
+      <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5h16v10H8l-4 4V5z"/></svg>
+      <span style="font-size:10.5px; font-weight:600">Chat</span>
+    </button>
+    <button onClick="{{ () => toggleDrawer('participants') }}" style="display:flex; flex-direction:column; align-items:center; gap:3px; background:none; border:none; cursor:pointer; color:{{ partIconColor }}; padding:8px 12px; border-radius:10px; position:relative" style-hover="background:#161c26">
+      <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="8" r="2.5"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><path d="M15 14.2c2.9.4 5 2.8 5 5.8"/></svg>
+      <span style="font-size:10.5px; font-weight:600">Odamlar</span>
+      <sc-if value="{{ hasWaiting }}" hint-placeholder-val="{{ false }}"><span style="position:absolute; top:2px; right:6px; width:8px; height:8px; border-radius:50%; background:#f59e0b"></span></sc-if>
+    </button>
+    <button onClick="{{ toggleMoreMenu }}" style="display:flex; flex-direction:column; align-items:center; gap:3px; background:none; border:none; cursor:pointer; color:#cdd5e0; padding:8px 12px; border-radius:10px" style-hover="background:#161c26">
+      <svg width="21" height="21" viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
+      <span style="font-size:10.5px; font-weight:600">Ko'proq</span>
+    </button>
+    <div style="width:1px; height:34px; background:#1c2430; margin:0 6px"></div>
+    <button onClick="{{ toggleLeaveConfirm }}" style="display:flex; align-items:center; gap:6px; background:#ef4444; border:none; cursor:pointer; color:#fff; padding:10px 18px; border-radius:10px; font-size:13px; font-weight:700" style-hover="background:#dc2626">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg> Tugatish
+    </button>
+  </div>
+</div>
+</sc-if>
+
+<div style="position:fixed; bottom:16px; right:16px; z-index:100; display:flex; align-items:center; gap:8px; background:#12171f; border:1px dashed #333e4d; border-radius:10px; padding:8px 10px">
+  <span style="font-size:10.5px; color:#6b7688; font-weight:700">DEMO:</span>
+  <select onChange="{{ onDemoNavChange }}" value="{{ screen }}" style="background:#161c26; color:#eef1f6; border:1px solid #262f3b; border-radius:6px; font-size:11.5px; padding:5px 7px">
+    <option value="landing">Bosh sahifa</option>
+    <option value="auth">Kirish/Ro'yxatdan o'tish</option>
+    <option value="mentorDash">Ustoz dashboard</option>
+    <option value="schedule">Dars rejalash</option>
+    <option value="studentDash">O'quvchi dashboard</option>
+    <option value="liveRoom">Jonli dars xonasi</option>
+    <option value="joinLink">Havola orqali kirish</option>
+    <option value="waitingRoom">Kutish sahifasi</option>
+    <option value="recordings">Yozuvlar kutubxonasi</option>
+    <option value="profile">Profil</option>
+    <option value="notifications">Bildirishnomalar</option>
+  </select>
+</div>
+
+<sc-if value="{{ toast }}" hint-placeholder-val="{{ false }}">
+  <div style="position:absolute; top:20px; left:50%; transform:translateX(-50%); background:#1b222c; border:1px solid #333e4d; color:#eef1f6; padding:10px 18px; border-radius:9px; font-size:13px; font-weight:600; z-index:200; animation:fadeIn .2s ease-out">{{ toast }}</div>
+</sc-if>
+
+</div>
+</div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+const STUDENT_NAMES = ["Malika Yusupova","Sardor Aliyev","Dilnoza Rashidova","Jasur Tursunov","Nodira Ergasheva","Bekzod Yoldoshev","Kamola Nabieva","Shaxzod Mirzayev","Zarina Qodirova","Otabek Sultonov","Madina Xolmatova","Umid Rajabov","Feruza Islomova","Davron Yusupov","Nilufar Saidova","Ilhom Abdullayev","Gulnoza Tosheva","Sherzod Nazarov","Sevara Bekova","Rustam Qosimov","Diyora Nurmatova","Farrux Jo'rayev","Mohira Sattorova"];
+
+function initials(name) { return name.split(' ').map(w => w[0]).join('').slice(0,2).toUpperCase(); }
+
+class Component extends DCLogic {
+  state = {
+    screen: 'landing',
+    role: 'mentor',
+    demoState: 'filled',
+    authTab: 'login',
+    magicLink: false,
+    viewMode: 'gallery',
+    gridCount: 9,
+    micOn: true,
+    camOn: true,
+    activeDrawer: null,
+    moreOpen: false,
+    bgOpen: false,
+    securityOpen: false,
+    reactionsOpen: false,
+    isSharing: false,
+    shareModalOpen: false,
+    isRecording: false,
+    handRaised: false,
+    captionsOn: false,
+    breakoutOpen: false,
+    breakoutRoomsCount: 4,
+    whiteboardOpen: false,
+    pollOpen: false,
+    pollLaunched: false,
+    virtualBg: 'none',
+    floatEmoji: null,
+    connIdx: 0,
+    waitingList: [{id: 1, name: 'Umid Rajabov'}, {id: 2, name: 'Feruza Islomova'}],
+    chatMessages: [
+      {from: 'Sardor Aliyev', text: "Assalomu alaykum!"},
+      {from: 'Tizim', text: "Aziz Karimov yozib olishni boshladi"},
+      {from: 'Dilnoza Rashidova', text: "Diskriminant formulasini qayta tushuntirib bera olasizmi?"}
+    ],
+    chatInput: '',
+    notifPrefs: {email: true, sms: false, push: true},
+    secOpts: {waiting: true, passcode: false, lock: false},
+    repeat: 'once',
+    invitedStudents: {},
+    linkGenerated: false,
+    leaveConfirmOpen: false,
+    toast: null,
+    boardColor: '#1a2330',
+    joinLinkMode: 'normal',
+    joinName: '',
+    joinPassword: '',
+    joinPasswordError: false,
+    currentPasscode: '384021',
+    passcodeEditing: false,
+    newPasscode: ''
+  };
+
+  participantsAll = STUDENT_NAMES.map((name, i) => ({
+    id: i + 1, name, initials: initials(name),
+    muted: i % 3 === 1, camOn: i % 4 !== 2, hand: i === 3, speaking: i === 0
+  }));
+
+  upcomingLessonsData = [
+    {title: "Kvadrat tenglamalar - guruh darsi", time: "Bugun, 18:00", dateShort: "BUGUN", count: 12},
+    {title: "Trigonometriya - individual (Sardor Aliyev)", time: "Ertaga, 10:00", dateShort: "24 IYUL", count: 1},
+    {title: "Ehtimollar nazariyasi - guruh darsi", time: "25-iyul, 16:00", dateShort: "25 IYUL", count: 9}
+  ];
+
+  recordingsData = [
+    {title: "Kvadrat tenglamalar - 1-qism", date: "18-iyul", duration: "58:12", size: "412 MB"},
+    {title: "Trigonometrik funksiyalar", date: "16-iyul", duration: "1:02:45", size: "480 MB"},
+    {title: "Limit va uzluksizlik", date: "14-iyul", duration: "45:30", size: "310 MB"},
+    {title: "Hosila asoslari", date: "11-iyul", duration: "55:00", size: "390 MB"},
+    {title: "Integral kirish", date: "9-iyul", duration: "1:10:20", size: "512 MB"},
+    {title: "Ehtimollar nazariyasi asoslari", date: "7-iyul", duration: "40:15", size: "280 MB"},
+    {title: "Statistika - o'rtacha va median", date: "4-iyul", duration: "50:00", size: "340 MB"},
+    {title: "Matritsalar va determinant", date: "2-iyul", duration: "1:05:00", size: "470 MB"}
+  ];
+
+  notificationsData = [
+    {id: 1, text: "Dars 15 daqiqadan keyin boshlanadi — Kvadrat tenglamalar", time: "2 daqiqa oldin", read: false},
+    {id: 2, text: "Sardor Aliyev darsga yozildi", time: "1 soat oldin", read: false},
+    {id: 3, text: "Yangi yozuv tayyor: Trigonometrik funksiyalar", time: "Kecha", read: true},
+    {id: 4, text: "Aziz Karimov sizga xabar qoldirdi", time: "2 kun oldin", read: true},
+    {id: 5, text: "Dars vaqti o'zgartirildi: Ehtimollar nazariyasi", time: "3 kun oldin", read: true}
+  ];
+
+  connLevels = [
+    {label: "Yaxshi", color: "#34d399"},
+    {label: "O'rtacha", color: "#f59e0b"},
+    {label: "Yomon", color: "#ef4444"}
+  ];
+
+  boardColors = [
+    {val: '#1a2330', border: '#c9d1db'},
+    {val: '#ef4444', border: '#ef4444'},
+    {val: '#3b82f6', border: '#3b82f6'},
+    {val: '#22c55e', border: '#22c55e'}
+  ];
+
+  virtualBgOptionsData = [
+    {val: 'none', label: 'Yo\'q', preview: '#232b37', border: '#333e4d'},
+    {val: 'blur', label: 'Blur', preview: 'linear-gradient(135deg,#334155,#1e293b)', border: '#333e4d'},
+    {val: 'office', label: 'Ofis', preview: 'linear-gradient(135deg,#4a3f6b,#2a2440)', border: '#333e4d'},
+    {val: 'board', label: 'Doska', preview: 'linear-gradient(135deg,#1f6f5c,#134238)', border: '#333e4d'}
+  ];
+
+  emojiList = ['👍','❤️','😂','👏','🎉'];
+
+  showToast(msg) {
+    this.setState({toast: msg});
+    clearTimeout(this._toastT);
+    this._toastT = setTimeout(() => this.setState({toast: null}), 2200);
+  }
+
+  wireCanvas = (node) => {
+    if (!node || this._wiredCanvas === node) return;
+    this._wiredCanvas = node;
+    const ctx = node.getContext('2d');
+    ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.strokeStyle = this.state.boardColor;
+    let drawing = false;
+    const pos = (e) => { const r = node.getBoundingClientRect(); return [(e.clientX - r.left) * (node.width / r.width), (e.clientY - r.top) * (node.height / r.height)]; };
+    node.addEventListener('pointerdown', (e) => { drawing = true; const [x,y] = pos(e); ctx.beginPath(); ctx.moveTo(x,y); });
+    node.addEventListener('pointermove', (e) => { if (!drawing) return; ctx.strokeStyle = this.state.boardColor; const [x,y] = pos(e); ctx.lineTo(x,y); ctx.stroke(); });
+    window.addEventListener('pointerup', () => drawing = false);
+    this._clearCanvas = () => ctx.clearRect(0,0,node.width,node.height);
+  };
+
+  renderVals() {
+    const s = this.state;
+    const nav = (screen) => this.setState({screen, activeDrawer: null, moreOpen: false, bgOpen: false, securityOpen: false, reactionsOpen: false, shareModalOpen: false, breakoutOpen: false, whiteboardOpen: false, pollOpen: false, leaveConfirmOpen: false});
+
+    const gridColsMap = {4: 'repeat(2,1fr)', 9: 'repeat(3,1fr)', 16: 'repeat(4,1fr)', 24: 'repeat(6,1fr)'};
+    const visibleParticipants = this.participantsAll.slice(0, s.gridCount).map(p => ({
+      ...p, camOff: !p.camOn,
+      speakBorder: p.speaking ? '2px solid #6c5ce7' : '2px solid transparent'
+    }));
+
+    const students = STUDENT_NAMES.slice(0, 12).map((name, i) => {
+      const invited = !!s.invitedStudents[i + 1];
+      return {
+        id: i + 1, name, initials: initials(name), attendance: (88 + (i % 10)) + '%',
+        inviteBg: invited ? '#231a3d' : 'transparent',
+        inviteBorder: invited ? '#6c5ce7' : '#333e4d',
+        inviteColor: invited ? '#a89bff' : '#97a3b3'
+      };
+    });
+
+    const conn = this.connLevels[s.connIdx];
+    const demoState = s.demoState;
+    const notifications = this.notificationsData.map(n => ({
+      ...n, rowBg: n.read ? 'transparent' : 'rgba(108,92,231,.06)',
+      dotColor: n.read ? 'transparent' : '#6c5ce7',
+      weight: n.read ? 400 : 700
+    }));
+
+    const breakoutRooms = Array.from({length: s.breakoutRoomsCount}, (_, i) => ({
+      n: i + 1, members: STUDENT_NAMES.slice(i * 2, i * 2 + 2).join(', ') || 'Belgilanmagan'
+    }));
+
+    const virtualBgOptions = this.virtualBgOptionsData.map(o => ({...o, border: o.val === s.virtualBg ? '#6c5ce7' : '#333e4d'}));
+
+    const toggleTrack = (on) => on ? '#6c5ce7' : '#2a3340';
+    const togglePos = (on) => on ? '20px' : '2px';
+
+    return {
+      screen: s.screen,
+      isLanding: s.screen === 'landing',
+      isAuth: s.screen === 'auth',
+      isShell: ['mentorDash','schedule','studentDash','recordings','profile','notifications'].includes(s.screen),
+      isJoinLink: s.screen === 'joinLink',
+      isWaitingRoom: s.screen === 'waitingRoom',
+      isLiveRoom: s.screen === 'liveRoom',
+      nav, onDemoNavChange: (e) => nav(e.target.value),
+
+      isMagicLink: s.magicLink, notMagicLink: !s.magicLink,
+      toggleMagicLink: () => this.setState({magicLink: !s.magicLink}),
+      magicLinkLabel: s.magicLink ? 'Parol bilan kirish' : 'Parolsiz kirish (magic link)',
+      setAuthTab: (t) => this.setState({authTab: t}),
+      loginTabBg: s.authTab === 'login' ? '#6c5ce7' : 'transparent', loginTabColor: s.authTab === 'login' ? '#fff' : '#97a3b3',
+      registerTabBg: s.authTab === 'register' ? '#6c5ce7' : 'transparent', registerTabColor: s.authTab === 'register' ? '#fff' : '#97a3b3',
+      authButtonLabel: s.authTab === 'login' ? (s.magicLink ? 'Havola yuborish' : 'Kirish') : "Ro'yxatdan o'tish",
+
+      isMentor: s.role === 'mentor',
+      setRole: (r) => this.setState({role: r}),
+      mentorRoleBg: s.role === 'mentor' ? '#6c5ce7' : 'transparent', mentorRoleColor: s.role === 'mentor' ? '#fff' : '#97a3b3',
+      studentRoleBg: s.role === 'student' ? '#6c5ce7' : 'transparent', studentRoleColor: s.role === 'student' ? '#fff' : '#97a3b3',
+      currentUserName: s.role === 'mentor' ? 'Aziz Karimov' : 'Sardor Aliyev',
+      currentUserRoleLabel: s.role === 'mentor' ? "Ustoz" : "O'quvchi",
+      dashScreen: s.role === 'mentor' ? 'mentorDash' : 'studentDash',
+
+      navBg: {
+        dash: (s.screen === 'mentorDash' || s.screen === 'studentDash') ? '#1e1a35' : 'transparent',
+        schedule: s.screen === 'schedule' ? '#1e1a35' : 'transparent',
+        recordings: s.screen === 'recordings' ? '#1e1a35' : 'transparent',
+        notifications: s.screen === 'notifications' ? '#1e1a35' : 'transparent',
+        profile: s.screen === 'profile' ? '#1e1a35' : 'transparent'
+      },
+      navColor: {
+        dash: (s.screen === 'mentorDash' || s.screen === 'studentDash') ? '#a89bff' : '#97a3b3',
+        schedule: s.screen === 'schedule' ? '#a89bff' : '#97a3b3',
+        recordings: s.screen === 'recordings' ? '#a89bff' : '#97a3b3',
+        notifications: s.screen === 'notifications' ? '#a89bff' : '#97a3b3',
+        profile: s.screen === 'profile' ? '#a89bff' : '#97a3b3'
+      },
+      hasUnread: notifications.some(n => !n.read),
+      unreadCount: notifications.filter(n => !n.read).length,
+
+      pageTitle: {mentorDash: 'Boshqaruv paneli', schedule: 'Dars rejalash', studentDash: 'Mening darslarim', recordings: 'Yozuvlar kutubxonasi', profile: 'Profil sozlamalari', notifications: 'Bildirishnomalar'}[s.screen] || '',
+      pageSubtitle: {mentorDash: "O'quvchilaringiz va darslar statistikasi", schedule: "Yangi dars yarating va o'quvchilarni taklif qiling", studentDash: "Bo'lajak va o'tgan darslaringiz", recordings: "Barcha yozib olingan darslar", profile: "Shaxsiy ma'lumotlar va bildirishnomalar", notifications: "So'nggi voqealar"}[s.screen] || '',
+
+      setDemoState: (d) => this.setState({demoState: d}),
+      demoFilledBg: demoState === 'filled' ? '#6c5ce7' : 'transparent', demoFilledColor: demoState === 'filled' ? '#fff' : '#97a3b3',
+      demoEmptyBg: demoState === 'empty' ? '#6c5ce7' : 'transparent', demoEmptyColor: demoState === 'empty' ? '#fff' : '#97a3b3',
+      demoLoadingBg: demoState === 'loading' ? '#6c5ce7' : 'transparent', demoLoadingColor: demoState === 'loading' ? '#fff' : '#97a3b3',
+      isLoadingState: demoState === 'loading', isNormalState: demoState === 'filled', isEmptyState: demoState === 'empty',
+      skeletonRows: [1,2,3,4],
+
+      isMentorDashScreen: s.screen === 'mentorDash',
+      isScheduleScreen: s.screen === 'schedule',
+      isStudentDashScreen: s.screen === 'studentDash',
+      isRecordingsScreen: s.screen === 'recordings',
+      isProfileScreen: s.screen === 'profile',
+      isNotificationsScreen: s.screen === 'notifications',
+
+      upcomingLessons: this.upcomingLessonsData,
+      students,
+      recordings: this.recordingsData,
+      recentRecordings: this.recordingsData.slice(0, 3),
+      notifications,
+      markAllRead: () => { this.notificationsData.forEach(n => n.read = true); this.forceUpdate(); },
+      markOneRead: (id) => { const n = this.notificationsData.find(x => x.id === id); if (n) n.read = true; this.forceUpdate(); },
+
+      setRepeat: (r) => this.setState({repeat: r}),
+      repeatOnceBg: s.repeat === 'once' ? '#6c5ce7' : 'transparent', repeatOnceColor: s.repeat === 'once' ? '#fff' : '#97a3b3',
+      repeatWeeklyBg: s.repeat === 'weekly' ? '#6c5ce7' : 'transparent', repeatWeeklyColor: s.repeat === 'weekly' ? '#fff' : '#97a3b3',
+      toggleStudentInvite: (id) => this.setState({invitedStudents: {...s.invitedStudents, [id]: !s.invitedStudents[id]}}),
+      generateLink: () => { this.setState({linkGenerated: true}); this.showToast('Havola yaratildi'); },
+      linkGenerated: s.linkGenerated, linkNotGenerated: !s.linkGenerated,
+      copyLink: () => this.showToast('Havola nusxalandi'),
+      invitedCount: Object.values(s.invitedStudents).filter(Boolean).length,
+
+      notifEmailBg: toggleTrack(s.notifPrefs.email), notifEmailPos: togglePos(s.notifPrefs.email),
+      notifSmsBg: toggleTrack(s.notifPrefs.sms), notifSmsPos: togglePos(s.notifPrefs.sms),
+      notifPushBg: toggleTrack(s.notifPrefs.push), notifPushPos: togglePos(s.notifPrefs.push),
+      toggleNotifPref: (k) => this.setState({notifPrefs: {...s.notifPrefs, [k]: !s.notifPrefs[k]}}),
+      saveProfile: () => this.showToast('Profil saqlandi'),
+
+      setJoinLinkMode: (m) => this.setState({joinLinkMode: m, joinPasswordError: false}),
+      joinModeNormalBg: s.joinLinkMode === 'normal' ? '#6c5ce7' : 'transparent', joinModeNormalColor: s.joinLinkMode === 'normal' ? '#fff' : '#97a3b3',
+      joinModePasscodeBg: s.joinLinkMode === 'passcode' ? '#6c5ce7' : 'transparent', joinModePasscodeColor: s.joinLinkMode === 'passcode' ? '#fff' : '#97a3b3',
+      joinModeInvalidBg: s.joinLinkMode === 'invalid' ? '#6c5ce7' : 'transparent', joinModeInvalidColor: s.joinLinkMode === 'invalid' ? '#fff' : '#97a3b3',
+      isJoinInvalid: s.joinLinkMode === 'invalid', isJoinForm: s.joinLinkMode !== 'invalid',
+      needsPasscode: s.joinLinkMode === 'passcode',
+      joinLessonTitle: "Kvadrat tenglamalar - guruh darsi",
+      joinName: s.joinName, onJoinNameChange: (e) => this.setState({joinName: e.target.value}),
+      joinPassword: s.joinPassword, onJoinPasswordChange: (e) => this.setState({joinPassword: e.target.value, joinPasswordError: false}),
+      joinPasswordError: s.joinPasswordError, joinPasswordBorder: s.joinPasswordError ? '#ef4444' : '#262f3b',
+      submitJoin: () => {
+        if (s.joinLinkMode === 'passcode' && s.joinPassword !== s.currentPasscode) { this.setState({joinPasswordError: true}); return; }
+        nav('waitingRoom');
+      },
+
+      showPasscodeDetail: s.secOpts.passcode,
+      passcodeEditing: s.passcodeEditing,
+      currentPasscode: s.currentPasscode,
+      newPasscode: s.newPasscode, onNewPasscodeChange: (e) => this.setState({newPasscode: e.target.value}),
+      startEditPasscode: () => this.setState({passcodeEditing: true, newPasscode: s.currentPasscode}),
+      savePasscode: () => { this.setState({currentPasscode: s.newPasscode || s.currentPasscode, passcodeEditing: false}); this.showToast('Parol yangilandi'); },
+
+      camOn: s.camOn, camOff: !s.camOn,
+      micBtnBg: s.micOn ? '#232b37' : '#ef4444', camBtnBg: s.camOn ? '#232b37' : '#ef4444',
+      toggleMic: () => this.setState({micOn: !s.micOn}),
+      toggleCam: () => this.setState({camOn: !s.camOn}),
+
+      isGalleryView: s.viewMode === 'gallery', isSpeakerView: s.viewMode === 'speaker',
+      setViewMode: (m) => this.setState({viewMode: m}),
+      galleryBg: s.viewMode === 'gallery' ? '#6c5ce7' : 'transparent', galleryColor: s.viewMode === 'gallery' ? '#fff' : '#97a3b3',
+      speakerBg: s.viewMode === 'speaker' ? '#6c5ce7' : 'transparent', speakerColor: s.viewMode === 'speaker' ? '#fff' : '#97a3b3',
+      gridCols: gridColsMap[s.gridCount] || 'repeat(3,1fr)',
+      visibleParticipants,
+      speakerStrip: visibleParticipants.slice(1, 6),
+      participantsAll: this.participantsAll.map(p => ({...p, camOff: !p.camOn})),
+      participantCount: this.participantsAll.length,
+      participantCountLabel: `${this.participantsAll.length} ishtirokchi`,
+
+      isRecording: s.isRecording, recIconColor: s.isRecording ? '#ef4444' : '#cdd5e0', recLabel: s.isRecording ? 'To\'xtatish' : 'Yozib olish',
+      toggleRecording: () => { this.setState({isRecording: !s.isRecording}); this.showToast(!s.isRecording ? 'Yozib olish boshlandi' : 'Yozib olish to\'xtatildi'); },
+
+      isSharing: s.isSharing, shareIconColor: s.isSharing ? '#34d399' : '#cdd5e0',
+      shareModalOpen: s.shareModalOpen,
+      toggleShareModal: () => this.setState(st => st.isSharing ? {isSharing: false} : {shareModalOpen: true}),
+      confirmShare: (type) => { this.setState({isSharing: true, shareModalOpen: false}); this.showToast('Ulashish boshlandi: ' + (type === 'screen' ? 'Butun ekran' : type === 'window' ? 'Oyna' : 'Tab')); },
+      closeShareModal: () => this.setState({shareModalOpen: false}),
+
+      micOff: !s.micOn, micIconColor: s.micOn ? '#cdd5e0' : '#ef4444', micLabel: s.micOn ? 'Mikrofon' : 'O\'chirilgan',
+      camIconColor: s.camOn ? '#cdd5e0' : '#ef4444', camLabel: s.camOn ? 'Kamera' : 'O\'chirilgan',
+      handIconColor: s.handRaised ? '#f59e0b' : '#cdd5e0',
+      toggleHand: () => { this.setState({handRaised: !s.handRaised}); this.showToast(!s.handRaised ? 'Qo\'l ko\'tarildi' : 'Qo\'l tushirildi'); },
+
+      reactionsOpen: s.reactionsOpen, toggleReactions: () => this.setState({reactionsOpen: !s.reactionsOpen, moreOpen: false, bgOpen: false, securityOpen: false}),
+      emojiList: this.emojiList,
+      floatEmoji: s.floatEmoji,
+      sendReaction: (e) => { this.setState({floatEmoji: e, reactionsOpen: false}); clearTimeout(this._emojiT); this._emojiT = setTimeout(() => this.setState({floatEmoji: null}), 1600); },
+
+      captionsOn: s.captionsOn, ccIconColor: s.captionsOn ? '#8b7cf6' : '#cdd5e0', toggleCaptions: () => this.setState({captionsOn: !s.captionsOn}),
+
+      isChatOpen: s.activeDrawer === 'chat', isParticipantsOpen: s.activeDrawer === 'participants',
+      chatIconColor: s.activeDrawer === 'chat' ? '#8b7cf6' : '#cdd5e0', partIconColor: s.activeDrawer === 'participants' ? '#8b7cf6' : '#cdd5e0',
+      toggleDrawer: (name) => this.setState({activeDrawer: s.activeDrawer === name ? null : name}),
+      closeDrawer: () => this.setState({activeDrawer: null}),
+      chatMessages: s.chatMessages, chatInput: s.chatInput,
+      onChatInputChange: (e) => this.setState({chatInput: e.target.value}),
+      sendChat: () => { if (!s.chatInput.trim()) return; this.setState({chatMessages: [...s.chatMessages, {from: s.role === 'mentor' ? 'Aziz Karimov' : 'Siz', text: s.chatInput}], chatInput: ''}); },
+      attachFile: () => this.showToast('Fayl biriktirildi'),
+
+      hasWaiting: s.waitingList.length > 0, waitingCount: s.waitingList.length, waitingList: s.waitingList,
+      admitWaiting: (id) => { this.setState({waitingList: s.waitingList.filter(w => w.id !== id)}); this.showToast('Ishtirokchi qabul qilindi'); },
+      denyWaiting: (id) => this.setState({waitingList: s.waitingList.filter(w => w.id !== id)}),
+      muteAll: () => this.showToast('Hammaning mikrofoni o\'chirildi'),
+
+      moreOpen: s.moreOpen, toggleMoreMenu: () => this.setState({moreOpen: !s.moreOpen, reactionsOpen: false, bgOpen: false, securityOpen: false}),
+      setMoreOpen: (v) => this.setState({moreOpen: v}),
+
+      bgOpen: s.bgOpen, toggleBg: () => this.setState({bgOpen: !s.bgOpen}),
+      virtualBgOptions, setVirtualBg: (v) => this.setState({virtualBg: v, bgOpen: false}),
+
+      securityOpen: s.securityOpen, toggleSecurity: () => this.setState({securityOpen: !s.securityOpen}),
+      secWaitingBg: toggleTrack(s.secOpts.waiting), secWaitingPos: togglePos(s.secOpts.waiting),
+      secPasscodeBg: toggleTrack(s.secOpts.passcode), secPasscodePos: togglePos(s.secOpts.passcode),
+      secLockBg: toggleTrack(s.secOpts.lock), secLockPos: togglePos(s.secOpts.lock),
+      toggleSecOpt: (k) => this.setState({secOpts: {...s.secOpts, [k]: !s.secOpts[k]}}),
+
+      breakoutOpen: s.breakoutOpen, toggleBreakout: () => this.setState({breakoutOpen: !s.breakoutOpen}),
+      closeBreakout: () => this.setState({breakoutOpen: false}),
+      breakoutRoomsCount: s.breakoutRoomsCount, breakoutRooms,
+      incBreakoutRooms: () => this.setState({breakoutRoomsCount: Math.min(8, s.breakoutRoomsCount + 1)}),
+      decBreakoutRooms: () => this.setState({breakoutRoomsCount: Math.max(2, s.breakoutRoomsCount - 1)}),
+      openBreakouts: () => { this.setState({breakoutOpen: false}); this.showToast(`${s.breakoutRoomsCount} ta breakout xona ochildi`); },
+
+      whiteboardOpen: s.whiteboardOpen, toggleWhiteboard: () => this.setState({whiteboardOpen: !s.whiteboardOpen}),
+      closeWhiteboard: () => this.setState({whiteboardOpen: false}),
+      wireCanvas: this.wireCanvas,
+      boardColors: this.boardColors, setBoardColor: (c) => this.setState({boardColor: c}),
+      clearBoard: () => { if (this._clearCanvas) this._clearCanvas(); },
+
+      pollOpen: s.pollOpen, togglePoll: () => this.setState({pollOpen: !s.pollOpen}),
+      closePoll: () => this.setState({pollOpen: false}),
+      pollLaunched: s.pollLaunched, launchPoll: () => this.setState({pollLaunched: true}),
+
+      connColor: conn.color, connLabel: conn.label, cycleConnection: () => this.setState({connIdx: (s.connIdx + 1) % this.connLevels.length}),
+
+      leaveConfirmOpen: s.leaveConfirmOpen, toggleLeaveConfirm: () => this.setState({leaveConfirmOpen: !s.leaveConfirmOpen}),
+      closeLeaveConfirm: () => this.setState({leaveConfirmOpen: false}),
+      doLeave: () => { this.setState({leaveConfirmOpen: false}); nav(s.role === 'mentor' ? 'mentorDash' : 'studentDash'); },
+
+      toast: s.toast
+    };
+  }
+}
+</script>
+</body>
+</html>

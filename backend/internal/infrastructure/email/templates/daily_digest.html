@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Your daily digest — {{.Date}}</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f4f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Oxygen,Ubuntu,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f5f7;padding:40px 0;">
+    <tr>
+      <td align="center">
+        <table width="600" cellpadding="0" cellspacing="0" style="background-color:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,0.1);">
+
+          <!-- Header -->
+          <tr>
+            <td style="background-color:#0052cc;padding:32px 40px;">
+              <table width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td>
+                    <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:700;letter-spacing:-0.5px;">JiraFlow</h1>
+                    <p style="margin:6px 0 0;color:#b3d0ff;font-size:13px;">Daily Digest &bull; {{.Date}}</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Greeting -->
+          <tr>
+            <td style="padding:32px 40px 0;">
+              <h2 style="margin:0 0 8px;color:#172b4d;font-size:20px;font-weight:600;">
+                Good morning, {{.UserName}} 👋
+              </h2>
+              <p style="margin:0;color:#42526e;font-size:15px;line-height:1.6;">
+                Here's a summary of your activity and assigned issues for today.
+              </p>
+            </td>
+          </tr>
+
+          <!-- Stats row -->
+          <tr>
+            <td style="padding:24px 40px;">
+              <table cellpadding="0" cellspacing="0" width="100%">
+                <tr>
+                  <td style="width:33%;text-align:center;background-color:#f4f5f7;border-radius:6px;padding:16px 8px;margin:0 4px;">
+                    <p style="margin:0 0 4px;color:#0052cc;font-size:28px;font-weight:700;">{{.TotalAssigned}}</p>
+                    <p style="margin:0;color:#6b778c;font-size:12px;">Assigned to you</p>
+                  </td>
+                  <td style="width:4px;"></td>
+                  <td style="width:33%;text-align:center;background-color:#f4f5f7;border-radius:6px;padding:16px 8px;">
+                    <p style="margin:0 0 4px;color:#00875a;font-size:28px;font-weight:700;">{{.TotalDone}}</p>
+                    <p style="margin:0;color:#6b778c;font-size:12px;">Done this week</p>
+                  </td>
+                  <td style="width:4px;"></td>
+                  <td style="width:33%;text-align:center;background-color:#f4f5f7;border-radius:6px;padding:16px 8px;">
+                    <p style="margin:0 0 4px;color:#ff5630;font-size:28px;font-weight:700;">{{.TotalOverdue}}</p>
+                    <p style="margin:0;color:#6b778c;font-size:12px;">Overdue</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Divider -->
+          <tr>
+            <td style="padding:0 40px;">
+              <hr style="border:none;border-top:1px solid #ebecf0;margin:0;" />
+            </td>
+          </tr>
+
+          <!-- Issues section -->
+          <tr>
+            <td style="padding:32px 40px 8px;">
+              <h3 style="margin:0 0 16px;color:#172b4d;font-size:14px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">
+                Your assigned issues
+              </h3>
+            </td>
+          </tr>
+
+          {{range .Issues}}
+          <tr>
+            <td style="padding:0 40px 12px;">
+              <table cellpadding="0" cellspacing="0" width="100%" style="border:1px solid #ebecf0;border-radius:4px;">
+                <tr>
+                  <td style="padding:16px 20px;">
+                    <table cellpadding="0" cellspacing="0" width="100%">
+                      <tr>
+                        <td>
+                          <a href="{{.Link}}" style="color:#0052cc;font-size:12px;font-weight:600;text-decoration:none;margin-right:8px;">{{.Key}}</a>
+                          <span style="color:#172b4d;font-size:14px;font-weight:500;">{{.Title}}</span>
+                        </td>
+                        <td align="right" style="white-space:nowrap;padding-left:16px;">
+                          {{if eq .Status "Done"}}
+                            <span style="display:inline-block;background-color:#e3fcef;color:#006644;font-size:11px;font-weight:600;padding:3px 8px;border-radius:3px;">{{.Status}}</span>
+                          {{else if eq .Status "In Progress"}}
+                            <span style="display:inline-block;background-color:#deebff;color:#0052cc;font-size:11px;font-weight:600;padding:3px 8px;border-radius:3px;">{{.Status}}</span>
+                          {{else if eq .Status "Blocked"}}
+                            <span style="display:inline-block;background-color:#ffebe6;color:#bf2600;font-size:11px;font-weight:600;padding:3px 8px;border-radius:3px;">{{.Status}}</span>
+                          {{else}}
+                            <span style="display:inline-block;background-color:#f4f5f7;color:#42526e;font-size:11px;font-weight:600;padding:3px 8px;border-radius:3px;">{{.Status}}</span>
+                          {{end}}
+                        </td>
+                      </tr>
+                      <tr>
+                        <td colspan="2" style="padding-top:6px;">
+                          <span style="color:#6b778c;font-size:12px;">{{.ProjectName}}</span>
+                          {{if .DueDate}}
+                          &nbsp;&bull;&nbsp;<span style="color:#6b778c;font-size:12px;">Due: {{.DueDate}}</span>
+                          {{end}}
+                          &nbsp;&bull;&nbsp;<span style="color:#6b778c;font-size:12px;">Priority: {{.Priority}}</span>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          {{end}}
+
+          <!-- CTA -->
+          <tr>
+            <td style="padding:24px 40px 40px;">
+              <table cellpadding="0" cellspacing="0">
+                <tr>
+                  <td style="border-radius:4px;background-color:#0052cc;">
+                    <a href="{{.DashboardLink}}" target="_blank"
+                       style="display:inline-block;padding:12px 28px;color:#ffffff;font-size:15px;font-weight:600;text-decoration:none;border-radius:4px;">
+                      Open My Dashboard
+                    </a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Divider -->
+          <tr>
+            <td style="padding:0 40px;">
+              <hr style="border:none;border-top:1px solid #ebecf0;margin:0;" />
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="padding:24px 40px;text-align:center;">
+              <p style="margin:0;color:#97a0af;font-size:12px;line-height:1.6;">
+                You're receiving this daily digest from JiraFlow.<br />
+                To unsubscribe or change digest frequency, visit your notification settings.
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

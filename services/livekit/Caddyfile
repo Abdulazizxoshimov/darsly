@@ -1,0 +1,48 @@
+# Caddy — butun platformaning YAGONA edge (80/443), avtomatik TLS (Let's Encrypt).
+# A1.4: backend stackdagi nginx olib tashlandi; Caddy SPA + API + wss + MinIO ni beradi.
+# Caddy `app`/`minio`/`livekit` ga `darsly_net` umumiy tarmog'i orqali yetadi.
+#
+# "Yomon internet" talabini yopadigan qatlam:
+#   - HTTPS frontend uchun wss:// (mobil/korporativ proksi shifrsiz WS'ni uzadi)
+#   - 443 ustidan wss signaling
+#
+# DNS (hammasi serverning ochiq IP'siga A-record):
+#   app.darsly.uz  api.darsly.uz  files.darsly.uz  livekit.darsly.uz
+
+# ── Frontend SPA + backend API (app.darsly.uz) — same-origin, wss shu orqali ──
+app.darsly.uz {
+	encode gzip zstd
+	# /api/* va /api/v1/ws (WebSocket ham) → Go backend. Caddy WS upgrade'ni avtomatik uzatadi.
+	handle /api/* {
+		reverse_proxy app:8080
+	}
+	# Qolgani — statik SPA (darsly_frontend_dist volume), client-side routing uchun index.html fallback.
+	handle {
+		root * /srv/www
+		try_files {path} /index.html
+		file_server
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+	}
+}
+
+# ── Backend API alohida host (api.darsly.uz) — LiveKit webhook shu yerga uradi ──
+api.darsly.uz {
+	reverse_proxy app:8080
+}
+
+# ── LiveKit signaling (wss://livekit.darsly.uz) ──
+livekit.darsly.uz {
+	reverse_proxy livekit:7880
+}
+
+# ── MinIO ochiq endpoint (presigned yozuv yuklab olish) ──
+files.darsly.uz {
+	reverse_proxy minio:9000
+}
+
+# Eslatma: TURNS (443/tcp → livekit 5349) uchun Caddy layer4 plugin yoki alohida
+# LB (HAProxy/nginx stream) kerak (HTTP emas, xom TLS/TCP) — B2.1. UDP TURN 3478 ishlaydi.
