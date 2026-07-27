@@ -18,7 +18,7 @@
 | **Zaxira nusxa (backup)** | 🔴 **YO'Q** — RPO = ∞ |
 | **CI** | 🔴 Fayl yozilgan, **hech qachon ishlamagan** (git yo'qligi sababli) |
 | Monitoring | 🟠 Kod to'liq, **prod'da o'chiq** (DSN/URL berilmagan) |
-| Test qamrovi | 🟠 Backend 38 fayl · Mobil 165 test · **Frontend 0** |
+| Test qamrovi | 🟠 Backend **53.2% lokal / 32.5% CI'da** · Mobil 165 test · **Frontend 0** |
 
 ### Bitta jumlada
 > Bugun serverning diski ishdan chiqsa — **butun mahsulot yo'qoladi**: kod ham (git yo'q),
@@ -166,7 +166,46 @@ fail-safe, LiveKit token scope, webhook imzosi, CORS/WS Origin, log redaksiyasi,
 
 ### 2.3 🧱 Backend Quality Agent
 
-> Hisobot kutilmoqda — kelganda shu bo'lim to'ldiriladi.
+`go build` ✅ · `go vet` ✅ · `go test -race` ✅ (race yo'q). Lekin **qamrov o'lchovi katta muammoni ochdi.**
+
+#### Test qamrovi — o'lchangan raqamlar
+
+| Rejim | Umumiy qamrov | Faqat prod kod |
+|---|---|---|
+| Lokal (Postgres+Redis ishlayapti) | **53.2%** | 52.0% |
+| **CI holati (DB yetib bo'lmaydi)** | **32.5%** | 28.3% |
+
+> **20.7 punkt qamrov CI'da jimgina yo'qoladi** — pastdagi F-1.
+
+**Eng past paketlar:** `internal/worker` **0%** (56 statement — eslatma dedup + email retry,
+ya'ni distributed-correctness mantiqi) · `infrastructure/email` 1.8% · `minio` 2.6% · `livekit` 25.8%.
+**Yaxshi qoplanganlar:** `usecase/joinlink` 95.5% · `chat` 85.7% · `notification` 84.6% · `room` 80.9% · `api` 80.1%.
+
+#### Topilmalar
+
+| # | Daraja | Topilma | Dalil | Mehnat |
+|---|---|---|---|---|
+| **F-1** | 🔴 KRITIK | **CI 50+ integratsiya testini jimgina skip qiladi** — CI Postgres'ni `5432`ga map qiladi, `testutil` esa `5442` kutadi; ulanolmasa `t.Skipf` → paket baribir `ok` ko'rinadi | `ci.yml:23` ↔ `testutil/pg.go:43` | 20 daq |
+| **F-2** | 🔴 KRITIK | Rol pasaytirilganda/foydalanuvchi o'chirilganda **sessiya bekor qilinmaydi**; `Rotate` rolni eski token claim'idan meros qiladi | `usecase/user/user.go:119-131,244-257`, `jwt.go:161` | 1 s |
+| **F-3** | 🟠 YUQORI | `GET /polls/:id/results` — `protected` guruhda emas, avtorizatsiyasiz ochiq | `router.go:210` | 40 daq |
+| **F-4** | 🟠 YUQORI | `poll`/`chat` da `shared.ValidateID` yo'q → `"abc"` UUID ustuniga yetadi → **auth'siz 500 generatori** (Sentry ko'miladi) | `usecase/poll/poll.go:47,68,91` | 20 daq |
+| **F-5** | 🟠 YUQORI | `WithTx` — **0 ta chaqiruv joyi**. `reminder.tick`da claim muvaffaqiyatli, `Notify` yiqilsa eslatma **butunlay yo'qoladi** | `internal/worker/reminder.go:50-62` | 1.5 s |
+| **F-6** | 🟠 YUQORI | SMTP `ctx`ni e'tiborsiz qoldiradi (`smtp.SendMail` deadline olmaydi) → worker **abadiy osiladi**; email worker'da cheksiz requeue (poison message) | `email/email.go:105`, `worker/email.go:68-72` | 2 s |
+| **F-7** | 🟠 YUQORI | `internal/worker` **0% qamrov** — aynan dedup/retry mantiqi sinovsiz | — | 3 s |
+| F-8…F-15 | 🟡/⚪ | LiveKit timeout'lari izchil emas · `MuteAll` 100 ishtirokchida ~200-300 ketma-ket HTTP · `refresh_tokens` **cheksiz o'sadi** (tozalash chaqirilmaydi) · `users` qidiruvida **to'liq skan** (email uchun trgm indeks yo'q) · Casbin nisbiy yo'l → noto'g'ri cwd'da hamma endpoint 503 · Makefile integratsiya testi ishlamaydi · `poll.go:94` qatlam buzilishi · slug modulo bias | | ~5 s |
+
+#### Ikki agent mustaqil ravishda bir xil xatoni topdi
+
+| Topilma | Security | Backend |
+|---|---|---|
+| Sessiya bekor qilinmasligi (rol/o'chirish) | Y-2, Y-3 | F-2 |
+| `/polls/:id/results` ochiq | O-5 | F-3 |
+
+> Bu tasodif emas — ikkala tekshiruv ham bir xil xulosaga kelgani topilmalarning **haqiqiyligini** kuchaytiradi.
+
+**Ijobiy:** SQL injection yo'q (Squirrel + allow-list) · 33 ta himoyalangan route Casbin'da birma-bir
+qoplangan · xato formatida ichki tafsilot sizmaydi · **N+1 topilmadi** (mentor nomi Redis'da,
+`ensureRoomOnce` singleflight bilan) · qatlam yo'nalishi import darajasida toza.
 
 ### 2.4 🎨 Frontend & Real-time (CPTO to'g'ridan-to'g'ri auditi)
 
@@ -238,7 +277,11 @@ Sizning shablon 99.99% uptime, Kubernetes, mikroservis, ISO 27001 ni talab qilad
 ### Sprint 1 — "Operatsion xavfsizlik" (1 hafta) · **MUST**
 
 - [ ] **Backup**: kunlik `pg_dump | gzip` + MinIO `mc mirror` → offsite; **haftalik tiklash mashqi**
-- [ ] CI yashil holatga: backend test + frontend build + **mobil `testDebugUnitTest`** qo'shilsin
+- [ ] **CI'ni haqiqatan ishlatish (F-1)**: `ci.yml` ga `TEST_DB_*`/`TEST_REDIS_*` env'lari — hozir
+      50+ integratsiya testi jimgina skip bo'ladi va CI baribir yashil ko'rinadi
+- [ ] CI ga mobil `testDebugUnitTest` va frontend smoke qo'shilsin
+- [ ] **Sessiya bekor qilish (F-2 / Y-1 / Y-2 / Y-3)** — bitta patch, uchta oqim:
+      parol almashtirish · foydalanuvchi o'chirish · rol o'zgarishi
 - [ ] Monitoring yoqilsin: Sentry DSN, `/metrics` → Prometheus, uptime alert (Telegram bot)
 - [ ] Compose gigiyenasi: 4 ta healthcheck, resurs limitlari, log rotatsiyasi, image tag'larini pin qilish
 - [ ] Xavfsizlik agenti topgan kritik/yuqori bandlar (2.2 bo'limi)
