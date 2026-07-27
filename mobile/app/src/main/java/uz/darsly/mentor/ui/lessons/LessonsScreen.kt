@@ -2,6 +2,7 @@
 
 package uz.darsly.mentor.ui.lessons
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -17,6 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ContentCopy
@@ -52,6 +54,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import uz.darsly.mentor.BuildConfig
 import uz.darsly.mentor.data.api.Lesson
+import uz.darsly.mentor.ui.theme.DarslyTheme
 import uz.darsly.mentor.util.LessonFormat
 import uz.darsly.mentor.util.Share
 
@@ -269,6 +272,33 @@ private fun LessonList(
 }
 
 /**
+ * Dars holati nishoni — web'dagi `.badge--live` / `.badge--scheduled` / `.badge--ended`
+ * ning aynan ko'chirmasi (`frontend/src/styles.css:219-237`).
+ *
+ * Web'da holat **rangli nishon** bilan ko'rsatiladi: to'liq dumaloq (`--r-full`),
+ * 0.15 shaffoflikdagi fon, qalin kichik matn. Avval mobilda bu oddiy matn edi —
+ * shuning uchun ikkala platforma boshqa mahsulotdek ko'rinardi.
+ */
+@Composable
+private fun StatusBadge(status: String) {
+    val c = DarslyTheme.colors
+    val (bg, fg) = when (status) {
+        "live" -> c.liveSoft to MaterialTheme.colorScheme.error
+        "ended" -> c.endedSoft to c.textMuted
+        "cancelled" -> c.cancelledSoft to c.warning
+        else -> c.scheduledSoft to c.info
+    }
+    Surface(shape = RoundedCornerShape(percent = 50), color = bg) {
+        Text(
+            LessonFormat.statusLabel(status),
+            style = MaterialTheme.typography.labelMedium,
+            color = fg,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+        )
+    }
+}
+
+/**
  * Dars xususiyati yorlig'i — "Parol", "Kutish xonasi", "Yozib olish", "Qulflangan".
  *
  * 🟢K: avval bu yerda `AssistChip` ishlatilgan edi. `AssistChip` `onClick` TALAB
@@ -279,9 +309,10 @@ private fun LessonList(
 @Composable
 private fun LessonBadge(label: String) {
     Surface(
-        shape = MaterialTheme.shapes.small,
+        shape = RoundedCornerShape(percent = 50),
         color = MaterialTheme.colorScheme.surfaceVariant,
         contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
     ) {
         Text(
             label,
@@ -303,16 +334,11 @@ private fun LessonCard(
             Text(lesson.title, style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(6.dp))
 
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(
-                    LessonFormat.statusLabel(lesson.status),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = if (lesson.status == "live") {
-                        MaterialTheme.colorScheme.error
-                    } else {
-                        MaterialTheme.colorScheme.primary
-                    },
-                )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                StatusBadge(lesson.status)
                 Text(
                     LessonFormat.scheduleLabel(lesson.scheduledAt) ?: "Vaqti belgilanmagan",
                     style = MaterialTheme.typography.labelMedium,
@@ -322,7 +348,7 @@ private fun LessonCard(
                     Text(
                         it,
                         style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = DarslyTheme.colors.textMuted,
                     )
                 }
             }
