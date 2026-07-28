@@ -11,6 +11,7 @@ import io.livekit.android.room.Room
 import io.livekit.android.room.track.Track
 import io.livekit.android.room.track.VideoTrack
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -18,12 +19,25 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import uz.darsly.mentor.data.api.ApiErrors
+import uz.darsly.mentor.data.api.LowerHandReq
 import uz.darsly.mentor.data.api.Net
+import uz.darsly.mentor.data.api.SendRoomChatReq
+import uz.darsly.mentor.data.livekit.HandQueue
 import uz.darsly.mentor.data.livekit.LessonSession
 import uz.darsly.mentor.data.livekit.LessonSessionHolder
+import uz.darsly.mentor.data.livekit.NetworkMonitor
+import uz.darsly.mentor.data.livekit.NetworkSwitchPolicy
+import uz.darsly.mentor.data.livekit.Transport
+import uz.darsly.mentor.data.livekit.RaisedHand
+import uz.darsly.mentor.data.livekit.ReactionFeed
+import uz.darsly.mentor.data.livekit.RoomDataParser
+import uz.darsly.mentor.data.livekit.RoomReaction
+import uz.darsly.mentor.data.livekit.RoomSignal
 import uz.darsly.mentor.data.livekit.ScreenAudioPolicy
+import uz.darsly.mentor.data.livekit.ScreenSharePlan
 import uz.darsly.mentor.service.LessonNotifications
 import uz.darsly.mentor.service.LessonService
+import uz.darsly.mentor.util.LessonFormat
 
 /**
  * Ekranda ko'rsatiladigan ishtirokchi (M20).
@@ -38,6 +52,30 @@ data class ParticipantUi(
     val videoTrack: VideoTrack?,
     val micMuted: Boolean,
     val speaking: Boolean,
+)
+
+/** Chat xabarining ko'rinish modeli. `privateWith` — shaxsiy bo'lsa suhbatdosh. */
+data class ChatMessageUi(
+    val id: String,
+    val name: String,
+    val body: String,
+    val self: Boolean,
+    val toIdentity: String?,
+)
+
+/**
+ * Moderatsiya paneli qatori.
+ *
+ * `canSpeak` — o'quvchiga so'zga ruxsat berilganmi. Bu ma'lumot LiveKit'dan
+ * kelmaydi (`ListParticipants` huquqlarni qaytarmaydi), shuning uchun ustoz
+ * bergan ruxsat KLIENTDA eslab qolinadi va panel shuni ko'rsatadi. Server
+ * haqiqati baribir LiveKit'da — bu faqat tugma matnini to'g'ri chiqarish uchun.
+ */
+data class RosterEntry(
+    val identity: String,
+    val name: String,
+    val audioMuted: Boolean,
+    val handRaised: Boolean,
 )
 
 data class RoomUiState(
@@ -66,9 +104,51 @@ data class RoomUiState(
     val localVideo: VideoTrack? = null,
     /** Dars nomi — sarlavhada UUID o'rniga shu ko'rsatiladi. */
     val lessonTitle: String? = null,
+    /**
+     * Shu dars yozib olinadimi (`is_recording_enabled`).
+     *
+     * Xonadagi REC indikatori AYNAN shunga bog'lanadi. Uni "ulangan bo'lsak
+     * yozilyapti" deb taxmin qilish mumkin emas: yozuv default yoniq bo'lsa-da,
+     * ustoz uni o'chirgan bo'lishi mumkin — u holda REC ko'rsatish yolg'on
+     * bo'lardi (va maxfiylik masalasida yolg'on eng yomoni).
+     */
+    val recordingEnabled: Boolean = false,
     val error: String? = null,
     /** B-2: mikrofonga ruxsat berilmadi — dars boshlanmaydi. */
     val micDenied: Boolean = false,
+    /**
+     * Qo'l ko'targanlar — NAVBAT tartibida (server `at` bo'yicha).
+     *
+     * Ustoz ekran ulashganda ilova fonda qoladi va bu ro'yxat ekranda
+     * ko'rinmaydi — shuning uchun u bir vaqtning o'zida BILDIRISHNOMA matniga
+     * ham chiqariladi (`LessonNotifications.signals`). Aks holda darsning eng
+     * muhim signali aynan eng muhim paytda yo'qolardi.
+     */
+    val hands: List<RaisedHand> = emptyList(),
+    /** Oxirgi reaksiyalar (o'tkinchi, saqlanmaydi). */
+    val reactions: List<RoomReaction> = emptyList(),
+    /** Chat xabarlari (eskidan yangiga). Server saqlaydi — bu faqat ko'rinish. */
+    val chat: List<ChatMessageUi> = emptyList(),
+    /** O'qilmagan xabarlar — chat oynasi yopiq bo'lganda ortadi. */
+    val unreadChat: Int = 0,
+    /** Xonadagi ishtirokchilar (moderatsiya paneli uchun, serverdan). */
+    val roster: List<RosterEntry> = emptyList(),
+    /**
+     * Tarmoq almashgani haqidagi qisqa izoh (C-11).
+     *
+     * Ustoz Wi-Fi'dan chiqib ketganda ekran jim qotib qolmasligi kerak: u nima
+     * bo'layotganini bilsa kutadi, bilmasa ilovani yopib qayta ochadi (va dars
+     * haqiqatan uziladi).
+     */
+    val networkNote: String? = null,
+    /**
+     * Uzilishdan keyin ekran ulashishni tiklash TAKLIFI (C-11 · 3-gipoteza).
+     *
+     * Android 14+ da rozilikni qayta so'ramasdan tiklab bo'lmaydi (platforma
+     * cheklovi, `ScreenSharePlan` ga qarang) — shuning uchun bu bayroq yonganda
+     * ekranda bir bosishlik "Davom ettirish" kartasi chiqadi.
+     */
+    val restoreShare: Boolean = false,
     /** Spike diagnostikasi: ekranga chiqadigan qisqa jurnal. */
     val log: List<String> = emptyList(),
 ) {
@@ -117,12 +197,64 @@ data class RoomUiState(
     )
 }
 
+/**
+ * Xotirada saqlanadigan eng ko'p chat xabari.
+ *
+ * Cheklov MAJBURIY: 90 daqiqalik darsda chat cheksiz o'ssa ro'yxat ham, Compose
+ * render'i ham og'irlashadi. To'liq tarix serverda qoladi.
+ */
+private const val MAX_CHAT = 200
+
+/**
+ * Majburiy qayta ulanish urinishlari orasidagi kutish (ms).
+ *
+ * Birinchisi 800 ms: tarmoq TASDIQLANGAN bo'lsa ham marshrut/DNS keshi bir
+ * lahza kechikishi mumkin. Keyingilari o'sib boradi — umumiy oyna ~46 soniya,
+ * bu [uz.darsly.mentor.data.livekit.LessonReconnectPolicy] oynasi bilan mos.
+ */
+private val RECONNECT_DELAYS = longArrayOf(800, 1500, 3000, 6000, 10000, 10000, 15000)
+
 class RoomViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _state = MutableStateFlow(RoomUiState())
     val state: StateFlow<RoomUiState> = _state.asStateFlow()
 
     private var session: LessonSession? = null
+
+    /** Data-channel signallarini o'qiydi (sof, JVM testida qoplangan). */
+    private val dataParser = RoomDataParser()
+
+    /** Reaksiya yozuvlariga barqaror kalit — Compose `key` uchun. */
+    private var reactionSeq = 0L
+
+    /** Majburiy qayta ulanish sikli (bir vaqtda bittasi). */
+    private var reconnectJob: Job? = null
+
+    /**
+     * Hozir O'ZIMIZ qayta ulanish uchun uzayapmizmi.
+     *
+     * `@Volatile` emas — hammasi `viewModelScope` (asosiy dispetcher) ichida
+     * o'qiladi va yoziladi.
+     */
+    private var intentionalReconnect = false
+
+    /**
+     * Ustoz ekran ulashishni YOQQAN va o'zi to'xtatmagan (C-11 · 3-gipoteza).
+     *
+     * [RoomUiState.screenOn] dan farqi: u "hozir oqim ketyaptimi" degan FAKT,
+     * bu esa "ustoz nima xohlaydi" degan NIYAT. Qayta ulanishda fakt yo'qoladi,
+     * niyat esa qoladi — tiklash qarori aynan shu ikkisining farqidan tug'iladi.
+     */
+    private var shareWanted = false
+
+    /**
+     * Oxirgi `createScreenCaptureIntent()` natijasi.
+     *
+     * Android 13 va pastda qayta ishlatiladi; 14+ da platforma taqiqlaydi va
+     * saqlanganidan foyda yo'q — lekin qaror [ScreenSharePlan] da, shuning uchun
+     * bu yerda versiya tekshiruvi YO'Q (aks holda qoida ikki joyga bo'linardi).
+     */
+    private var shareToken: Intent? = null
 
     /**
      * Ulanish qorovuli. Xato bo'lganda holat IDLE ga qaytadi — ustoz "Qayta urinish"
@@ -195,11 +327,29 @@ class RoomViewModel(app: Application) : AndroidViewModel(app) {
                 // chidamli so'rov: nom kelmasa ham dars boshlanaverishi kerak.
                 runCatching { Net.api.lessons(limit = 50).data.orEmpty().firstOrNull { it.id == lessonId } }
                     .getOrNull()
-                    ?.let { lesson -> _state.update { it.copy(lessonTitle = lesson.title) } }
+                    ?.let { lesson ->
+                        _state.update {
+                            it.copy(
+                                lessonTitle = lesson.title,
+                                recordingEnabled = lesson.isRecordingEnabled,
+                            )
+                        }
+                    }
 
                 val s = LessonSessionHolder.start(ctx, lessonId, token)
                 session = s
+                // Tizim pardasidagi "Stop sharing" — ustozning O'Z qarori.
+                // Usiz keyingi qayta ulanish uni "uzilib qolgan ulashish" deb
+                // tushunib, to'xtatilgan ulashishni qaytarib tiklardi.
+                s.onUserStoppedShare = {
+                    shareWanted = false
+                    shareToken = null
+                    log("ulashish tizim panelidan to'xtatildi")
+                }
                 observe(s)
+                loadRoomState(s)
+                loadChat(s)
+                observeNetwork()
 
                 runCatching { s.connect() }
                     .onSuccess {
@@ -292,15 +442,37 @@ class RoomViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun onDisconnected(sdkReasonName: String?) {
         val s = session ?: return // biz allaqachon o'zimiz chiqib bo'lganmiz
+
+        // ⚠️ QAYTA ULANISH UCHUN ATAYLAB UZILGAN — dars TUGAMAGAN.
+        //
+        // Qurilma sinovida (2026-07-28, LTE) aniqlangan zanjir:
+        //   tarmoq almashdi → majburiy qayta ulanish → `room.disconnect()`
+        //   → `Disconnected(CLIENT_INITIATED)` → bu handler uni "ustoz chiqdi"
+        //   deb tushunib MediaProjection va foreground servisni bo'shatardi
+        //   → dars O'LARDI.
+        // Ya'ni C-11 uchun yozilgan tuzatish o'zi darsni tugatardi.
+        //
+        // Shu bayroq ikkalasini ajratadi: bizning uzilishimiz jimgina o'tadi,
+        // haqiqiy uzilish esa avvalgidek qayta ishlanadi.
+        if (intentionalReconnect) {
+            log("uzilish qayta ulanish uchun — dars davom etadi")
+            return
+        }
         val reason = RoomStatus.endReasonOf(sdkReasonName)
         val message = RoomStatus.endMessage(reason)
         log("dars tugadi: $reason")
+
+        // Dars TUGADI — tiklaydigan ulashish yo'q (aks holda "Qayta boshlash"
+        // dan keyin ustoz so'ramagan taklif chiqib qolardi).
+        shareWanted = false
+        shareToken = null
 
         _state.update {
             it.copy(
                 connecting = false,
                 reconnecting = false,
                 screenOn = false,
+                restoreShare = false,
                 screenAudioOn = false,
                 micOn = false,
                 camOn = false,
@@ -319,6 +491,291 @@ class RoomViewModel(app: Application) : AndroidViewModel(app) {
             LessonService.stop(getApplication())
             log("MediaProjection va foreground servis bo'shatildi")
         }
+    }
+
+    /**
+     * Tarmoq almashuvini kuzatadi (C-11).
+     *
+     * LiveKit SDK'sining o'z qayta ulanishi bor, lekin Android'da eski interfeys
+     * DARHOL o'lmaydi: soket ochiq ko'rinadi, paket ketmaydi. SDK buni faqat
+     * timeout orqali sezadi va ustoz shu vaqt jim ekranga qarab turadi.
+     * Transport o'zgarishi esa "eski yo'l yaroqsiz" degan ANIQ signal.
+     *
+     * Qaror [NetworkSwitchPolicy] da — u sof va testlar bilan qotirilgan.
+     */
+    private fun observeNetwork() {
+        observeJobs += viewModelScope.launch {
+            var prev: Transport? = null
+            NetworkMonitor.transports(getApplication()).collect { now ->
+                val st = _state.value
+                val connected = st.connState == "connected" || st.connState == "reconnecting"
+                val note = NetworkSwitchPolicy.label(prev, now)
+                if (note != null) log("tarmoq: $note")
+                _state.update { it.copy(networkNote = note) }
+
+                if (NetworkSwitchPolicy.shouldForceReconnect(prev, now, connected)) {
+                    log("tarmoq almashdi — majburiy qayta ulanish")
+                    forceReconnect()
+                }
+                prev = now
+            }
+        }
+    }
+
+    /**
+     * Majburiy qayta ulanish: eski (yaroqsiz) ulanishni uzib, qaytadan ulanadi.
+     *
+     * SDK'ning o'z retry siklini kutmasdan — chunki u "half-open" soketni faqat
+     * timeout orqali sezadi.
+     *
+     * ## Nega TAKRORIY urinish shart (qurilma sinovi, 2026-07-28)
+     * Birinchi versiya bir marta urinardi. LTE'ga o'tishda o'sha yagona urinish
+     * `UnknownHostException` bilan yiqildi (tarmoq hali DNS uchun tayyor emas edi)
+     * va dars **butunlay o'lik qoldi**: `disconnect()` chaqirilgani uchun SDK'ning
+     * o'z retry sikli ham ishlamasdi. Ya'ni tuzatish o'zi yangi nosozlik yasagandi.
+     *
+     * Endi urinishlar backoff bilan takrorlanadi va ulanish tiklanishi bilan
+     * to'xtaydi. Chegaradan oshsa — foydalanuvchiga rost xabar beriladi.
+     */
+    private fun forceReconnect() {
+        val s = session ?: return
+        // Bir vaqtda bitta qayta ulanish sikli.
+        if (reconnectJob?.isActive == true) return
+        reconnectJob = viewModelScope.launch {
+            intentionalReconnect = true
+            try {
+                _state.update { it.copy(reconnecting = true) }
+                runCatching { s.room.disconnect() }
+
+                for ((attempt, delayMs) in RECONNECT_DELAYS.withIndex()) {
+                    delay(delayMs)
+                    if (session !== s) return@launch // sessiya almashdi/yopildi
+                    val result = runCatching { s.connect() }
+                    if (result.isSuccess) {
+                        log("qayta ulandi (${attempt + 1}-urinish)")
+                        _state.update { it.copy(reconnecting = false, networkNote = null) }
+                        restoreScreenShare()
+                        return@launch
+                    }
+                    // SABAB ham yoziladi: qurilma sinovida "muvaffaqiyatsiz" degan
+                    // quruq qator xatoni topishga yordam bermadi (DNS mi, imzo mi,
+                    // dublikat identity mi — bilib bo'lmasdi).
+                    val t = result.exceptionOrNull()
+                    log("qayta ulanish ${attempt + 1}-urinish muvaffaqiyatsiz: ${t?.let { it::class.simpleName }}: ${t?.message}")
+                }
+                log("qayta ulanib bo'lmadi — urinishlar tugadi")
+                _state.update { it.copy(reconnecting = false, networkNote = "Qayta ulanib bo'lmadi") }
+            } finally {
+                // Bayroq HAR QANDAY holatda tushadi: aks holda keyingi HAQIQIY
+                // uzilish ham jimgina yutilib, dars osilib qolardi.
+                intentionalReconnect = false
+            }
+        }
+    }
+
+    /**
+     * Xonaga ulangach ko'tarilgan qo'llarni SERVERDAN yuklaydi.
+     *
+     * Data-channel faqat KELAJAKDAGI signallarni beradi. Ustoz darsga kech
+     * qo'shilsa yoki ilovani qayta ishga tushirsa, u paytgacha ko'tarilgan
+     * qo'llar unga hech qachon yetib bormasdi — ya'ni o'quvchi so'rab o'tirar,
+     * ustoz esa hech nima ko'rmasdi.
+     *
+     * Xato jimgina yutiladi: holat yo'qligi darsni to'xtatmaydi (birinchi yangi
+     * signal ro'yxatni baribir to'ldiradi).
+     */
+    private fun loadRoomState(s: LessonSession) {
+        val lessonId = s.roomToken.lessonId
+        if (lessonId.isBlank()) return // eski backend — maydon yo'q
+        viewModelScope.launch {
+            runCatching { Net.api.roomState(lessonId, s.roomToken.token).data }
+                .onSuccess { resp ->
+                    val hands = resp?.hands.orEmpty().map {
+                        RaisedHand(
+                            identity = it.identity,
+                            name = it.name.ifBlank { it.identity },
+                            at = LessonFormat.instantMs(it.raisedAt),
+                        )
+                    }
+                    if (hands.isNotEmpty()) {
+                        _state.update { st -> st.copy(hands = HandQueue.replaceAll(hands)) }
+                        notifySignals(vibrate = false)
+                    }
+                }
+                .onFailure { log("xona holatini yuklab bo'lmadi: ${it.message}") }
+        }
+    }
+
+    /**
+     * Data-channel signalini holatga qo'llaydi va bildirishnomani yangilaydi.
+     *
+     * Bildirishnoma AYNAN shu yerda yangilanadi (UI qatlamida emas): ustoz ekran
+     * ulashganda ilova fonda bo'ladi va Compose umuman render qilmaydi — signal
+     * faqat shu yo'l bilan ko'zga tashlanadi.
+     */
+    private fun onRoomSignal(signal: RoomSignal?) {
+        if (signal == null) return
+        when (signal) {
+            is RoomSignal.Chat -> {
+                val myId = session?.roomToken?.identity
+                val ui = ChatMessageUi(
+                    id = signal.id,
+                    name = signal.senderName,
+                    body = signal.body,
+                    self = signal.senderIdentity == myId,
+                    toIdentity = signal.toIdentity,
+                )
+                _state.update { st ->
+                    // ID bo'yicha dublikat kesiladi: o'z xabarimizni optimistik
+                    // qo'shamiz, keyin server echo'si ham keladi.
+                    if (st.chat.any { it.id == ui.id }) st
+                    else st.copy(
+                        chat = (st.chat + ui).takeLast(MAX_CHAT),
+                        unreadChat = if (ui.self) st.unreadChat else st.unreadChat + 1,
+                    )
+                }
+                return
+            }
+
+            is RoomSignal.Reaction -> {
+                reactionSeq += 1
+                val r = RoomReaction(reactionSeq, signal.emoji, signal.name)
+                _state.update { it.copy(reactions = ReactionFeed.add(it.reactions, r)) }
+            }
+            else -> {
+                val before = _state.value.hands
+                val after = HandQueue.apply(before, signal)
+                if (after === before) return // hech nima o'zgarmadi — bildirishnomaga ham tegmaymiz
+                _state.update { it.copy(hands = after) }
+                // Vibratsiya faqat YANGI qo'lda: har o'zgarishda titratish (masalan
+                // qo'l tushirilganda) ustozni bezovta qilardi.
+                val newHand = after.size > before.size
+                notifySignals(vibrate = newHand)
+                return
+            }
+        }
+        notifySignals(vibrate = false)
+    }
+
+    // ── Chat ────────────────────────────────────────────────────────────────
+
+    /** Chat oynasi ochilganda o'qilmaganlar nolga tushadi. */
+    fun markChatRead() {
+        _state.update { it.copy(unreadChat = 0) }
+    }
+
+    /** Chat tarixini serverdan yuklaydi (xonaga kirganda va qayta ulanganda). */
+    private fun loadChat(s: LessonSession) {
+        val lessonId = s.roomToken.lessonId
+        if (lessonId.isBlank()) return
+        val myId = s.roomToken.identity
+        viewModelScope.launch {
+            runCatching { Net.api.roomChat(lessonId, s.roomToken.token).data.orEmpty() }
+                .onSuccess { items ->
+                    // Server eng yangidan eskiga beradi — UI'da teskarisi kerak.
+                    val ui = items.asReversed().map {
+                        ChatMessageUi(
+                            id = it.id,
+                            name = it.senderName,
+                            body = it.body,
+                            self = it.senderIdentity == myId,
+                            toIdentity = it.toIdentity,
+                        )
+                    }
+                    _state.update { st -> st.copy(chat = ui.takeLast(MAX_CHAT)) }
+                }
+                .onFailure { log("chat tarixini yuklab bo'lmadi: ${it.message}") }
+        }
+    }
+
+    /** Xabar yuboradi. `to` bo'sh bo'lsa — hammaga. */
+    fun sendChat(body: String, to: String = "") {
+        val s = session ?: return
+        val lessonId = s.roomToken.lessonId
+        if (lessonId.isBlank() || body.isBlank()) return
+        viewModelScope.launch {
+            runCatching {
+                Net.api.sendRoomChat(lessonId, SendRoomChatReq(s.roomToken.token, body, to)).data
+            }.onSuccess { m ->
+                if (m == null) return@onSuccess
+                val ui = ChatMessageUi(m.id, m.senderName, m.body, self = true, toIdentity = m.toIdentity)
+                _state.update { st ->
+                    if (st.chat.any { it.id == ui.id }) st else st.copy(chat = (st.chat + ui).takeLast(MAX_CHAT))
+                }
+            }.onFailure {
+                _state.update { st -> st.copy(error = ApiErrors.humanError(it)) }
+            }
+        }
+    }
+
+    // ── Moderatsiya ─────────────────────────────────────────────────────────
+
+    /**
+     * Ishtirokchilar ro'yxatini serverdan yangilaydi.
+     *
+     * LiveKit'ning lokal ro'yxati (`room.remoteParticipants`) ham bor, lekin
+     * moderatsiya uchun SERVER ko'rinishi ishlatiladi: u mute holatini ham
+     * beradi va ustoz bosgan tugma natijasi bilan bir manbadan keladi.
+     */
+    fun refreshRoster() {
+        val lessonId = session?.roomToken?.lessonId ?: return
+        if (lessonId.isBlank()) return
+        viewModelScope.launch {
+            runCatching { Net.api.participants(lessonId).data.orEmpty() }
+                .onSuccess { items ->
+                    val raised = _state.value.hands.map { it.identity }.toSet()
+                    val me = session?.roomToken?.identity
+                    _state.update { st ->
+                        st.copy(
+                            roster = items
+                                .filter { it.identity != me } // ustozning o'zi ro'yxatda kerak emas
+                                .map {
+                                    RosterEntry(
+                                        identity = it.identity,
+                                        name = it.name.ifBlank { it.identity },
+                                        audioMuted = it.audioMuted,
+                                        handRaised = it.identity in raised,
+                                    )
+                                },
+                        )
+                    }
+                }
+                .onFailure { log("ishtirokchilarni yuklab bo'lmadi: ${it.message}") }
+        }
+    }
+
+    /**
+     * Moderatsiya amali. Har biridan keyin ro'yxat yangilanadi — ustoz natijani
+     * darhol ko'rsin (aks holda "bosdim, hech nima o'zgarmadi" hissi qoladi).
+     */
+    private fun moderate(action: suspend (String) -> Unit) {
+        val lessonId = session?.roomToken?.lessonId ?: return
+        if (lessonId.isBlank()) return
+        viewModelScope.launch {
+            runCatching { action(lessonId) }
+                .onSuccess { refreshRoster() }
+                .onFailure { _state.update { st -> st.copy(error = ApiErrors.humanError(it)) } }
+        }
+    }
+
+    fun muteAll() = moderate { Net.api.muteAll(it) }
+    fun muteParticipant(identity: String) = moderate { Net.api.muteParticipant(it, identity) }
+    fun removeParticipant(identity: String) = moderate { Net.api.removeParticipant(it, identity) }
+    fun allowSpeak(identity: String) = moderate { Net.api.allowSpeak(it, identity) }
+    fun revokeSpeak(identity: String) = moderate { Net.api.revokeSpeak(it, identity) }
+
+    fun lowerHand(identity: String) = moderate { Net.api.lowerHand(it, LowerHandReq(identity)) }
+    fun lowerAllHands() = moderate { Net.api.lowerAllHands(it) }
+
+    /** Foreground bildirishnoma matnini joriy signallar bilan yangilaydi. */
+    private fun notifySignals(vibrate: Boolean) {
+        val st = _state.value
+        LessonNotifications.updateSignals(
+            ctx = getApplication(),
+            hands = st.hands.size,
+            lastReaction = st.reactions.firstOrNull()?.let { "${it.emoji} ${it.name}".trim() },
+            vibrate = vibrate,
+        )
     }
 
     /**
@@ -345,6 +802,11 @@ class RoomViewModel(app: Application) : AndroidViewModel(app) {
                         log("qayta ulandi")
                         _state.update { it.copy(reconnecting = false) }
                         setConn(s.room)
+                        // SDK o'z tiklanishida ekran trekini saqlab qolishi ham,
+                        // yo'qotishi ham mumkin — qaror faktga qaraydi, shuning
+                        // uchun bu yerdan chaqirish xavfsiz (ketayotgan ulashishga
+                        // tegilmaydi).
+                        restoreScreenShare()
                     }
                     is RoomEvent.Disconnected -> {
                         log("uzildi: ${event.reason}")
@@ -376,6 +838,9 @@ class RoomViewModel(app: Application) : AndroidViewModel(app) {
                     // DIQQAT: TrackPublicationFailed'da exception `val` emas (SDK 2.27.0),
                     // shuning uchun faqat track nomini log qilamiz.
                     is RoomEvent.TrackPublicationFailed -> log("TRACK E'LON XATOSI: ${event.track.name}")
+                    // ⭐ Dars ichidagi signallar: qo'l ko'tarish va reaksiyalar.
+                    // Manba serverda (`roomstate`), bu yerda faqat qo'llaymiz.
+                    is RoomEvent.DataReceived -> onRoomSignal(dataParser.parse(event.data))
                     else -> Unit
                 }
             }
@@ -485,10 +950,15 @@ class RoomViewModel(app: Application) : AndroidViewModel(app) {
         LessonService.start(ctx, withProjection = true)
         log("FGS mediaProjection tipi bilan ishga tushdi")
 
-        val notification = LessonNotifications.build(ctx, "Ekran ulashilmoqda")
+        val notification = LessonNotifications.build(ctx, "Ekran ulashilmoqda", summary = false)
         runCatching { s.startScreenShare(resultData, notification) }
             .onSuccess {
                 log("EKRAN ULASHISH BOSHLANDI (720p/15fps)")
+                // Uzilishdan keyin tiklash uchun NIYAT va rozilik saqlanadi (C-11).
+                shareWanted = true
+                shareToken = resultData
+                _state.update { it.copy(restoreShare = false) }
+                notifySignals(vibrate = false)
                 // Ekran audiosi: mikrofon track'iga mikslanadi (API 29+ talab qiladi).
                 val ok = s.startScreenAudio()
                 log(if (ok) "ekran audiosi YOQILDI" else "ekran audiosi yoqilmadi (API<29 yoki mikrofon o'chiq)")
@@ -496,8 +966,18 @@ class RoomViewModel(app: Application) : AndroidViewModel(app) {
             .onFailure { t ->
                 // Asl xato jurnalda (diagnostika/Sentry uchun), UI'da o'zbekcha matn.
                 log("EKRAN ULASHISH XATO: ${t::class.simpleName}: ${t.message}")
+                // Saqlangan rozilik yaroqsiz bo'lib chiqdi (Android uni bir marta
+                // beradi) — uni tashlaymiz, aks holda keyingi tiklash ham shu
+                // o'lik token bilan urinardi.
+                shareToken = null
                 _state.update {
-                    it.copy(error = "Ekranni ulashib bo'lmadi — qayta urinib ko'ring")
+                    if (shareWanted) {
+                        // Ustoz ulashayotgan edi: bu tiklash urinishining yiqilishi.
+                        // "Qayta urinib ko'ring" o'rniga bir bosishlik taklif kerak.
+                        it.copy(restoreShare = true)
+                    } else {
+                        it.copy(error = "Ekranni ulashib bo'lmadi — qayta urinib ko'ring")
+                    }
                 }
                 LessonService.start(ctx, withProjection = false)
             }
@@ -505,10 +985,89 @@ class RoomViewModel(app: Application) : AndroidViewModel(app) {
 
     fun stopScreenShare() = viewModelScope.launch {
         val s = session ?: return@launch
+        // Ustozning O'Z qarori — endi tiklanmaydi.
+        shareWanted = false
+        shareToken = null
+        _state.update { it.copy(restoreShare = false) }
         runCatching { s.stopScreenShare() }
             .onSuccess { log("ekran ulashish to'xtatildi") }
             .onFailure { log("to'xtatish XATO: ${it.message}") }
         LessonService.start(getApplication(), withProjection = false)
+        notifySignals(vibrate = false)
+    }
+
+    /** Ustoz "Keyinroq" dedi — taklif yopiladi, lekin niyat saqlanadi. */
+    fun dismissRestoreShare() {
+        _state.update { it.copy(restoreShare = false) }
+        log("ulashishni tiklash taklifi yopildi")
+    }
+
+    /**
+     * ⭐ UZILISHDAN KEYIN EKRAN ULASHISHNI TIKLASH (C-11 · 3-gipoteza).
+     *
+     * Qayta ulanish muvaffaqiyatli bo'lgach chaqiriladi. Qaror [ScreenSharePlan] da
+     * (sof, testlar ostida); bu yerda faqat uni bajarish.
+     *
+     * ## Nega Android 14+ da avtomatik EMAS
+     * Platforma har yozib olish sessiyasi uchun yangi rozilik talab qiladi — eski
+     * `Intent` qayta ishlatilsa `SecurityException`. Ya'ni "hech narsa so'ramay
+     * tiklash" texnik jihatdan mumkin emas. Shuning uchun taklif ikki kanal orqali
+     * beriladi: ekranda karta VA bildirishnoma — ustoz ulashish paytida odatda
+     * boshqa ilovada (PDF, GeoGebra) bo'ladi va kartani ko'rmaydi.
+     */
+    private fun restoreScreenShare() {
+        val s = session ?: return
+        // HAQIQAT bayroqdan emas, e'lon qilingan trekdan olinadi: qayta ulanishda
+        // trek yo'qoladi, bayroq esa `true` qolib "ulashilmoqda" deb yolg'on
+        // ko'rsatardi (qurilmada 2026-07-28 da aynan shu ko'rindi).
+        val sharingNow = s.reconcileScreenShare()
+        if (shareWanted) log("qayta ulanishdan keyin ekran treki: ${if (sharingNow) "bor" else "yo'q"}")
+
+        val action = ScreenSharePlan.afterReconnect(
+            wanted = shareWanted,
+            sharingNow = sharingNow,
+            hasToken = shareToken != null,
+            sdkInt = Build.VERSION.SDK_INT,
+        )
+        when (action) {
+            ScreenSharePlan.Action.NONE -> Unit
+
+            ScreenSharePlan.Action.REUSE_TOKEN -> {
+                val token = shareToken ?: return
+                log("ekran ulashish avtomatik tiklanmoqda")
+                startScreenShare(token)
+            }
+
+            ScreenSharePlan.Action.ASK_CONSENT -> {
+                log("ekran ulashish uzildi — rozilik qayta so'raladi (Android 14+)")
+                _state.update { it.copy(restoreShare = true) }
+                // Ustoz boshqa ilovada bo'lsa kartani ko'rmaydi — titratamiz.
+                LessonNotifications.alert(
+                    getApplication(),
+                    "Ekran ulashish uzildi — davom ettirish uchun bosing",
+                )
+            }
+        }
+    }
+
+    /**
+     * ⭐ DARSNI YAKUNLASH — xona serverda yopiladi va status `ended` bo'ladi.
+     *
+     * Chiqishdan farqi: [leave] faqat shu qurilmani xonadan oladi, dars esa
+     * `live` bo'lib qolaveradi. Mobil ilovada yakunlash yo'li YO'Q edi — shu
+     * sabab darslar abadiy "Jonli" bo'lib turardi.
+     *
+     * Server xatosi bo'lsa ham mahalliy resurslar baribir bo'shatiladi: ustoz
+     * ekranda qulflanib qolmasligi kerak (dars statusini keyin ro'yxatdan yoki
+     * web'dan tuzatish mumkin).
+     */
+    fun endLesson(lessonId: String) {
+        viewModelScope.launch {
+            runCatching { Net.api.endLesson(lessonId) }
+                .onSuccess { log("dars yakunlandi (server)") }
+                .onFailure { log("yakunlash XATO: ${it.message}") }
+            leave()
+        }
     }
 
     /** Darsni tark etish (xonani yopmaydi — bu `POST /lessons/:id/end` ishi). */
@@ -516,6 +1075,8 @@ class RoomViewModel(app: Application) : AndroidViewModel(app) {
         cancelObservers()
         LessonSessionHolder.stop()
         session = null
+        shareWanted = false
+        shareToken = null
         joinGuard.onReleased()
         LessonService.stop(getApplication())
         _state.value = RoomUiState()

@@ -53,6 +53,12 @@ class RealtimeParser(moshi: Moshi = Moshi.Builder().build()) {
                 title = payload.str("title"),
                 // Backend `body` yoki `message` yuborishi mumkin — ikkalasi ham qabul qilinadi.
                 body = payload.str("body") ?: payload.str("message"),
+                // Payload = butun `entity.Notification`, shuning uchun bu maydonlar
+                // ham keladi va bildirishnomani ro'yxatga qayta so'rovsiz qo'shishga
+                // yetadi (`RealtimeEvent.Notification.toModel`).
+                type = payload.str("type"),
+                lessonId = payload.str("lesson_id"),
+                createdAt = payload.str("created_at"),
             )
 
             else -> RealtimeEvent.Unknown(type)

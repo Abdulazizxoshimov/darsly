@@ -5,6 +5,7 @@ import uz.darsly.mentor.data.api.CreateLessonReq
 import uz.darsly.mentor.data.api.DarslyApi
 import uz.darsly.mentor.data.api.Lesson
 import uz.darsly.mentor.data.api.Net
+import uz.darsly.mentor.data.api.UpdateLessonReq
 import uz.darsly.mentor.data.store.CachedLessons
 import uz.darsly.mentor.data.store.LessonsCache
 import uz.darsly.mentor.data.store.PrefsLessonsCache
@@ -89,6 +90,38 @@ class LessonsRepository(
             cache.write(listOf(lesson) + cached.lessons.filterNot { it.id == lesson.id }, now())
         }
         lesson
+    }
+
+    /**
+     * Darsni tahrirlash (`PATCH`).
+     *
+     * Kesh **o'rnida** yangilanadi: ustoz ro'yxatga qaytganda o'zgargan sarlavhani
+     * darhol ko'radi va tarmoq yiqilsa ham eski nom qaytib chiqmaydi. Yozuv keshda
+     * topilmasa (masalan kesh hali bo'sh) hech narsa yozilmaydi — keyingi
+     * [refresh] baribir to'g'ri holatni olib keladi.
+     */
+    suspend fun update(lessonId: String, req: UpdateLessonReq): Result<Lesson> = runCatching {
+        val lesson = api.updateLesson(lessonId, req).data
+            ?: throw IllegalStateException("Server bo'sh javob qaytardi")
+        cache.read()?.let { cached ->
+            cache.write(cached.lessons.map { if (it.id == lesson.id) lesson else it }, now())
+        }
+        lesson
+    }
+
+    /**
+     * Darsni o'chirish.
+     *
+     * Kesh FAQAT server tasdiqlagandan keyin yangilanadi. Optimistik o'chirish
+     * (avval ro'yxatdan olib tashlab, keyin so'rov yuborish) bu yerda ataylab
+     * ishlatilmadi: so'rov 403/409 bilan qaytsa dars ekrandan yo'qolgan, lekin
+     * serverda tirik bo'lardi — ustoz uni o'chdi deb o'ylardi.
+     */
+    suspend fun delete(lessonId: String): Result<Unit> = runCatching {
+        api.deleteLesson(lessonId)
+        cache.read()?.let { cached ->
+            cache.write(cached.lessons.filterNot { it.id == lessonId }, now())
+        }
     }
 
     // DIQQAT: keshni tozalash bu yerda EMAS — u `DarslyApp.observeLogoutCleanup()` da,

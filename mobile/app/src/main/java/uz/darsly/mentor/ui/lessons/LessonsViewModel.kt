@@ -9,7 +9,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import uz.darsly.mentor.data.api.ApiErrors
-import uz.darsly.mentor.data.api.AuthRepository
 import uz.darsly.mentor.data.api.Lesson
 import uz.darsly.mentor.data.repo.LessonsRepository
 import uz.darsly.mentor.util.LessonFormat
@@ -19,7 +18,6 @@ data class LessonsUiState(
     val loading: Boolean = false,
     /** Pull-to-refresh aylanasi — ro'yxat ko'rinib turadi. */
     val refreshing: Boolean = false,
-    val loggingOut: Boolean = false,
     val lessons: List<Lesson> = emptyList(),
     /** To'liq ekranli xato — FAQAT ko'rsatadigan hech narsa bo'lmaganda. */
     val error: String? = null,
@@ -135,25 +133,43 @@ class LessonsViewModel @JvmOverloads constructor(
         refresh(userInitiated = false)
     }
 
+    /**
+     * Dars tahrirlandi — ro'yxatdagi nusxa almashtiriladi.
+     *
+     * Serverdan qayta so'ralmaydi: `PATCH` javobi darsning **to'liq** yangi
+     * holati (`hs.Success(c, lesson)`), ya'ni qo'shimcha so'rov faqat kechikish
+     * qo'shardi. Tartib qayta hisoblanadi — vaqt o'zgargan bo'lsa dars boshqa
+     * bo'limga ko'chishi kerak.
+     */
+    fun onLessonUpdated(lesson: Lesson) {
+        _state.update { st ->
+            st.copy(
+                lessons = LessonFormat.sortForDisplay(
+                    st.lessons.map { if (it.id == lesson.id) lesson else it },
+                ),
+                notice = "Dars saqlandi",
+            )
+        }
+    }
+
+    /** Dars o'chirildi — ro'yxatdan olib tashlanadi (repozitoriy keshni ham yangilagan). */
+    fun onLessonDeleted(lesson: Lesson) {
+        _state.update { st ->
+            st.copy(
+                lessons = st.lessons.filterNot { it.id == lesson.id },
+                notice = "Dars o'chirildi",
+            )
+        }
+    }
+
     /** Ekran tomonidan yuboriladigan qisqa xabar ("Havola nusxalandi"). */
     fun showNotice(message: String) = _state.update { it.copy(notice = message) }
 
     fun noticeShown() = _state.update { it.copy(notice = null) }
 
-    /**
-     * M3 — chiqish. Serverga xabar beramiz, lekin natijadan qat'i nazar lokal
-     * tozalash bajariladi; navigatsiyani `Session` signali qo'zg'atadi.
-     *
-     * Darslar keshini bu yer tozalamaydi — u `DarslyApp.observeLogoutCleanup()` da,
-     * `Session.loggedIn == false` bo'yicha markazlashtirilgan (🟡B). Aks holda
-     * **qattiq** logout (refresh o'lgani) yo'lida kesh diskda qolib ketardi.
-     */
-    fun logout() {
-        if (_state.value.loggingOut) return
-        _state.update { it.copy(loggingOut = true) }
-        viewModelScope.launch {
-            AuthRepository.logout()
-            _state.update { it.copy(loggingOut = false, lessons = emptyList()) }
-        }
-    }
+    // M3 "Chiqish" bu yerdan SHAXSIY KABINETGA ko'chirildi
+    // (`ui/profile/ProfileViewModel.logout`). Sabab: chiqish — sozlama, kunlik
+    // amal emas; darslar ekranining sarlavhasida turgani uchun tasodifan
+    // bosilardi. Kesh tozalash mantiqi o'zgarmadi — u `Session.loggedIn == false`
+    // signali bo'yicha `DarslyApp.observeLogoutCleanup()` da markazlashtirilgan (🟡B).
 }

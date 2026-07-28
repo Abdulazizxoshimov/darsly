@@ -16,6 +16,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -35,6 +36,7 @@ import uz.darsly.mentor.BuildConfig
 @Composable
 fun LoginScreen(
     onLoggedIn: () -> Unit,
+    onForgotPassword: () -> Unit,
     vm: LoginViewModel = viewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
@@ -102,6 +104,12 @@ fun LoginScreen(
                 Text("Kirish")
             }
         }
+
+        // Parolni tiklash — xato chiqishidan OLDIN emas, keyin ham emas: har
+        // doim ko'rinadi. Ustoz parolni unutganini "Kirish" bosgandan keyin
+        // emas, formani ko'rgan zahoti eslaydi.
+        Spacer(Modifier.height(8.dp))
+        TextButton(onClick = onForgotPassword) { Text("Parolni unutdingizmi?") }
 
         state.error?.let {
             Spacer(Modifier.height(16.dp))

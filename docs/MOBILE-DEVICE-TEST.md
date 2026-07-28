@@ -175,14 +175,14 @@ sharoitida edi. Har biri kelgusi audio sinovlarida ham amal qiladi:
 | # | Ish | Qanday |
 |---|---|---|
 | ~~1~~ ✅ | ~~B-6 maxfiylik~~ | Web'dan `POST /lessons/:id/end` → telefonda "Dars yakunlandi" kartasi, bildirishnoma yo'qolishi, `adb shell dumpsys media_projection` da **faol sessiya yo'qligi** |
-| 2 | **🟡A fon rejimi** | Ilovani fonga tashlab dars boshlash → abadiy spinner EMAS, xato + "Qayta urinish" |
+| ~~2~~ ✅ | ~~🟡A fon rejimi~~ — §5e | FGS `appops` bilan bloklandi → "Ulanmadi" + "Qayta urinish"; spinner yo'q |
 | ~~3~~ ✅ | ~~🟢L "Orqaga"~~ | Jonli darsda tasdiq oynasi; "Chiqish" → FGS va proyeksiya bo'shashi |
 | ~~4~~ ✅ | ~~C-3 fon rejimi~~ | PDF/GeoGebra ochib 10+ daqiqa — ulashish uzilmasligi (R0 da 28 daqiqa tasdiqlangan) |
-| ~~5~~ 🔴 | ~~C-11 Wi-Fi ↔ 4G~~ — **YIQILDI, §5b** (LTE bor joyda takrorlansin) | Dars tugamasligi; "Qayta ulanmoqda…" chiqib yo'qolishi |
+| ~~5~~ ✅ | ~~C-11 Wi-Fi ↔ 4G~~ — **§5d da LTE'da BAJARILDI** | ~2.3 s ichida tiklandi, dars tugamadi |
 | ~~6~~ ✅ | ~~C-13/C-14~~ | MediaProjection dialogini **bekor qilish**, ruxsatlarni **rad etish** → crash yo'q |
 | ~~7~~ ✅ | ~~B-2/B-4~~ | Pull-to-refresh imosi; **aviarejimda** offline chizig'i va keshlangan ro'yxat |
 | ~~8~~ ✅ | ~~M8 Telegram~~ | "Ulashish" → Telegram chooser'i; havola o'quvchida ochilishi |
-| 9 | **M8 nusxa olish** | "Nusxa olish" tugmasi → snackbar (Android 13+ da tizim o'zi ko'rsatadi) |
+| ~~9~~ ✅ | ~~M8 nusxa olish~~ — §5e | Tizim buferi oynasi havola bilan chiqdi (Android 13+ o'zi ko'rsatadi) |
 | ~~10~~ ✅ | ~~A-1/A-2~~ | `force-stop` → qayta ochish → kirgan holat; `run-as` bilan prefs faylida token **ochiq matnda yo'qligi** |
 
 ---
@@ -208,8 +208,229 @@ aytdi. **Xulosa: C-11 ni LTE bor joyda qayta sinash kerak.**
    SDK'ni `javap` bilan aniqlash;
 2. Tarmoq qaytganda **oshkora** qayta ulanish: `ConnectivityManager.NetworkCallback` →
    `room.reconnect()`;
-3. Uzilgach ekran ulashishni **avtomatik tiklash** (hozir ustoz qo'lda qayta ulashadi);
-4. LTE bor joyda takrorlash — muammo qanchalik tarmoqqa bog'liqligini ajratish.
+
+---
+
+### ✅ 5c. Ikkala gipoteza ham BAJARILDI (2026-07-28) — qurilmada qayta sinash kerak
+
+Yuqoridagi ikki gipoteza tekshirildi va ikkalasi ham **to'g'ri chiqdi**; kod yozildi.
+
+**1-gipoteza tasdiqlandi.** SDK artefaktini (`livekit-android-2.27.0`) ochib ko'rildi:
+`RoomOptions.reconnectPolicy` mavjud (`ReconnectPolicy.getNextRetryDelay(ReconnectContext)`).
+SDK default'i "internet yomon" holatiga mo'ljallangan — u KUTADI, chunki tez urinish zaif
+kanalni battar bo'g'adi. Tarmoq ALMASHUVI esa boshqa hodisa: yangi interfeys odatda darhol
+tayyor va kutish sof yo'qotish.
+
+→ `data/livekit/LessonReconnectPolicy.kt`: dastlabki uch urinish **~1.7 s ichida**
+(200 ms · 500 ms · 1 s), keyin backoff o'sadi (2→4→6→8→10 s), umumiy oyna **60 s**.
+7 ta JVM testi bilan qotirilgan.
+
+**2-gipoteza tasdiqlandi va kengaytirildi.** Faqat `NetworkCallback` yetarli emas: har qanday
+tarmoq o'zgarishida uzib-ulash zarar keltiradi (bir Wi-Fi nuqtadan boshqasiga o'tish WebRTC
+uchun shaffof). Shuning uchun qaror TRANSPORT o'zgarishiga bog'landi.
+
+→ `data/livekit/NetworkMonitor.kt` (Android qismi) + `NetworkSwitch.kt` (sof qaror):
+Wi-Fi↔LTE almashganda **majburiy** `disconnect()` + `connect()`; bir xil transport ichida
+tegilmaydi; internet umuman yo'qolganda kutiladi (majburiy urinish shu zahoti yiqilardi).
+8 ta JVM testi.
+
+→ UI: xona ekranida **"Mobil internetga o'tildi"** yozuvi chiqadi va u aloqa yozuvidan
+ustun turadi — ustoz "nima bo'ldi" ni bilmasa ilovani yopib qayta ochadi va dars
+haqiqatan uziladi.
+
+#### Qayta sinash protokoli (C-11)
+
+> ⚠️ Bu testlar QARORNI qotiradi, qurilmadagi haqiqiy almashuvni EMAS.
+> Quyidagi qadamlar **LTE qamrovi bor** joyda bajarilishi shart — avvalgi sinov
+> WCDMA (1/5 signal, ping 344–683 ms) da o'tgan va adolatli emas edi.
+
+| # | Qadam | Kutilgan natija |
+|---|---|---|
+| 1 | Wi-Fi'da darsni boshlang, ekranni ulashing | Ulashish ketmoqda, o'quvchi ko'ryapti |
+| 2 | Wi-Fi'ni o'chiring (LTE yoqilgan holda) | ≤2 s ichida **"Mobil internetga o'tildi"** chiqadi |
+| 3 | Kuting | **≤10 s** ichida dars tiklanadi; "Dars tugadi" kartasi CHIQMAYDI |
+| 4 | Ekran ulashish holatini tekshiring | Ulashish davom etadi (qayta yoqish shart emas) |
+| 5 | Wi-Fi'ni qayta yoqing | "Wi-Fi'ga o'tildi" → yana ≤10 s ichida tiklanadi |
+| 6 | O'quvchi tomonini tekshiring | Uzilish ≤10 s, keyin video/ekran qaytadi |
+
+**Yiqilsa nima yozish kerak:** ilova ichidagi **Diagnostika (debug)** panelini oching —
+u har bir tarmoq hodisasini va qayta ulanish urinishini yozadi (logcat'dan qulayroq).
+
+---
+
+## ✅ 5d. C-11 BAJARILDI (2026-07-28, 02:23) — LTE'da tasdiqlandi
+
+**Qurilma:** HONOR ABR-LX1 · Android 15 · **LTE (Uztelecom), RSRP −95 dBm, signal 4/5**,
+Band 3 / 20 MHz / carrier aggregation. Ya'ni §5b dagi "sinov adolatli emas edi"
+(WCDMA, 1/5, −106 dBm) sharti bartaraf etilgan.
+
+**Natija:** Wi-Fi → LTE almashuvida dars **TUGAMADI**, ~2.3 soniyada tiklandi.
+Teskari yo'nalishda (LTE → Wi-Fi) uzilish umuman bo'lmadi.
+
+### Ilova diagnostikasidan olingan aniq ketma-ketlik
+
+```
+tarmoq: Internet yo'q
+tarmoq: Mobil internetga o'tildi
+tarmoq almashdi — majburiy qayta ulanish
+uzildi: CLIENT_INITIATED
+uzilish qayta ulanish uchun — dars davom etadi
+qayta ulanish 1-urinish muvaffaqiyatsiz          ← DNS hali tayyor emas
+uzildi: JOIN_FAILURE
+uzilish qayta ulanish uchun — dars davom etadi
+qayta ulandi (2-urinish)                          ← ~2.3 s
+```
+
+### Sinov davomida topilgan VA tuzatilgan uchta nosozlik
+
+Birinchi urinish **yiqildi** va sabab kutilmagan bo'lib chiqdi — C-11 uchun yozilgan
+tuzatishning o'zi darsni o'ldirardi. Uchala nosozlik ham faqat qurilmada ko'rindi:
+
+| # | Nosozlik | Sabab | Tuzatish |
+|---|---|---|---|
+| 1 | Soxta "Mobil internetga o'tildi" va bekorga qayta ulanish | `registerNetworkCallback` **hamma** tarmoqlar uchun signal beradi; Wi-Fi va LTE bir vaqtda yoqiq bo'lsa oqim WIFI↔CELLULAR bo'lib tebranadi | `registerDefaultNetworkCallback` — faqat DEFAULT tarmoq |
+| 2 | Qayta ulanish DNS'da yiqilib, **hech narsa qayta urinmasdi** | Transport signali tarmoq hali ishlamayotgan paytda keladi → `UnknownHostException`; bitta urinishdan keyin to'xtardi | `NET_CAPABILITY_VALIDATED` gating + backoff bilan 7 urinish |
+| 3 | **Majburiy qayta ulanish darsni o'ldirardi** | `room.disconnect()` → `Disconnected(CLIENT_INITIATED)` → mavjud handler buni "ustoz chiqdi" deb tushunib MediaProjection va foreground servisni bo'shatardi | `intentionalReconnect` bayrog'i — bizning uzilishimiz jimgina o'tadi |
+
+> Uchinchisi eng muhim: avtomatik testlar buni **umuman topa olmasdi**, chunki u ikki
+> mustaqil to'g'ri komponentning o'zaro ta'siridan tug'iladi.
+
+### Yo'l-yo'lakay topilgan boshqa nosozliklar (o'sha sessiyada tuzatildi)
+
+| # | Nosozlik | Tuzatish |
+|---|---|---|
+| 4 | Boshqaruv paneli **telefonda sig'masdi** — 7-tugma ("Chiqish") yozuvi vertikal cho'zilib ekrandan chiqib ketardi (planshetda muammo ko'rinmasdi) | `BoxWithConstraints` — tugma o'lchami mavjud endan hisoblanadi |
+| 5 | Bildirishnomadagi `✋ 1 · 👍 Ali` matni **pardada ko'rinmasdi** — Android ikkita doimiy bildirishnomani avtomatik guruhlab, faqat "Darsly Mentor" ko'rsatardi | Guruh o'zimiz e'lon qilinadi; dars bildirishnomasi — SARLAVHA (`setGroupSummary`) |
+| 6 | **O'lik sessiyada boshi berk ko'cha**: foydalanuvchi DB'dan o'chirilgan, token esa hali yaroqli → `GET /users/me` 404 → ekranda "Topilmadi / Qayta urinish", chiqish tugmasi yo'q. Qayta urinish har safar aynan o'sha 404 ni qaytaradi; yagona chora ilova ma'lumotini tozalash edi | Profil 404 → **avtomatik chiqish** va kirish ekrani (`Session.forceLogout()`). 500/503 kabi vaqtinchalik xatolar sessiyani o'ldirmaydi — 2 test bilan qotirilgan |
+
+> ✅ №6 endi **qurilmada ham tasdiqlandi** — §5e ga qarang.
+
+**§5b dan qolgan gipotezalar:**
+3. ~~Uzilgach ekran ulashishni **avtomatik tiklash**~~ — **§5f da bajarildi** (Android 14+
+   cheklovi tufayli "bir bosishlik tiklash" shaklida);
+4. Zaif tarmoqda (WCDMA/1-signal) takrorlash — muammo qanchalik tarmoqqa bog'liqligini ajratish.
+
+---
+
+## ✅ 5e. §5d dan qolgan ish yopildi (2026-07-28, 09:35–09:50)
+
+Qurilma: o'sha HONOR ABR-LX1 · Android 15. Debug APK qayta yig'ilib o'rnatildi.
+Sinov hisobi admin API bilan yasaldi va **sinov oxirida o'chirildi** (`devicetest@darsly.uz`,
+`deadsession@darsly.uz`, `Nusxa olish sinovi` darsi — hammasi tozalandi).
+
+### ✅ №6 (o'lik sessiya) — qurilmada tasdiqlandi
+
+| Qadam | Natija |
+|---|---|
+| `deadsession@darsly.uz` (mentor) bilan kirildi, "Kabinet" ochildi | Profil normal ko'rindi |
+| Admin `DELETE /users/:id` bilan foydalanuvchi o'chirildi (token hali yaroqli) | 204 |
+| Ilovada "Darslar" → "Kabinet" ga qayta kirildi | **Kirish ekraniga avtomatik chiqarildi** — "Topilmadi / Qayta urinish" halqasi YO'Q |
+
+### ✅ 🟡A fon rejimi (§5 № 2) — qurilmada tasdiqlandi
+
+Ikki holat sinaldi:
+
+1. **"Boshlash" bosilib darhol HOME** — dars odatdagidek boshlandi. Android bosishdan
+   keyingi imtiyoz oynasida FGS'ga ruxsat beradi, ya'ni bu yo'l bilan xato holatiga
+   umuman tushib bo'lmaydi (spinnerda qotish ham yo'q).
+2. **FGS majburan bloklandi** — `adb shell cmd appops set uz.darsly.mentor START_FOREGROUND deny`.
+   Natija: **"Ulanmadi" kartasi + "Qayta urinish"**, abadiy spinner emas. Appop qaytarilib
+   "Qayta urinish" bosilgach xona to'liq tiklandi (sarlavha, REC, ishtirokchilar).
+
+> Usul eslab qolinsin: `appops … START_FOREGROUND deny` — 🟡A ning xato shoxini
+> qurilmada ishonchli qo'zg'atadigan yagona amaliy yo'l.
+
+### ✅ M8 nusxa olish (§5 № 9) — qurilmada tasdiqlandi
+
+"Nusxa olish" ikonkasi → Android 13+ tizim buferi oynasi havola bilan chiqdi
+(`https://app.…/r/b2h-dra2-xzs`, "Edit / Share" tugmalari bilan). Ilova o'z snackbar'ini
+ko'rsatmaydi va **ko'rsatmasligi to'g'ri** — tizimniki bilan ikkilanib qolardi.
+
+### Qurilmada topilgan va shu sessiyada tuzatilgan nosozliklar
+
+| # | Nosozlik | Tuzatish |
+|---|---|---|
+| 7 | §6 №1 tasdiqlandi: jonli darsda **"Davom etish"** ikki qatorga bo'linib tugmani baland qilardi (telefon 360dp; planshetda ko'rinmasdi) | `LessonsScreen.LessonCard` — `BoxWithConstraints`: tor kartada "Ulashish" yozuvi olib tashlanadi (ikonka qoladi), matn `maxLines = 1`. Qurilmada bir qatorga sig'di |
+| 8 | Karta meta qatorida **"1 soat"** ikki qatorga bo'linardi | Sana `weight(1f, fill = false)` + ellipsis, davomiylik `maxLines = 1` |
+| 9 | Ulanmagan holatda sarlavha ostida inglizcha **"disconnected"** (SDK enum nomi) ko'rinardi | `RoomStatus.connLabel()` — o'zbekcha yozuv; noma'lum qiymat ham "ulanmagan" beradi. 1 test qo'shildi (jami **347**) |
+
+### Eskirgan deb yopilgan §6 bandlari
+
+- §6 №2 (`RoomScreen.Row2` da uzun UUID qatorlari) — M20 qayta qurilishida bu qatorlar
+  butunlay olib tashlangan, ekranda UUID yo'q.
+- §6 №3 (xato kartasi tugmalarni suradi) — yangi maketda xato kartasi TEPADA, boshqaruv
+  paneli PASTGA qotirilgan; FGS bloklangan sinovda tugmalar joyidan qimirlamadi.
+
+---
+
+## ✅ 5f. Ekran ulashishni tiklash (§5b · 3-gipoteza) — 2026-07-28, 10:00–10:20
+
+Qurilma: HONOR ABR-LX1 · Android 15 · Wi-Fi ↔ LTE (ikkala yo'nalish ham).
+
+### Platforma cheklovi — "avtomatik" so'zining chegarasi
+
+**Android 14 (API 34) dan boshlab har bir yozib olish sessiyasi uchun YANGI rozilik
+majburiy**: eski `createScreenCaptureIntent()` natijasini qayta ishlatib bo'lmaydi.
+Ya'ni "ustoz hech narsa bosmasdan ulashish tiklanadi" 14+ da **prinsipial mumkin emas**.
+Shuning uchun tiklash ikki xil qilib yozildi (`data/livekit/ScreenSharePlan.kt`, 5 test):
+
+| Holat | Qaror |
+|---|---|
+| Ustoz ulashmagan / o'zi to'xtatgan | `NONE` — tiklanmaydi (aks holda to'xtatilgan ulashish qaytib kelardi) |
+| Uzilish trekka tegmagan | `NONE` — ketayotgan oqim uzilmaydi |
+| Android ≤ 13, rozilik saqlangan | `REUSE_TOKEN` — jimgina qayta boshlanadi |
+| Android 14+ | `ASK_CONSENT` — bir bosishlik taklif |
+
+### Uch kanal — chunki ustoz odatda ilovada emas
+
+1. **Ekranda karta**: "Ekran ulashish uzildi · Davom ettirish / Keyinroq". "Davom ettirish"
+   tizim oynasini darhol ochadi ("Butun ekran" tushuntirishi TAKRORLANMAYDI — bu tiklash).
+2. **Bildirishnoma + titrash**: `Ekran ulashish uzildi — davom ettirish uchun bosing`.
+   Ustoz PDF/GeoGebra ichida bo'lsa kartani ko'rmaydi; usiz u ulashish o'lganini faqat
+   o'quvchilar aytganda bilardi.
+3. Ulashish qaytgach bildirishnoma matni odatdagi holatiga qaytadi.
+
+### 🔴 Yo'l-yo'lakay topilgan JIDDIY nosozlik: interfeys yolg'on gapirardi
+
+Birinchi o'lchovda qayta ulanishdan keyin ekranda **"Ekraningiz ulashilmoqda"** va
+**EFIRDA** yozuvlari turaverdi — aslida ekran treki yo'q edi. Sabab: `_screenShareOn`
+BAYROQ edi (faqat ustoz to'xtatganda o'chardi), qayta ulanishda esa trek SERVERDA
+yo'qoladi. Ya'ni ustoz "ulashyapman" deb ishonib dars o'tardi, o'quvchilar esa hech
+narsa ko'rmasdi — bu C-11 ning o'zidan ham yomonroq holat.
+
+→ `LessonSession.reconcileScreenShare()`: holat endi bayroqdan emas, **e'lon qilingan
+trekdan** (`getTrackPublication(SCREEN_SHARE)`) olinadi. Tiklash qarori ham shundan
+boshlanadi.
+
+### Qurilmadagi o'lchov (ikkala yo'nalish)
+
+| Qadam | Natija |
+|---|---|
+| Wi-Fi'da ulashish boshlandi | "Ekraningiz ulashilmoqda" · EFIRDA |
+| Wi-Fi o'chirildi (LTE bor) | "Mobil internetga o'tildi" → 2-urinishda qayta ulandi (§5d bilan bir xil) |
+| Qayta ulangach | Sahna **rost** holatga qaytdi (ulashish yo'q) va **tiklash kartasi** chiqdi |
+| "Davom ettirish" → tizim oynasi → Allow | Ulashish tiklandi (EFIRDA qaytdi) |
+| Ilova FONDA, Wi-Fi qayta yoqildi | Bildirishnoma matni `Ekran ulashish uzildi — davom ettirish uchun bosing` ga o'zgardi (`dumpsys notification` bilan tasdiqlandi) |
+| Ilovaga qaytib "Davom ettirish" | Ulashish yana tiklandi |
+
+Jami testlar: **352** (yangi: `ScreenSharePlanTest` 5 ta).
+
+### ⚠️ Bir marta kuzatilgan NATIV crash (tuzatilmagan)
+
+Bir o'lchovda (uch takrordan birida) tarmoq almashuvi paytida ilova nativ darajada
+yiqildi — bizning Kotlin kodimizda emas, LiveKit ichidagi WebRTC'da:
+
+```
+pid: 31279, tid: 18542, name: network_thread  >>> uz.darsly.mentor <<<
+signal 6 (SIGABRT) · libjingle_peerconnection_so.so
+Abort message: 'libc++ Hardening assertion this->has_value() failed:
+                optional operator-> called on a disengaged value'
+```
+
+Keyingi ikki takrorda qaytarilmadi. Belgilab qo'yildi: agar takrorlansa —
+`livekit-android` versiyasini yangilash yoki `disconnect()` o'rniga SDK'ning o'z
+qayta ulanishini kutish varianti sinaladi. Hozircha **bilib turilgan xavf**, chunki
+u tarmoq almashuvining aynan o'zida sodir bo'ladi.
 
 ---
 
@@ -223,14 +444,14 @@ Agar zarur deb topilsa, keshni ham `EncryptedSharedPreferences` ga o'tkazish arz
 
 ---
 
-## 6. Bugun topilgan mayda kamchiliklar (kodda tuzatilishi kerak)
+## 6. Mayda kamchiliklar
 
-| # | Muammo | Joy |
+| # | Muammo | Holat |
 |---|---|---|
-| 1 | **"Davom etish"** tugmasi ikki qatorga bo'linib ketadi (kartada baland ko'rinadi) | `LessonsScreen.LessonCard` — `maxLines = 1` yoki qisqaroq matn |
-| 2 | **B-7 (ma'lum edi, tasdiqlandi):** `Xona`/`Identity` qatorlarida uzun UUID satrlari maketni buzadi | `RoomScreen.Row2` — `ellipsize`/`maxLines` |
-| 3 | Xona ekranida xato kartasi chiqqanda tugmalar suriladi (avtomatlashtirishga xalaqit, foydalanuvchiga ham "sakrash" effekti) | `RoomScreen` — boshqaruv tugmalari tepada, xabarlar pastda bo'lishi mumkin |
-| 4 | O'lchovda `lvl=127..0` — RFC 6464 audio darajasi to'g'ri o'qilmadi (bayt/sek ishladi) | `scratchpad/listener` (asbob, mahsulot emas) |
+| ~~1~~ ✅ | ~~**"Davom etish"** tugmasi ikki qatorga bo'linib ketadi~~ | Tuzatildi (§5e №7), qurilmada tasdiqlandi |
+| ~~2~~ ✅ | ~~**B-7:** `Xona`/`Identity` qatorlarida uzun UUID satrlari maketni buzadi~~ | Eskirdi — M20 qayta qurilishida qatorlar olib tashlangan |
+| ~~3~~ ✅ | ~~Xona ekranida xato kartasi chiqqanda tugmalar suriladi~~ | Eskirdi — xato kartasi tepada, panel pastga qotirilgan (§5e da tekshirildi) |
+| 4 | O'lchovda `lvl=127..0` — RFC 6464 audio darajasi to'g'ri o'qilmadi (bayt/sek ishladi) | `scratchpad/listener` (asbob, mahsulot emas) — qoladi |
 
 ---
 
@@ -241,6 +462,11 @@ Agar zarur deb topilsa, keshni ham `EncryptedSharedPreferences` ga o'tkazish arz
 - [ ] `adb shell rm -f /sdcard/Music/darsly_tone.wav` (10 MB) va `darsly_qa_tone.wav` (52 MB, R0 dan)
 - [ ] Media ovozi qaytarilsin — sinovda **15 pog'ona pasaytirilgan**
 - [ ] Vaqtinchalik hisob: `spike.mentor@darsly.uz` — `DELETE /api/v1/users/:id` (admin bilan)
+- [x] §5e hisoblari va darsi (`devicetest@`, `deadsession@`, `Nusxa olish sinovi`) — o'chirildi
+- [ ] ⚠️ §5f: `Ulashishni tiklash sinovi` darsi **yetim qoldi** — egasi (`sharetest@darsly.uz`)
+      undan OLDIN o'chirilgani uchun API endi uni o'chirishga ruxsat bermaydi
+      (`you do not own this lesson`). Faqat DB'dan tozalanadi.
+      **Saboq: avval darsni, keyin foydalanuvchini o'chiring.**
 - [ ] Sinov darslari: `Can spike sinovi`, `Mentor RBAC sinovi` — `DELETE /api/v1/lessons/:id`
 - [ ] `adb uninstall uz.darsly.mentor` (yakunda, toza o'rnatish sinovi uchun)
 - [ ] Kodda qolgan diagnostika: `LessonSession.dumpPublications()` va `C6:` log'lari —

@@ -19,6 +19,24 @@ val localProps = Properties().apply {
 }
 fun localProp(key: String, default: String = "") = localProps.getProperty(key) ?: default
 
+// ── Reliz imzosi ─────────────────────────────────────────────────────────────
+// Kalit va parollar `mobile/keystore.properties` da (gitignore'da), kalitning
+// o'zi `.jks` (u ham gitignore'da). Fayl bo'lmasa imzo konfiguratsiyasi UMUMAN
+// yaratilmaydi va `assembleRelease` imzosiz APK beradi — ya'ni boshqa mashinada
+// yoki CI'da qurish buzilmaydi, faqat tarqatib bo'lmaydi.
+//
+// NEGA DEBUG APK TARQATILMAYDI: debug variantida `TEST_EMAIL`/`TEST_PASSWORD`
+// (haqiqiy sinov hisobi) `BuildConfig` ga yoziladi. Ochiq `/download/` manzilida
+// turgan debug APK'dan bu parollarni ajratib olish jiddiy mehnat talab qilmaydi.
+// Relizda ular bo'sh satr.
+val keystoreProps = Properties().apply {
+    val f = rootProject.file("keystore.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+val releaseSigning = keystoreProps.getProperty("storeFile")?.takeIf {
+    rootProject.file(it).exists()
+}
+
 android {
     namespace = "uz.darsly.mentor"
     compileSdk = 35
@@ -27,16 +45,37 @@ android {
         applicationId = "uz.darsly.mentor"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
+        versionCode = 4
         // DIQQAT (M42): bu qiymat `GET /api/v1/app-config` dagi `min_version` bilan
         // solishtiriladi. Serverda hozir min_version=1.0.0 — spike'dagi "0.1.0-spike"
         // qolsa ilova o'zini bloklab qo'yardi. R1 bloki = 1.0.0.
-        versionName = "1.0.0"
+        // 1.1.0 — profil · bildirishnomalar · yozuvlar · jadval · dars tahrirlash ·
+        //         parol tiklash · kutish xonasi.
+        // 1.2.0 — yozib olish default yoniq va avtomatik boshlanadi; ekran
+        //         ulashishda simulcast (past internet uchun past qatlam).
+        versionName = "1.2.0"
     }
 
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+
+    signingConfigs {
+        releaseSigning?.let { path ->
+            create("release") {
+                storeFile = rootProject.file(path)
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+                // APK Signature Scheme v2/v3 — Android 7+ o'rnatishni tezlashtiradi
+                // va v1 (jar) imzosini ham qoldiradi (minSdk 26 uchun v1 shart emas,
+                // lekin ba'zi eski o'rnatuvchilar undan foydalanadi).
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
+            }
+        }
     }
 
     buildTypes {
@@ -52,6 +91,9 @@ android {
             buildConfigField("String", "TEST_PASSWORD", "\"${localProp("darsly.testPassword")}\"")
         }
         release {
+            // Imzo kaliti bo'lsa — imzolanadi; bo'lmasa APK imzosiz chiqadi va
+            // qurish baribir muvaffaqiyatli tugaydi (boshqa mashina / CI uchun).
+            releaseSigning?.let { signingConfig = signingConfigs.getByName("release") }
             isMinifyEnabled = false // TODO(R1): R8 + proguard qoidalari (LiveKit/Moshi uchun)
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             buildConfigField("String", "API_BASE_URL", "\"https://app.194.163.139.242.sslip.io\"")
@@ -74,6 +116,32 @@ android {
         // JDK 17 — Android uchun eng sinovdan o'tgan toolchain.
         // Mahalliy muhitda topilmasa foojay-resolver (settings.gradle.kts) yuklab oladi.
         jvmToolchain(17)
+    }
+
+    // ── APK hajmi: ABI bo'yicha bo'lish ──────────────────────────────────────
+    //
+    // LiveKit/WebRTC har bir protsessor arxitekturasi uchun alohida native
+    // kutubxona olib keladi. Universal APK'da ularning HAMMASI yotadi:
+    //   x86_64 15.3 MB · x86 12.0 MB · armeabi-v7a 6.5 MB · arm64-v8a 11.6 MB
+    // ya'ni 62 MB APK'ning 45 MB'i shu, va uning 27 MB'i (x86/x86_64) faqat
+    // EMULYATORGA kerak — haqiqiy telefon yoki planshetga hech qachon emas.
+    //
+    // Sinov qurilmalari (Galaxy Tab S9, Redmi Note 11) va amaldagi barcha
+    // zamonaviy Android qurilmalari — `arm64-v8a`. Shu sabab alohida arm64 APK
+    // yig'iladi: ~28 MB, ya'ni ikki barobardan ko'proq kichik. Sekin internetda
+    // (serverdan o'lchangani ~300 KB/s) bu 3.5 daqiqa o'rniga 1.5 daqiqa.
+    //
+    // `isUniversalApk = true` — universal variant ham saqlanadi: `armeabi-v7a`
+    // li eski qurilma uchrasa, u ishlashda davom etadi. Ya'ni kichraytirish
+    // hech kimni qamrovdan chiqarmaydi, shunchaki to'g'ri faylni tanlash
+    // imkonini beradi.
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "armeabi-v7a")
+            isUniversalApk = true
+        }
     }
 
     packaging {

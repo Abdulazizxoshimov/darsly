@@ -117,3 +117,42 @@ sessiyada har doim BITTA tirik refresh zanjiri qoladi va barcha javoblar bir xil
 - **Recording**: `{id,lesson_id,egress_id,status:"recording"|"processing"|"ready"|"failed",duration_sec,size_bytes,started_at,ended_at?,created_at}`
 - **RecordingDownload**: `{url,expires_in_s,duration_sec,size_bytes}`
 - **Notification**: `{id,user_id,type:"lesson_reminder"|"waiting_room"|"system",title,body,lesson_id?,read_at?,created_at}`
+
+## Xona holati (roomstate) — qo'l ko'tarish va reaksiyalar
+
+Ochiq endpointlar LiveKit **room-token** bilan autentifikatsiya qilinadi (guest'da JWT yo'q).
+Token'ning xonasi dars bilan mos kelishi shart. Token yo'q/yaroqsiz → **401**.
+
+| Method | Yo'l | Auth | Tana / Query | Javob |
+|---|---|---|---|---|
+| POST | `/api/v1/rooms/:lessonID/hand` | room-token | `{token, raised}` | 204 |
+| POST | `/api/v1/rooms/:lessonID/reaction` | room-token | `{token, emoji}` | 204 · 429 (2 s da 1) |
+| GET | `/api/v1/rooms/:lessonID/state` | room-token | `?token=` | `{data:{hands:[{identity,name,raised_at}]}}` |
+| POST | `/api/v1/lessons/:id/hands/lower` | JWT (mentor) | `{identity}` | 204 |
+| POST | `/api/v1/lessons/:id/hands/lower-all` | JWT (mentor) | — | 204 |
+
+`hands` — **ko'tarilgan vaqt bo'yicha tartiblangan** (navbat serverda hisoblanadi).
+Real-vaqt yetkazish: server → LiveKit data-channel → barcha klientlar:
+
+```jsonc
+{"kind":"hand","identity":"…","name":"…","raised":true,"at":1730000000000}
+{"kind":"hand","act":"lower_all"}
+{"kind":"reaction","emoji":"👍","name":"Ali","identity":"…"}  // identity — o'z echo'sini filtrlash uchun
+```
+
+## Chat — ishtirokchi yo'li va shaxsiy xabar
+
+| Method | Yo'l | Auth | Tana / Query | Javob |
+|---|---|---|---|---|
+| POST | `/api/v1/rooms/:lessonID/chat` | room-token | `{token, body, to?}` | 201 · 429 (5 s da 5) |
+| GET | `/api/v1/rooms/:lessonID/chat` | room-token | `?token=&before=&limit=` | `{data:[ChatMessage]}` |
+| POST | `/api/v1/lessons/:id/chat` | JWT (mentor) | `{body, to?}` | 201 |
+| GET | `/api/v1/lessons/:id/chat` | JWT (mentor) | `?before=&limit=` | `{data:[ChatMessage]}` |
+
+`to` — qabul qiluvchi LiveKit identity'si. Bo'sh → xonaga (ommaviy).
+`ChatMessage.to_identity` — `null` bo'lsa ommaviy.
+
+**Ko'rinuvchanlik:** shaxsiy xabarni faqat yuboruvchi va qabul qiluvchi oladi. Filtr SQL'da
+qo'llanadi va yetkazish `destination_identities` bilan bo'ladi — begona klientga xabar
+umuman bormaydi.
+

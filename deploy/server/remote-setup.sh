@@ -8,9 +8,9 @@
 #    Eski fayl livekit.yaml.bak ga saqlanadi.
 #  - ufw kerakli portlarni ochadi (SSH policy'ga tegmaydi).
 #
-# Recording (Egress) bilan:  ENABLE_RECORDING=1 ./remote-setup.sh
-#   → livekit.yaml ga `redis:` bloki qo'shiladi (egress uchun MAJBURIY) va
-#     `docker compose --profile recording up -d` egress konteynerini ko'taradi.
+# Yozib olish (Egress) DOIM sozlanadi: livekit.yaml ga `redis:` bloki qo'shiladi
+# (egress ↔ LiveKit shu Redis orqali gaplashadi) va egress oddiy
+# `docker compose up -d` bilan ko'tariladi.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -18,7 +18,6 @@ IP="194.163.139.242"
 APP_HOST="app.${IP}.sslip.io"
 LK_HOST="livekit.${IP}.sslip.io"
 FILES_HOST="files.${IP}.sslip.io"   # MinIO presigned URL'lar uchun ochiq host (Caddy)
-ENABLE_RECORDING="${ENABLE_RECORDING:-0}"
 
 gen() { openssl rand -hex "$1"; }
 
@@ -111,7 +110,7 @@ fi
 # ── livekit.yaml — HAR SAFAR shablondan qayta yasaladi ────────────────────────
 # LiveKit config fayli ${ENV} ni KENGAYTIRMAYDI (empirik tasdiqlangan), shu sabab
 # sir/domen/parol shu yerda sed bilan o'rniga qo'yiladi.
-echo ">> livekit.yaml shablondan yasalyapti (recording=${ENABLE_RECORDING})..."
+echo ">> livekit.yaml shablondan yasalyapti (recording: doim yoqilgan)..."
 LK_SECRET="$(grep '^LIVEKIT_API_SECRET=' .env | cut -d= -f2-)"
 RD_PASSWORD="$(grep '^REDIS_PASSWORD=' .env | cut -d= -f2-)"
 [[ -n "$LK_SECRET" ]] || { echo "!! .env da LIVEKIT_API_SECRET yo'q"; exit 1; }
@@ -123,10 +122,14 @@ sed -e "s|__LIVEKIT_SECRET__|${LK_SECRET}|" \
     -e "s|__REDIS_PASSWORD__|${RD_PASSWORD}|" \
     livekit.yaml.example > livekit.yaml
 
-if [[ "$ENABLE_RECORDING" == "1" ]]; then
-  # `redis:` blokini yoqadi (egress uchun majburiy).
-  sed -i 's|^#RECORDING# ||' livekit.yaml
-fi
+# `redis:` bloki HAR DOIM yoqiladi — egress uchun majburiy.
+#
+# Avval bu `ENABLE_RECORDING=1` ortida edi va serverda hech qachon berilmagan,
+# natijada LiveKit egress bilan umumiy Redis'siz ishlagan va yozib olish
+# JIMGINA ishlamagan (UI'da tugma bor edi, orqasida hech narsa yo'q).
+# Mahsulot qoidasi o'zgardi: yozib olish default yoniq va avtomatik
+# boshlanadi, ya'ni egress konfiguratsiyasi ixtiyoriy bo'la olmaydi.
+sed -i 's|^#RECORDING# ||' livekit.yaml
 if grep -q '__[A-Z_]*__' livekit.yaml; then
   echo "!! livekit.yaml da almashtirilmagan placeholder qoldi"; exit 1
 fi
@@ -155,6 +158,5 @@ ufw allow from 172.16.0.0/12 to any port 7880 proto tcp >/dev/null 2>&1 || true
 echo ">> UFW holati:"; ufw status | grep -E '80|443|7881|3478|50000' || true
 
 echo ">> Tayyor. Endi: docker compose up -d --build"
-[[ "$ENABLE_RECORDING" == "1" ]] && \
-  echo ">> Recording uchun: docker compose --profile recording up -d --build"
+echo ">> (egress konteyneri ham shu buyruq bilan ko'tariladi — alohida profil kerak emas)"
 exit 0

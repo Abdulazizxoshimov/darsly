@@ -131,11 +131,44 @@ object LessonFormat {
     /** ISO-8601 → epoch millis; noto'g'ri/bo'sh qiymat uchun `null` (crash yo'q). */
     fun epochOrNull(iso: String?): Long? = parseOrNull(iso)?.toEpochMilli()
 
+    /**
+     * Ma'noli sananing eng erta chegarasi — 2000-01-01.
+     *
+     * NEGA KERAK (Galaxy Tab S9 da topilgan): Go'da `time.Time` ning **nol
+     * qiymati** `0001-01-01T00:00:00Z` va u JSON'ga aynan shunday tushadi. Bu
+     * qiymat backend'da to'ldirilmagan maydonlarda uchraydi — masalan seed
+     * admin hisobining `created_at` i. Shaxsiy kabinet uni sodda tarjima qilib
+     * **"Ro'yxatdan o'tgan: 1-yanvar 1, 04:27"** deb chizardi (04:27 — Toshkent
+     * uchun 1-yildagi LMT ofseti, ya'ni butunlay ma'nosiz raqam).
+     *
+     * Bunday qiymat "sana yo'q" degani, shuning uchun [parseOrNull] `null`
+     * qaytaradi va chaqiruvchi joylar uni umuman ko'rsatmaydi — ular allaqachon
+     * `null` ni to'g'ri qayta ishlaydi (`?.let`, "Vaqti belgilanmagan" va h.k.).
+     *
+     * Chegara 1970 (epoch) emas, 2000: Darsly 2025-yilda yozilgan, undan oldingi
+     * har qanday vaqt tamg'asi ma'lumot xatosi, ko'rsatiladigan fakт emas.
+     */
+    /**
+     * RFC3339 vaqtni Unix millisekundga aylantiradi (parse bo'lmasa 0).
+     *
+     * Qo'l navbati tartibi uchun kerak: server `raised_at` ni RFC3339 da beradi,
+     * data-channel esa `at` ni millisekundda — ikkalasi BIR XIL birlikda bo'lishi
+     * shart, aks holda serverdan yuklangan qo'llar va keyin kelgan yangilari
+     * bir-biriga nisbatan noto'g'ri tartiblanardi.
+     *
+     * Parsing mantiqi shu yerda saqlanadi (nusxalanmaydi): Go `time.Time` ikki
+     * ko'rinishda kelishi mumkin va bu bilim bitta joyda turishi kerak.
+     */
+    fun instantMs(iso: String?): Long = parseOrNull(iso)?.toEpochMilli() ?: 0L
+
+    private val MIN_MEANINGFUL: Instant = Instant.parse("2000-01-01T00:00:00Z")
+
     private fun parseOrNull(iso: String?): Instant? {
         val raw = iso?.trim()?.takeIf { it.isNotBlank() } ?: return null
         // Go `time.Time` RFC3339 (`Z` yoki `+05:00`) beradi; ikkalasi ham qo'llab-quvvatlanadi.
         return runCatching { OffsetDateTime.parse(raw).toInstant() }
             .recoverCatching { Instant.parse(raw) }
             .getOrNull()
+            ?.takeIf { it.isAfter(MIN_MEANINGFUL) }
     }
 }

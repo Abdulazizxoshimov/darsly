@@ -126,7 +126,6 @@ class LessonFormTest {
                 duration = "90",
                 passcode = "1234",
                 waitingRoom = true,
-                recording = true,
                 scheduledAtMillis = 1_774_000_000_000L,
             ),
         )
@@ -182,5 +181,23 @@ class LessonFormTest {
             "27",
             java.time.Instant.ofEpochMilli(millis).atZone(tashkent).dayOfMonth.toString(),
         )
+    }
+
+    @Test
+    fun `yangi darsda yozib olish DEFAULT YONIQ`() {
+        // ⭐ Mahsulot qarori: yozuv default yoniq, lekin majburiy emas.
+        // Default yoqilgani muhim, chunki yoqishni unutish QAYTARIB
+        // BO'LMAYDIGAN yo'qotish (dars o'tib ketdi), o'chirishni unutish esa
+        // tuzatiladigan holat.
+        assertTrue(LessonForm.Input().recording)
+        assertTrue(LessonForm.toRequest(input()).isRecordingEnabled)
+    }
+
+    @Test
+    fun `ustoz yozib olishni ochira oladi`() {
+        // Majburiy EMAS: o'chirilgan bo'lsa so'rovda ham `false` ketadi va
+        // backend `EnsureRecording` uni hurmat qiladi.
+        val req = LessonForm.toRequest(input().copy(recording = false))
+        assertFalse(req.isRecordingEnabled)
     }
 }

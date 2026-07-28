@@ -124,8 +124,15 @@ services:
     depends_on:
       redis: {condition: service_healthy}
 
-  # ── Egress (dars yozib olish → MinIO) — FAQAT 'recording' profilida ──────────
-  # docker compose --profile recording up -d
+  # ── Egress (dars yozib olish → MinIO) — DOIM ISHLAYDI ───────────────────────
+  #
+  # Avval `profiles: ["recording"]` ortida edi va shu sababli serverda hech
+  # qachon ishga tushmagan — ya'ni yozib olish **umuman ishlamagan**, lekin
+  # UI'da "Yozib olishni boshlash" tugmasi turgan. Mahsulot qoidasi o'zgardi:
+  # yozib olish **default yoniq** va backend uni `room.HostToken` da avtomatik
+  # boshlaydi, shuning uchun egress ixtiyoriy profil emas — u stack'ning
+  # doimiy qismi.
+  #
   # Og'ir konteyner (Chrome headless). Shartlar:
   #   1) livekit.yaml da `redis:` bloki YOQILGAN bo'lishi shart (ENABLE_RECORDING=1
   #      ./remote-setup.sh) — egress ↔ LiveKit AYNI Redis orqali gaplashadi.
@@ -139,7 +146,6 @@ services:
     image: livekit/egress:latest
     container_name: darsly-egress
     restart: unless-stopped
-    profiles: ["recording"]
     depends_on:
       redis: {condition: service_healthy}
     networks: [darsly_net]

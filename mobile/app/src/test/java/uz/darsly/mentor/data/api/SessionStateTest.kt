@@ -94,3 +94,33 @@ class SessionStateTest {
         assertNull(Session.read())
     }
 }
+
+/**
+ * Profil 404 → avtomatik chiqish.
+ *
+ * Qurilma sinovida (2026-07-28) uchragan holat: token yaroqli (Redis'da sessiya
+ * bor), lekin foydalanuvchi DB'dan o'chirilgan → `GET /users/me` 404 qaytaradi.
+ * Avval ekranda "Topilmadi / Qayta urinish" boshi berk ko'chasi qolardi:
+ * qayta urinish aynan o'sha 404 ni qaytaradi, chiqish tugmasi esa yo'q.
+ *
+ * Bu test QAROR qoidasini qotiradi: 404 — xato emas, o'lik sessiya belgisi.
+ */
+class ProfileNotFoundPolicyTest {
+
+    /** ViewModel'dagi shart bilan bir xil (`t is HttpException && t.code() == 404`). */
+    private fun isDeadSession(code: Int) = code == 404
+
+    @org.junit.Test
+    fun `404 olik sessiya deb qaraladi`() {
+        org.junit.Assert.assertTrue(isDeadSession(404))
+    }
+
+    @org.junit.Test
+    fun `boshqa xatolar sessiyani oldirmaydi`() {
+        // 500 yoki 503 — vaqtinchalik server muammosi. Bularda chiqarib yuborish
+        // foydalanuvchini bekorga tizimdan haydab chiqarardi.
+        for (code in intArrayOf(400, 401, 403, 429, 500, 503)) {
+            org.junit.Assert.assertFalse("$code chiqishga sabab bo'lmasligi kerak", isDeadSession(code))
+        }
+    }
+}

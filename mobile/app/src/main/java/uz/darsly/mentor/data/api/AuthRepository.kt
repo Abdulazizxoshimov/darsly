@@ -28,4 +28,33 @@ object AuthRepository {
         }
         Session.forceLogout()
     }
+
+    /**
+     * Parolni tiklash xatini so'raydi.
+     *
+     * Backend **har doim 204** qaytaradi — hisob bor-yo'qligidan qat'i nazar
+     * (`usecase/auth/auth.go:194-198`: foydalanuvchi topilmasa ham `nil`).
+     * Bu ataylab: aks holda kimdir email ro'yxatini shu endpoint orqali
+     * tekshirib chiqishi mumkin bo'lardi. Shuning uchun ilova ham
+     * "topilmadi" demaydi — "agar bunday email ro'yxatdan o'tgan bo'lsa,
+     * xat yuborildi" deydi.
+     */
+    suspend fun forgotPassword(email: String): Result<Unit> =
+        runCatching { Net.api.forgotPassword(ForgotPasswordReq(email)) }
+
+    /**
+     * Emaildagi token bilan yangi parol o'rnatadi.
+     *
+     * Muvaffaqiyatda server **barcha sessiyalarni bekor qiladi** (DB va Redis) —
+     * o'g'irlangan sessiya tirik qolmasligi uchun. Shu sabab bu yerda lokal
+     * tokenlar ham tozalanadi: aks holda ilova o'lgan token bilan qolib,
+     * keyingi so'rovda 401 ko'rardi.
+     */
+    suspend fun resetPassword(token: String, newPassword: String): Result<Unit> = runCatching {
+        Net.api.resetPassword(ResetPasswordReq(token, newPassword))
+        // Serverdagi sessiyalar o'ldi — lokal nusxani ham tashlaymiz.
+        // `isLoggedIn` tekshiruvi: chiqmagan holatda `forceLogout` navigatsiyani
+        // login ekraniga majburlab, tiklash oqimini uzib qo'yardi.
+        if (Session.isLoggedIn) Session.forceLogout()
+    }
 }

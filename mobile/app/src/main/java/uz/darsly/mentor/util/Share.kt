@@ -35,6 +35,25 @@ object Share {
     }
 
     /**
+     * Havolani tizim brauzerida/yuklab olish menejerida ochadi.
+     *
+     * NEGA ILOVA ICHIDA EMAS: yozuv havolasi — yuz megabaytlik video fayl.
+     * Tizim yuklovchisi buni allaqachon to'g'ri qiladi (fon rejimi, uzilgan
+     * ulanishni davom ettirish, bildirishnomadagi progress). Ilova ichida
+     * qayta yozish faqat yomonroq nusxa bo'lardi.
+     *
+     * `false` — ochadigan ilova yo'q (brauzeri o'chirilgan qurilma).
+     */
+    fun openUrl(context: Context, url: String): Boolean {
+        val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)).apply {
+            if (context !is Activity) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        return runCatching { context.startActivity(intent) }
+            .onFailure { LKLog.w(it) { "havola ochilmadi" } }
+            .isSuccess
+    }
+
+    /**
      * Klipbordga nusxa oladi.
      *
      * `true` qaytsa — ilova o'zi "nusxa olindi" deb aytishi kerak. Android 13+ da

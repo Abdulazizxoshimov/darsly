@@ -1,6 +1,6 @@
 # Darsly Mobile — HOLAT VA TOPSHIRIQ (handoff)
 
-> **Yangi sessiya shu fayldan boshlasin.** Oxirgi yangilanish: **2026-07-26**
+> **Yangi sessiya shu fayldan boshlasin.** Oxirgi yangilanish: **2026-07-27**
 >
 > O'qish tartibi: **bu fayl** → `docs/darsly-mobile-roadmap.md` (to'liq reja) →
 > `docs/mobile-acceptance-criteria.md` (QA mezonlari) → `CLAUDE.md` (loyiha manuali)
@@ -311,6 +311,272 @@ darsni to'liq qaytardi (o'quvchi oqimi ishlaydi) · sinov darsi keyin **o'chiril
 
 **Qurilmada tekshirilishi kerak (adb ulanmagan):** B-1 vizual bo'limlar · B-2 pull-to-refresh
 imosi · B-4 aviarejimda offline chizig'i · B-6 Telegram chooser'i.
+
+---
+
+### ✅ QAMROV BO'SHLIQLARI YOPILDI — 7 ta yetishmayotgan bo'lim (2026-07-27)
+
+Foydalanuvchi topshirig'i: paritet jadvalidagi "❌ yo'q" belgili bandlarni qo'shish.
+Hammasi yopildi va bitta pastki-panel navigatsiyasiga birlashtirildi.
+
+| Band | Nima qilindi | Asosiy fayllar |
+|---|---|---|
+| **Shaxsiy kabinet** | Profil ko'rish/tahrirlash (ism, til, vaqt mintaqasi), parolni o'zgartirish, chiqish. Email va rol **ataylab tahrirlanmaydi** (backend `PUT /users/me` da `role` ni majburan tashlaydi — yolg'on tugma qo'yilmadi) | `ui/profile/{ProfileForm,ProfileViewModel,ProfileScreen}.kt`, `data/repo/ProfileRepository.kt` |
+| **Bildirishnomalar** | Ro'yxat + o'qilgan/hammasini o'qilgan, **WS jonli qo'shilish** (kanal R1'dan beri bor edi, ekran yo'q edi — xabar jimgina yo'qolardi), pastki paneldagi o'qilmaganlar nishoni | `ui/notifications/*`, `util/NotificationFormat.kt`, `data/repo/{NotificationsRepository,NotificationsBadge}.kt` |
+| **Yozuvlar** | Dars yozuvlari ro'yxati, xona ichida **boshlash/to'xtatish** (§7 3-band qarori), presigned havola bilan yuklab olish (tizim brauzerida — 100+ MB fayl uchun `DownloadManager` qayta yozilmadi) | `ui/recordings/*`, `util/RecordingFormat.kt`, `data/repo/RecordingsRepository.kt` |
+| **Jadval** | Darslar **kunlar bo'yicha**, kun xulosasi ("3 dars · 4 soat"), o'tgan darslar almashtirgichi, vaqtsizlar alohida bo'limda. Alohida endpoint yo'q — bir xil `LessonsRepository`, ya'ni offline'da ham ishlaydi va ro'yxat bilan zid ma'lumot bermaydi | `ui/schedule/*`, `util/ScheduleFormat.kt` |
+| **Dars tahrirlash/o'chirish** | `PATCH` **diff** bilan (faqat o'zgargan maydon), parolning uch holati (tegilmadi / yangi / olib tashlash), o'chirishda oqibatni aytadigan tasdiq | `ui/lessons/{EditLessonScreen,EditLessonViewModel,LessonFields}.kt`, `LessonForm.toUpdateRequest` |
+| **Parolni tiklash** | `forgot-password` → `reset-password`, login ekranidan havola. Emaildagi **to'liq havolani** yopishtirish kifoya — token o'zi ajratiladi | `ui/auth/*` |
+| **Kutish xonasi (M27)** | Xona ekranidagi panel: REST surati + **WS jonli** so'rovlar, admit/reject/"hammasini kiritish", kutish vaqti. Yangi so'rov kelganda panel o'zi ochiladi | `ui/room/{WaitingRoomState,WaitingRoomViewModel,WaitingRoomPanel}.kt`, `data/repo/WaitingRoomRepository.kt` |
+| **Navigatsiya** | Pastki panel: Darslar · Jadval · Xabarlar (nishonli) · Kabinet. "Chiqish" darslar sarlavhasidan kabinetga ko'chdi | `MainActivity.kt` |
+
+**Tekshiruv (to'liq qayta qurish, `rm -rf app/build`, `--no-build-cache`):**
+`BUILD SUCCESSFUL` · **294 test, 0 FAIL, 1 skip** (avval 153 — **141 ta yangi**) ·
+lint **32 ogohlantirish / 0 xato** (yangi fayllarda **0 ta** ogohlantirish) · APK 66 MB.
+
+**Vakuum tekshiruvi — 10 mutatsiya, hammasi o'ldirildi:**
+PATCH diffi olib tashlandi (4 FAIL) · kutish xonasida boshqa dars filtri yo'q (1) ·
+bildirishnoma dublikat tekshiruvi yo'q (1) · 409 xato deb qaytariladi (1) ·
+jadval UTC bo'yicha guruhlandi (2) · o'chirish optimistik qilindi (1) ·
+nol hajm "0 B" (1) · profil diffi olib tashlandi (1) · `processing` yozuv yuklab
+olinadigan qilindi (1) · parol tokeni havoladan ajratilmaydi (3).
+
+> ⚠️ **Mutatsiya skripti haqida saboq:** fayllarni `shutil.copy` + `shutil.move`
+> bilan tiklash mtime'ni **orqaga** suradi va Kotlin inkremental kompilyatori
+> eski sinflarni qoldiradi — natijada begona testlar "yiqilgan" bo'lib ko'rinadi.
+> Har mutatsiya `--rerun-tasks` bilan alohida tekshirilsin. Bu yerda shubhali
+> natija aynan shunday qayta tekshirildi va toza qurishda **1 ta** kutilgan test
+> yiqildi, uchta toza to'liq qayta ishga tushirishda esa 0 FAIL.
+
+**Ma'lum cheklovlar (ataylab, kodda hujjatlangan):**
+1. **Dars boshlanish vaqtini butunlay olib tashlab bo'lmaydi** — backend
+   `UpdateLessonReq.ScheduledAt` `*time.Time` va usecase uni faqat `!= nil` da
+   qo'llaydi (`usecase/lesson/lesson.go:96`), ya'ni "o'chir" signali yo'q. Tahrir
+   ekrani "Tozalash" tugmasini **ko'rsatmaydi** va sababni yozadi. Vaqtni boshqa
+   vaqtga o'zgartirish ishlaydi. Test bu cheklovni qotirgan.
+2. **Parolni tiklash havolasi web sahifasiga ishora qiladi** (`FRONTEND_BASE_URL`),
+   ilovaga emas. Chuqur havola (deep link) backend o'zgarishini talab qilardi;
+   uning o'rniga ilova havolaning **o'zini** qabul qiladi.
+3. **Email va rol tahrirlanmaydi** — backend'da email o'zgartirish endpoint'i yo'q,
+   rolni esa server `PUT /users/me` da majburan tashlaydi.
+4. Avatar **rasmi** yo'q (fayl yuklash endpoint'i yo'q) — harfli doira.
+
+**Qurilmada tekshirilishi kerak (adb ulanmagan):** pastki panel nishoni jonli
+xabarda o'sishi · kutish xonasi panelining o'zi ochilishi (haqiqiy o'quvchi bilan) ·
+yozuv havolasining brauzerda ochilishi · profil saqlangach web'da ko'rinishi ·
+parol tiklash xatining kelishi.
+
+### 📦 RELIZ v1.1.0 — IMZOLANDI VA DEPLOY QILINDI (2026-07-27)
+
+**APK:** https://app.194.163.139.242.sslip.io/download/darsly-mentor.apk
+(QR: `…/download/darsly-mentor-qr.svg` · arxiv nusxa: `darsly-mentor-v1.1.0.apk`)
+
+`versionCode 2 → 3`, `versionName 1.0.0 → 1.1.0` · **reliz imzosi bilan**, 60 MB
+(debug 66 MB edi) · SHA-256 `74ac263e…aa66` — mahalliy, serverdagi va HTTPS orqali
+yuklab olingan fayl **uchalasi bir xil**.
+
+**Nega debug emas, reliz APK:** debug variantida `TEST_EMAIL`/`TEST_PASSWORD`
+(haqiqiy sinov hisobi) `BuildConfig` ga yoziladi. Ochiq `/download/` manzilida
+turgan debug APK'dan bu parollarni ajratib olish qiyin emas. Reliz APK ichida
+sinov paroli ham, emaili ham **yo'q** (dex ichidan qidirib tasdiqlangan).
+
+**Imzo kaliti (yangi):** `mobile/darsly-release.jks`, parollar
+`mobile/keystore.properties` da — **ikkalasi ham `.gitignore` da** (`git check-ignore`
+bilan tasdiqlangan). Sertifikat: `CN=Darsly Mentor, O=Darsly, C=UZ`, RSA-4096,
+10000 kun. Imzo sxemalari v2+v3 ✅.
+
+> ⚠️ **ZAXIRA NUSXASI SHART.** Kalit yo'qolsa keyingi APK'lar o'rnatilgan ilova
+> **ustiga o'rnatilmaydi** — foydalanuvchi avval eski ilovani o'chirishi kerak bo'ladi.
+>
+> ⚠️ **v1.0.0 (debug) dan v1.1.0 ga o'tish ham shunday:** imzo kaliti o'zgargani
+> uchun Android "ustiga o'rnatish"ni rad etadi (`INSTALL_FAILED_UPDATE_INCOMPATIBLE`).
+> Sinov telefonlarida: `adb uninstall uz.darsly.mentor`, keyin yangisini o'rnatish.
+
+**Serverda o'zgargani (backend/frontend kodi TEGILMAGAN — faqat `mobile/` o'zgargan):**
+
+| Nima | Qiymat | Sabab |
+|---|---|---|
+| `dl/darsly-mentor.apk` | yangi | `app-config.apk_url` AYNAN shu nomga ishora qilardi, lekin fayl **yo'q edi** — "Yangilash" tugmasi 404 berardi |
+| `dl/darsly-mentor-v1.1.0.apk` | yangi | versiyalangan arxiv |
+| `dl/darsly-mentor-qr.svg` | yangi | tarqatish uchun QR |
+| `.env` `APP_ANDROID_LATEST_VERSION` | `1.0.0` → `1.1.0` | yumshoq yangilanish taklifi ishlashi uchun |
+| `.env` `APP_ANDROID_RELEASE_NOTES` | qo'shildi | "avval eski ilovani o'chiring" ogohlantirishi bilan |
+| `.env` `APP_ANDROID_MIN_VERSION` | **1.0.0 da qoldi** | oshirilsa majburiy yangilash yoqilardi, lekin imzo farqi tufayli foydalanuvchi uni **bajara olmasdi** — ilova ishlamay qolardi |
+| `darsly-backend` | qayta yaratildi | `.env` o'qilishi uchun |
+
+> 💡 **`docker compose restart` `.env` ni QAYTA O'QIMAYDI** — `env_file` konteyner
+> yaratilganda baholanadi. `docker compose up -d backend` kerak. Bu ikki marta
+> chalg'itdi, shuning uchun `dl/README.txt` ga ham yozildi.
+
+**Jonli tasdiq:** `/api/v1/app-config` → `latest_version 1.1.0`, `apk_url` **200** ·
+`/download/` da 4 fayl 200 · backend `healthy`, login 401 bilan to'g'ri rad etadi ·
+qolgan 5 konteyner tegilmagan (43 soat–2 kun uptime) · serverdagi tgbot/eduverse'ga
+umuman tegilmagan.
+
+**Reliz chiqarish tartibi:** `deploy/server/dl/README.txt` (5 qadam).
+
+### 📱 QURILMA SINOVI — Galaxy Tab S9 (2026-07-27)
+
+**Qurilma:** Samsung SM-X710 · **Android 16 (SDK 36)** · 1600×2560 · arm64-v8a.
+Diqqat: ilova `targetSdk 35` ga qurilgan, ya'ni Android 16 da **birinchi marta**
+sinaldi va muammo ko'rinmadi.
+
+**✅ Qurilmada tasdiqlangan (skrinshot bilan):**
+
+| Band | Natija |
+|---|---|
+| Pastki panel | 4 bo'lim: Darslar · Jadval · Xabarlar · Kabinet |
+| O'qilmaganlar nishoni | Xabarlar ustida **"1"** — `unread-count` ishlaydi |
+| Shaxsiy kabinet | avatar, rol nishoni, til/mintaqa tanlagichlari, **versiya 1.1.0** |
+| "Saqlash" o'chiq (profil) | o'zgarish yo'q ekan — `canSave` to'g'ri |
+| Bildirishnomalar | o'qilmagan uslubi (nuqta + ramka), tur nishoni, "25-iyul, 16:05" |
+| Jadval | almashtirgich + bo'sh holat matni |
+| Dars yaratish | jonli serverda yaratildi |
+| "Yaratish" o'chiq (bo'sh forma) | 🟢I tuzatishi ishlayapti |
+| **⋮ menyu** | Tahrirlash · Yozuvlar |
+| Tahrirlash oynasi | forma to'lgan, **"Saqlash" o'chiq** (`canSubmit` — o'zgarishsiz) |
+| **Dars tahrirlash** | ⭐ **uchdan-uchga**: nom o'zgartirildi → `GET /lessons` da `'Tab-TAHRIR'` |
+| O'chirish tugmasi | tahrirlash oynasida bor (qizil) |
+
+**⬜ Qurilmada tasdiqlanmagan:** o'chirish oqimi UI orqali (planshet adb'dan uzilib
+qoldi; `DELETE` endpoint API orqali 204 berdi va repozitoriy mantiqi test ostida),
+kutish xonasi paneli (haqiqiy o'quvchi kerak), yozuvlar (jonli dars kerak),
+parolni tiklash (email kerak).
+
+**🐛 QURILMADA TOPILGAN VA TUZATILGAN — Go'ning nol vaqti**
+
+Shaxsiy kabinetda **"Ro'yxatdan o'tgan: 1-yanvar 1, 04:27"** chiqdi. Sabab:
+`GET /users/me` seed admin uchun `"created_at": "0001-01-01T00:00:00Z"` qaytaradi
+(Go `time.Time` nol qiymati), `04:27` esa Toshkent uchun **1-yildagi LMT ofseti**.
+
+Tuzatish `LessonFormat.parseOrNull` da: 2000-yildan oldingi har qanday vaqt tamg'asi
+"sana yo'q" deb qaraladi va `null` qaytadi — chaqiruvchi joylar `null` ni allaqachon
+to'g'ri qayta ishlaydi. Bu **bitta joyda** yopilgani muhim: o'sha helper darslar,
+bildirishnomalar va yozuvlar vaqtini ham formatlaydi.
+Vakuum: qorovul olib tashlansa **1 test FAIL**. Jami **296 test, 0 FAIL**.
+
+> Backend tomonida seed admin `created_at` siz yaratilgan — bu alohida kamchilik,
+> lekin klient baribir ishonchsiz sanaga chidamli bo'lishi kerak edi.
+
+**📦 APK HAJMI KAMAYTIRILDI (roadmap'dagi 5-blok bandi)**
+
+`splits { abi { … } }` qo'shildi. Sabab: 62 MB APK'ning **45 MB'i** native
+kutubxonalar edi va ularning **27 MB'i (x86 + x86_64) faqat emulyatorga** kerak.
+
+| Variant | Hajm | Kimga |
+|---|---|---|
+| `darsly-mentor-v1.1.0-arm64.apk` | **26 MB** | barcha zamonaviy qurilmalar |
+| `darsly-mentor-v1.1.0-arm32.apk` | 21 MB | eski 32-bitli |
+| `darsly-mentor.apk` (universal) | 60 MB | `app-config.apk_url` — barchasi bir faylda |
+
+Serverdan yuklab olish tezligi o'lchandi: **~310 KB/s** (Contabo → O'zbekiston),
+ya'ni 60 MB ≈ 3.5 daqiqa, 26 MB ≈ 1.5 daqiqa.
+
+**🧪 Sinov qurilmalari haqida saboqlar**
+
+1. **Xiaomi/MIUI'da `adb install` ishlamaydi** — `INSTALL_FAILED_USER_RESTRICTED`.
+   Play Protect APK'ni skanerdan o'tkazib **ruxsat berdi** (`result=ALLOW`), to'siq
+   MIUI'ning o'zida: "USB debugging (Security settings)" tugmasi kerak, u esa
+   Mi-hisob talab qiladi. `input tap` ham shu sababdan bloklangan. Samsung'da
+   bu to'siqlarning **hech biri yo'q**.
+2. **MTP eng tez yo'l** — `gio copy` bilan 26 MB **1.3 soniyada** o'tdi
+   (internetdagi 23 daqiqa o'rniga). Dasturchi sozlamalari umuman kerak emas.
+   Diqqat: `gio` URI'sida bo'shliq **kodlanishi shart** (`Ichki%20xotira`).
+3. **Ekran qulflanganda adb uziladi** (HONOR, Xiaomi, Samsung — uchalasida ham).
+   `adb tcpip 5555` yordam beradi, **lekin uni birinchi navbatda ishlatmang**:
+   u `adbd` ni qayta ishga tushiradi va joriy USB seansini uzadi hamda
+   avtorizatsiyani qaytadan so'ratadi.
+4. **UI avtomatlashtirishda koordinata qotirmang** — ro'yxat qayta chizilganda
+   `⋮` o'rniga karta bosilib, dars xonasi ochilib ketdi. `uiautomator dump` bilan
+   element chegarasini topish kerak. (Efir boshlanmadi: ruxsat rad etildi,
+   `LessonService` ishga tushmagani tekshirildi.)
+
+---
+
+### 🎥 YOZIB OLISH ISHLAY BOSHLADI — birinchi haqiqiy yozuv (2026-07-27)
+
+Foydalanuvchi talabi: **yozib olish default yoniq** (majburiy emas — o'chirsa bo'ladi),
+kechikish minimal, past internetli hududlar qo'llab-quvvatlansin.
+
+**🔴 Yozib olish umuman ishlamayotgan ekan.** Ikki to'siq bir-birining ustida:
+egress konteyneri `profiles: ["recording"]` ortida qolib **hech qachon ishga
+tushmagan**, LiveKit config'ida esa egress bilan umumiy `redis:` bloki yo'q edi
+(`ENABLE_RECORDING=1` hech qachon berilmagan). Ya'ni UI'da "Yozib olishni
+boshlash" tugmasi turgan, orqasida esa hech narsa. Ikkala darvoza ham olib
+tashlandi — egress endi stack'ning doimiy qismi.
+
+**⏱ 5 DAQIQALIK TUZOQ — topildi va tuzatildi.** Dastlab yozuvni `room.HostToken`
+da (ustozga token berilganda) boshlagandim. Jonli sinov buni rad etdi:
+
+```
+egress_aborted  "Start signal not received"  code 412
+```
+
+Room-composite egress xonaga kirib **kimdir media chiqarishini kutadi** va
+5 daqiqada kutgani kelmasa bekor bo'ladi. Token berilishi bilan media paydo
+bo'lishi orasida ruxsat so'rash va ulanish bor; ulanish yiqilsa egress
+5 daqiqa **bo'sh Chrome aylantirib** turadi va yozuv umuman qolmaydi —
+4 yadroli serverda ikki barobar zarar.
+
+**Yechim:** yozuv `track_published` webhook'ida boshlanadi (`EnsureForRoom`),
+ya'ni xonada haqiqatan media bor paytda. `participant_joined` YETARLI EMAS —
+ishtirokchi kirib ruxsat oynasida turib qolsa egress yana bo'sh kutardi.
+
+**Natija (jonli serverda o'lchangan):**
+
+| | Avval | Endi |
+|---|---|---|
+| Egress start signal | `not received` (412) | **`START_RECORDING` 8.4 s da** |
+| Yozuv holati | `failed` | **`ready`** |
+| Fayl | yo'q | **82 188 bayt MP4, 29 s** — yuklab olindi va `ISO Media, MP4 v2` deb tasdiqlandi |
+
+Bu loyihadagi **birinchi muvaffaqiyatli yozuv**.
+
+**Default yoniq — endi SERVER qoidasi.** `CreateLessonReq.IsRecordingEnabled`
+`bool` → `*bool`: berilmasa **yoqiladi**. Avval Go'ning nol qiymati `false` edi
+va qoida faqat klientlarda bajarilardi — API'ga to'g'ridan-to'g'ri murojaat
+qilgan har narsa jimgina yozuvsiz dars yaratardi. Oshkora `false` hurmat
+qilinadi: ustoz o'chira oladi va `EnsureRecording` uni boshlamaydi.
+
+**📶 PAST INTERNET — ekran ulashishda simulcast yoqildi.**
+Server jurnali muammoni raqam bilan ko'rsatdi:
+
+```
+SCREEN_SHARE  layers: [720p @1.5 Mbps]                  ← BITTA qatlam
+CAMERA        layers: [180p @160k · 360p @450k · 720p]  ← uchta
+```
+
+Zaif internetli o'quvchi 1.5 Mbit/s ni ko'tara olmasa pastroq sifatga tusha
+olmasdi — ekranni **umuman ko'rmasdi**. Ekran ulashish esa bu mahsulotning
+asosiy mazmuni.
+
+Endi ikki qatlam: `H720_FPS15` (1.5 Mbps, tegilmagan) + **`H360_FPS3`
+(200 kbps)**. Asl e'tiroz ("past qatlam matn sifatini yeydi") `simulcastLayers`
+bilan bartaraf — qatlamlarni o'zimiz tanlaymiz, SDK emas.
+`DegradationPreference.MAINTAIN_RESOLUTION`: kanal torayganda **o'lcham
+saqlanadi, fps tushadi** — 2 kadr/s da o'qiladigan kod, 15 kadr/s da
+xiralashgan koddan foydaliroq.
+
+Barcha preset qiymatlari SDK artefaktidan `javap` bilan **o'lchab olindi**
+(loyiha qoidasi: LiveKit API'lari taxmin qilinmaydi) — `data/livekit/MediaTuning.kt`
+jadvaliga qara.
+
+**🔊 Ovozda ish YO'Q ekan** — `AudioTrackPublishDefaults()` da `red=true`,
+`dtx=true` allaqachon yoqilgan. Ular oshkora yozilib test bilan qotirildi,
+xolos: kelajakda kimdir audio sozlamalarini boshqa sabab bilan o'rnatsa,
+RED/DTX jimgina o'chib ketmasin.
+
+**Tekshiruv:** backend **20 paket**, mobil **307 test, 0 FAIL**.
+Mutatsiyalar (hammasi o'ldirildi): trigger `participant_joined` ga
+o'zgartirildi (2 FAIL) · bo'sh xona nomi qabul qilindi (1) · begona prefiks
+tekshirilmadi (2) · idempotentlik buzildi (1) · o'chirilgan dars hurmat
+qilinmadi (1) · server default'i `false` qilindi (1) · simulcast o'chirildi (1) ·
+`MAINTAIN_RESOLUTION` almashtirildi (1) · past qatlam 720p qilindi (1) ·
+RED o'chirildi (1).
+
+**Yangi vosita:** `backend/tests/load/publish_probe` — xonaga ulanib **haqiqiy
+audio trek e'lon qiladi**. Mavjud `livekit_load` faqat ulanadi, trek e'lon
+qilmaydi — ya'ni aynan tuzoqni tug'dirgan farqni sinay olmaydi.
 
 ---
 

@@ -101,6 +101,18 @@ class RoomStatusTest {
     }
 
     @Test
+    fun `holat yozuvi hech qachon SDK nomini oqizmaydi`() {
+        // Qurilmada sarlavha ostida inglizcha "disconnected" ko'rindi — SDK enum nomi
+        // to'g'ridan-to'g'ri chiqarilgani uchun. Har qanday qiymat o'zbekcha bo'lsin.
+        assertEquals("ulanmagan", RoomStatus.connLabel("disconnected"))
+        assertEquals("qayta ulanmoqda…", RoomStatus.connLabel("reconnecting"))
+        assertEquals("ulanmoqda…", RoomStatus.connLabel("connecting"))
+        listOf("disconnected", "reconnecting", "connecting", "connected", "", "kicked").forEach {
+            assertTrue("'$it' uchun yozuv lotincha SDK nomi", RoomStatus.connLabel(it) != it)
+        }
+    }
+
+    @Test
     fun `notanish sabab ham bosh bolmagan xabar beradi`() {
         // Xabar bo'sh bo'lsa UI kartani ko'rsatmaydi va ustoz nima bo'lganini bilmaydi.
         listOf("UNKNOWN_REASON", "MIGRATION", "SIP_TRUNK_FAILURE", null, "").forEach { name ->

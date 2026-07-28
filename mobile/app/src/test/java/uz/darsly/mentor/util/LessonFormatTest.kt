@@ -1,6 +1,7 @@
 package uz.darsly.mentor.util
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
 import uz.darsly.mentor.data.api.Lesson
@@ -177,5 +178,56 @@ class LessonFormatTest {
             ),
             text.lines(),
         )
+    }
+
+    // ─── Go'ning nol vaqti (qurilmada topilgan) ───────────────────────────────
+
+    @Test
+    fun `Go nol vaqti sana emas deb qaraladi`() {
+        // ⭐ Galaxy Tab S9 da topilgan: backend to'ldirilmagan vaqt maydonini
+        // `0001-01-01T00:00:00Z` qilib yuboradi (Go `time.Time` nol qiymati —
+        // seed admin hisobining `created_at` i aynan shunday). Ilova buni
+        // "1-yanvar 1, 04:27" deb chizardi: 04:27 — Toshkent uchun 1-yildagi
+        // LMT ofseti, foydalanuvchi uchun mutlaqo ma'nosiz.
+        assertNull(LessonFormat.epochOrNull("0001-01-01T00:00:00Z"))
+        assertNull(LessonFormat.scheduleLabel("0001-01-01T00:00:00Z"))
+    }
+
+    @Test
+    fun `haqiqiy sanalar tegilmaydi`() {
+        // Chegara juda baland qo'yilmaganini qotiradi: 2000-yildan keyingi
+        // barcha vaqtlar avvalgidek ishlashda davom etadi.
+        assertNotNull(LessonFormat.epochOrNull("2026-07-27T09:30:00Z"))
+        assertNotNull(LessonFormat.epochOrNull("2001-01-01T00:00:01Z"))
+    }
+}
+
+/**
+ * `instantMs` — server RFC3339 vaqtini data-channel `at` (Unix ms) bilan BIR XIL
+ * birlikka keltiradi. Ikkalasi kelishmasa qo'l navbati noto'g'ri tartiblanadi.
+ */
+class LessonFormatInstantMsTest {
+
+    @org.junit.Test
+    fun `RFC3339 Z va offset ikkalasi ham oqiladi`() {
+        val z = LessonFormat.instantMs("2026-07-27T10:00:00Z")
+        val offset = LessonFormat.instantMs("2026-07-27T15:00:00+05:00")
+        org.junit.Assert.assertEquals("bir xil onni bildiruvchi ikki yozuv teng bo'lishi kerak", z, offset)
+        org.junit.Assert.assertTrue(z > 0)
+    }
+
+    @org.junit.Test
+    fun `yaroqsiz yoki bosh qiymat nol qaytaradi`() {
+        org.junit.Assert.assertEquals(0L, LessonFormat.instantMs(null))
+        org.junit.Assert.assertEquals(0L, LessonFormat.instantMs(""))
+        org.junit.Assert.assertEquals(0L, LessonFormat.instantMs("kecha"))
+    }
+
+    @org.junit.Test
+    fun `1970 kabi manosiz vaqt nol deb qaraladi`() {
+        // Ma'lumot xatosi navbatni buzmasin: 0 → ro'yxat oxirida emas, boshida
+        // turadi, lekin bu "vaqt yo'q" degani va serverdan kelgan boshqa
+        // qiymatlar bilan solishtirish baribir deterministik qoladi.
+        org.junit.Assert.assertEquals(0L, LessonFormat.instantMs("1970-01-01T00:00:00Z"))
     }
 }

@@ -67,6 +67,20 @@ object RoomStatus {
     fun isWarning(quality: LinkQuality, reconnecting: Boolean): Boolean =
         reconnecting || quality == LinkQuality.LOST || quality == LinkQuality.POOR
 
+    /**
+     * Sarlavha ostidagi holat yozuvi ulanmagan paytda.
+     *
+     * Avval SDK enum nomi (`room.state.name.lowercase()`) to'g'ridan-to'g'ri chiqarilardi —
+     * ustoz ekranda inglizcha "disconnected" ni ko'rardi (2026-07-28, qurilmada 🟡A sinovida).
+     * Noma'lum qiymat ham inglizcha oqib chiqmasligi uchun oxirgi shox umumiy matn beradi.
+     */
+    fun connLabel(connState: String): String = when (connState) {
+        "connected" -> "ulandi"
+        "reconnecting" -> "qayta ulanmoqda…"
+        "connecting" -> "ulanmoqda…"
+        else -> "ulanmagan"
+    }
+
     fun endReasonOf(sdkName: String?): EndReason = when (sdkName) {
         "CLIENT_INITIATED" -> EndReason.SELF
         "ROOM_DELETED", "ROOM_CLOSED" -> EndReason.HOST_ENDED

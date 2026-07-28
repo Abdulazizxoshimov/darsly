@@ -17,6 +17,12 @@
     <!-- Android 13+ (API 33): bildirishnoma ko'rsatish uchun runtime ruxsat -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Qo'l ko'tarilganda qisqa titrash. Ustoz ekran ulashib boshqa ilovada
+         bo'lganda bu YAGONA e'tibor torttiruvchi signal: bildirishnoma kanali
+         `IMPORTANCE_LOW` (ovozsiz), overlay esa MediaProjection'ga tushib
+         o'quvchilarga ko'rinib qolardi. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
 

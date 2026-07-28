@@ -64,12 +64,70 @@ data class LogoutReq(
     @Json(name = "refresh_token") val refreshToken: String,
 )
 
+/**
+ * Foydalanuvchi — `entity.User` ning mobil ilova ishlatadigan qismi.
+ *
+ * `password_hash`/`deleted_at` backend'da `json:"-"` bilan yopilgan, ya'ni ular
+ * hech qachon kelmaydi. Qolgan maydonlar shaxsiy kabinet uchun kerak
+ * ([uz.darsly.mentor.ui.profile.ProfileScreen]): ism va til/mintaqa tahrirlanadi,
+ * `role`/`created_at` esa faqat ko'rsatiladi.
+ */
 @JsonClass(generateAdapter = true)
 data class User(
     @Json(name = "id") val id: String,
     @Json(name = "email") val email: String,
     @Json(name = "full_name") val fullName: String,
     @Json(name = "role") val role: String,
+    @Json(name = "avatar_url") val avatarUrl: String? = null,
+    /** Avatar o'rnidagi rang (`#RRGGBB`) — web bilan bir xil ko'rinish uchun. */
+    @Json(name = "color") val color: String? = null,
+    @Json(name = "timezone") val timezone: String? = null,
+    @Json(name = "language") val language: String? = null,
+    @Json(name = "is_active") val isActive: Boolean = true,
+    @Json(name = "last_login_at") val lastLoginAt: String? = null,
+    @Json(name = "created_at") val createdAt: String? = null,
+)
+
+/**
+ * `PUT /api/v1/users/me` — entity.UpdateUserReq ning ustoz o'zgartira oladigan qismi.
+ *
+ * `role` ATAYLAB YO'Q: backend uni `PUT /users/me` da baribir `nil` qiladi
+ * (`v1/user.go:198` — privilege escalation himoyasi). Uni bu yerga qo'shish
+ * "o'zgartirsa bo'ladi" degan yolg'on va'da bo'lardi.
+ *
+ * `null` maydonlar JSON'ga umuman qo'shilmaydi → o'zgartirilmaydi.
+ */
+@JsonClass(generateAdapter = true)
+data class UpdateProfileReq(
+    @Json(name = "full_name") val fullName: String? = null,
+    @Json(name = "timezone") val timezone: String? = null,
+    @Json(name = "language") val language: String? = null,
+)
+
+/** `PUT /api/v1/users/me/password` — entity.ChangePasswordReq. */
+@JsonClass(generateAdapter = true)
+data class ChangePasswordReq(
+    @Json(name = "current_password") val currentPassword: String,
+    @Json(name = "new_password") val newPassword: String,
+)
+
+/** `POST /api/v1/auth/forgot-password` — entity.ForgotPasswordReq. */
+@JsonClass(generateAdapter = true)
+data class ForgotPasswordReq(
+    @Json(name = "email") val email: String,
+)
+
+/**
+ * `POST /api/v1/auth/reset-password` — entity.ResetPasswordReq.
+ *
+ * `token` emaildagi havoladan (`/reset-password?token=…`) olinadi. Ilova uni
+ * qo'lda kiritishga ham, havolani yopishtirishga ham ruxsat beradi
+ * ([uz.darsly.mentor.ui.auth.PasswordResetForm.extractToken]).
+ */
+@JsonClass(generateAdapter = true)
+data class ResetPasswordReq(
+    @Json(name = "token") val token: String,
+    @Json(name = "new_password") val newPassword: String,
 )
 
 @JsonClass(generateAdapter = true)
@@ -113,6 +171,107 @@ data class CreateLessonReq(
 )
 
 /**
+ * `PATCH /api/v1/lessons/{id}` — entity.UpdateLessonReq.
+ *
+ * HAMMA maydon `null` bo'la oladi va `null` maydon JSON'ga **qo'shilmaydi** —
+ * ya'ni "tegilmadi" degani. Bu yerda [CreateLessonReq] dan farqli o'laroq bu
+ * xatti-harakat majburiy: bitta sarlavhani o'zgartirganda darsning paroli yoki
+ * kutish xonasi jimgina nolga tushib qolmasligi kerak.
+ *
+ * PAROL uch holatli, shuning uchun ikkita maydon:
+ *  · `passcode = null`, `removePasscode = false` → parol **tegilmaydi**
+ *  · `passcode = "1234"`                          → yangi parol o'rnatiladi
+ *  · `removePasscode = true`                      → parol olib tashlanadi
+ */
+@JsonClass(generateAdapter = true)
+data class UpdateLessonReq(
+    @Json(name = "title") val title: String? = null,
+    @Json(name = "description") val description: String? = null,
+    @Json(name = "scheduled_at") val scheduledAt: String? = null,
+    @Json(name = "duration_min") val durationMin: Int? = null,
+    @Json(name = "passcode") val passcode: String? = null,
+    @Json(name = "remove_passcode") val removePasscode: Boolean = false,
+    @Json(name = "is_locked") val isLocked: Boolean? = null,
+    @Json(name = "is_recording_enabled") val isRecordingEnabled: Boolean? = null,
+    @Json(name = "is_waiting_room_enabled") val isWaitingRoomEnabled: Boolean? = null,
+)
+
+/**
+ * Bildirishnoma — entity.Notification.
+ *
+ * Aynan shu shakl **ikki yo'ldan** keladi: `GET /notifications` javobida va
+ * WebSocket `notification` xabarining `payload` ida (`notification.go:42` —
+ * `hub.Send(userID, ws.NewNotificationMsg(userID, n))` butun entity'ni yuboradi).
+ * Shu sabab jonli kelgan bildirishnomani ro'yxatga qo'shish uchun qayta so'rov
+ * kerak emas.
+ */
+@JsonClass(generateAdapter = true)
+data class Notification(
+    @Json(name = "id") val id: String,
+    @Json(name = "type") val type: String = "system",
+    @Json(name = "title") val title: String = "",
+    @Json(name = "body") val body: String = "",
+    @Json(name = "lesson_id") val lessonId: String? = null,
+    /** `null` — o'qilmagan. Backend `read_at` ni faqat o'qilganda yuboradi. */
+    @Json(name = "read_at") val readAt: String? = null,
+    @Json(name = "created_at") val createdAt: String? = null,
+) {
+    val isUnread: Boolean get() = readAt.isNullOrBlank()
+}
+
+/** `GET /api/v1/notifications/unread-count` javobi — `{data:{count:N}}`. */
+@JsonClass(generateAdapter = true)
+data class UnreadCount(
+    @Json(name = "count") val count: Int = 0,
+)
+
+/**
+ * Dars yozuvi — entity.Recording.
+ *
+ * `object_key` backend'da `json:"-"` — MinIO ichidagi yo'l hech qachon klientga
+ * kelmaydi; yuklab olish faqat vaqtinchalik imzolangan havola orqali
+ * ([RecordingDownload]).
+ */
+@JsonClass(generateAdapter = true)
+data class Recording(
+    @Json(name = "id") val id: String,
+    @Json(name = "lesson_id") val lessonId: String = "",
+    /** `recording` | `processing` | `ready` | `failed` (entity/recording.go). */
+    @Json(name = "status") val status: String = "processing",
+    @Json(name = "duration_sec") val durationSec: Int = 0,
+    @Json(name = "size_bytes") val sizeBytes: Long = 0,
+    @Json(name = "started_at") val startedAt: String? = null,
+    @Json(name = "ended_at") val endedAt: String? = null,
+    @Json(name = "created_at") val createdAt: String? = null,
+)
+
+/** `GET /api/v1/recordings/{id}/download` — vaqtinchalik presigned havola. */
+@JsonClass(generateAdapter = true)
+data class RecordingDownload(
+    @Json(name = "url") val url: String,
+    @Json(name = "expires_in_s") val expiresInS: Int = 0,
+    @Json(name = "duration_sec") val durationSec: Int = 0,
+    @Json(name = "size_bytes") val sizeBytes: Long = 0,
+)
+
+/**
+ * Kutish xonasidagi kirish so'rovi — entity.WaitingRoomRequest (M27).
+ *
+ * DIQQAT: REST (`GET /lessons/:id/waitingroom`) `id` kaliti bilan keladi,
+ * WebSocket xabari esa `request_id` bilan (`waitingroom.go:68`). Ikki nom bitta
+ * narsani anglatadi — WS tomoni [uz.darsly.mentor.data.ws.RealtimeParser] da
+ * shu turga o'giriladi, ya'ni farq bitta joyda qoladi.
+ */
+@JsonClass(generateAdapter = true)
+data class WaitingRoomRequest(
+    @Json(name = "id") val id: String,
+    @Json(name = "lesson_id") val lessonId: String = "",
+    @Json(name = "requester_name") val requesterName: String = "",
+    @Json(name = "status") val status: String = "pending",
+    @Json(name = "created_at") val createdAt: String? = null,
+)
+
+/**
  * `GET /api/v1/app-config` javobi (M42 · BE-5) — entity.AppConfig.
  * Ochiq endpoint, token talab qilmaydi.
  */
@@ -143,4 +302,58 @@ data class RoomToken(
     @Json(name = "room_name") val roomName: String,
     @Json(name = "identity") val identity: String,
     @Json(name = "role") val role: String,
+    /**
+     * Dars ID'si — xona holati endpointlari (`/rooms/{lessonId}/...`) uchun.
+     * Default bo'sh: eski backend bilan ham ishlasin (maydonsiz javob parse
+     * bo'ladi va shunchaki holat yuklanmaydi).
+     */
+    @Json(name = "lesson_id") val lessonId: String = "",
+)
+
+/** Xonadagi ishtirokchi (`GET /lessons/{id}/participants`). */
+@JsonClass(generateAdapter = true)
+data class RoomParticipantDto(
+    @Json(name = "identity") val identity: String,
+    @Json(name = "name") val name: String = "",
+    @Json(name = "active") val active: Boolean = true,
+    @Json(name = "audio_muted") val audioMuted: Boolean = true,
+    @Json(name = "video_muted") val videoMuted: Boolean = true,
+)
+
+/** Dars chati xabari. `toIdentity != null` → shaxsiy. */
+@JsonClass(generateAdapter = true)
+data class ChatMessageDto(
+    @Json(name = "id") val id: String,
+    @Json(name = "sender_identity") val senderIdentity: String = "",
+    @Json(name = "sender_name") val senderName: String = "",
+    @Json(name = "body") val body: String = "",
+    @Json(name = "to_identity") val toIdentity: String? = null,
+    @Json(name = "created_at") val createdAt: String = "",
+)
+
+/** Xona chatiga xabar (room-token bilan — host ham shu yo'ldan yuradi). */
+@JsonClass(generateAdapter = true)
+data class SendRoomChatReq(
+    @Json(name = "token") val token: String,
+    @Json(name = "body") val body: String,
+    @Json(name = "to") val to: String = "",
+)
+
+/** Qo'lni tushirish (host). */
+@JsonClass(generateAdapter = true)
+data class LowerHandReq(
+    @Json(name = "identity") val identity: String,
+)
+
+/** `GET /rooms/{lessonId}/state` javobi — ko'tarilgan qo'llar (navbat tartibida). */
+@JsonClass(generateAdapter = true)
+data class RoomStateResp(
+    @Json(name = "hands") val hands: List<RaisedHandDto> = emptyList(),
+)
+
+@JsonClass(generateAdapter = true)
+data class RaisedHandDto(
+    @Json(name = "identity") val identity: String,
+    @Json(name = "name") val name: String = "",
+    @Json(name = "raised_at") val raisedAt: String = "",
 )

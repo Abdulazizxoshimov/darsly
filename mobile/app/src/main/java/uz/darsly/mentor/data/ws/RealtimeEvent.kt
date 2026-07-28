@@ -33,12 +33,49 @@ sealed interface RealtimeEvent {
     /** So'rov rad etildi. */
     data object WaitingRoomRejected : RealtimeEvent
 
-    /** Bildirishnoma (dars eslatmasi va boshqalar). */
+    /**
+     * Bildirishnoma (dars eslatmasi va boshqalar).
+     *
+     * Backend WS payload'i sifatida **butun** `entity.Notification` ni yuboradi
+     * (`usecase/notification/notification.go:42`), shuning uchun jonli kelgan
+     * xabarni ro'yxatga qo'shish uchun qo'shimcha `GET /notifications` kerak
+     * emas — [toModel] shu ishni bajaradi.
+     *
+     * Maydonlar `null` bo'la oladi: eski server yoki kutilmagan payload shakli
+     * "bildirishnoma keldi" faktini yo'qotmasligi kerak.
+     */
     data class Notification(
         val id: String?,
         val title: String?,
         val body: String?,
-    ) : RealtimeEvent
+        val type: String? = null,
+        val lessonId: String? = null,
+        val createdAt: String? = null,
+    ) : RealtimeEvent {
+
+        /**
+         * Ro'yxatga qo'shsa bo'ladigan modelga aylantiradi.
+         *
+         * `id` bo'lmasa `null` — identifikatorsiz yozuvni ro'yxatga qo'shib
+         * bo'lmaydi (o'qilgan deb belgilash ham, dublikatni aniqlash ham
+         * imkonsiz). Bunday holatda ekran shunchaki serverdan yangilaydi.
+         *
+         * Jonli kelgan bildirishnoma **doim o'qilmagan**: server uni endigina
+         * yaratdi, ya'ni `read_at` bo'sh.
+         */
+        fun toModel(): uz.darsly.mentor.data.api.Notification? {
+            val realId = id?.takeIf { it.isNotBlank() } ?: return null
+            return uz.darsly.mentor.data.api.Notification(
+                id = realId,
+                type = type ?: "system",
+                title = title.orEmpty(),
+                body = body.orEmpty(),
+                lessonId = lessonId,
+                readAt = null,
+                createdAt = createdAt,
+            )
+        }
+    }
 
     /** Notanish tur — ilova yangilanmagan bo'lsa ham ishlashda davom etadi. */
     data class Unknown(val type: String) : RealtimeEvent

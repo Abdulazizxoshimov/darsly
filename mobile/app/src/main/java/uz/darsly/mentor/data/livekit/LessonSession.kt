@@ -56,19 +56,33 @@ class LessonSession(
             videoTrackCaptureDefaults = LocalVideoTrackOptions(position = CameraPosition.FRONT),
             screenShareTrackCaptureDefaults = LocalVideoTrackOptions(
                 isScreencast = true,
-                captureParams = ScreenSharePresets.H720_FPS15.capture,
+                captureParams = MediaTuning.SCREEN_HIGH.capture,
             ),
-            screenShareTrackPublishDefaults = VideoTrackPublishDefaults(
-                videoEncoding = ScreenSharePresets.H720_FPS15.encoding,
-                // Ekran ulashishda simulcast o'chirilgan: matn sifatini pasaytiradigan
-                // past qatlamlarga bitrate ketmasin.
-                simulcast = false,
-            ),
+            // Ekran ulashish va ovoz sozlamalari — past internetli hududlar uchun.
+            // Sabablar va raqamlar `MediaTuning` da (u sof va testlar ostida).
+            screenShareTrackPublishDefaults = MediaTuning.screenSharePublish(),
+            audioTrackPublishDefaults = MediaTuning.audioPublish(),
+            // C-11: tarmoq almashuvida (Wi-Fi ↔ LTE) tez tiklanish.
+            // Sabab va raqamlar `LessonReconnectPolicy` da (u sof va test ostida).
+            reconnectPolicy = LessonReconnectPolicy(),
         ),
     )
 
     private val _screenShareOn = MutableStateFlow(false)
     val screenShareOn: StateFlow<Boolean> = _screenShareOn.asStateFlow()
+
+    /**
+     * Ustoz ulashishni TIZIM panelidan ("Stop sharing") to'xtatdi.
+     *
+     * Nega alohida signal: [screenShareOn] `false` bo'lishining ikki sababi bor —
+     * ustoz to'xtatdi yoki qayta ulanish trekni oldi. Birinchisida tiklash
+     * KERAK EMAS (ustoz ataylab to'xtatgan), ikkinchisida kerak. Oqimning o'zi
+     * bu ikkisini ajratmaydi.
+     *
+     * Bizning `stopCapture()` chaqiruvimizda ishlamaydi: WebRTC avval
+     * `MediaProjection.Callback` ni yechadi, keyin `stop()` qiladi.
+     */
+    var onUserStoppedShare: (() -> Unit)? = null
 
     private val _screenAudioOn = MutableStateFlow(false)
     val screenAudioOn: StateFlow<Boolean> = _screenAudioOn.asStateFlow()
@@ -194,6 +208,7 @@ class LessonSession(
                 onStop = {
                     _screenShareOn.value = false
                     releaseScreenAudio()
+                    onUserStoppedShare?.invoke()
                 },
             ),
         )
@@ -204,6 +219,28 @@ class LessonSession(
         releaseScreenAudio()
         room.localParticipant.setScreenShareEnabled(false)
         _screenShareOn.value = false
+    }
+
+    /**
+     * Ekran ulashish bayrog'ini LiveKit'dagi HAQIQIY holat bilan tenglashtiradi.
+     *
+     * ## Nega kerak (qurilma sinovi, 2026-07-28)
+     * [_screenShareOn] — bizning bayrog'imiz: `startScreenShare` da yoqiladi va
+     * faqat ustoz to'xtatganda o'chadi. Qayta ulanishda esa trek SERVERDA
+     * yo'qoladi, bayroq esa `true` bo'lib qolaveradi — ekranda "Ekraningiz
+     * ulashilmoqda" yozuvi turadi, o'quvchilar esa hech narsa ko'rmaydi.
+     * Bu darsdagi eng yomon xato turi: interfeys YOLG'ON gapiradi.
+     *
+     * Shuning uchun tiklash qarori bayroqdan emas, e'lon qilingan TREKDAN
+     * boshlanadi. Farq bo'lsa — haqiqat ustun.
+     *
+     * @return hozir ekran treki haqiqatan e'lon qilinganmi
+     */
+    fun reconcileScreenShare(): Boolean {
+        val published = room.localParticipant
+            .getTrackPublication(Track.Source.SCREEN_SHARE)?.track != null
+        _screenShareOn.value = published
+        return published
     }
 
     /**

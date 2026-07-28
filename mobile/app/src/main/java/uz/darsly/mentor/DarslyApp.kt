@@ -8,8 +8,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import uz.darsly.mentor.data.api.Session
+import uz.darsly.mentor.data.repo.NotificationsBadge
+import uz.darsly.mentor.data.repo.NotificationsRepository
 import uz.darsly.mentor.data.store.PrefsLessonsCache
 import uz.darsly.mentor.data.ws.Realtime
+import uz.darsly.mentor.data.ws.RealtimeEvent
 import uz.darsly.mentor.service.LessonNotifications
 
 class DarslyApp : Application() {
@@ -27,6 +30,7 @@ class DarslyApp : Application() {
         LessonNotifications.ensureChannel(this)
         observeLogoutCleanup()
         observeRealtime()
+        observeUnreadBadge()
         // TODO(R2 · M44): Sentry Android init.
     }
 
@@ -44,6 +48,36 @@ class DarslyApp : Application() {
         appScope.launch {
             Session.loggedIn.collect { loggedIn ->
                 if (loggedIn) Realtime.client.start(appScope) else Realtime.client.stop()
+            }
+        }
+    }
+
+    /**
+     * O'QILMAGAN BILDIRISHNOMALAR NISHONI — pastki panelda.
+     *
+     * Nishon bildirishnomalar ekrani **ochilmasdan oldin** ham to'g'ri bo'lishi
+     * kerak (aks holda ustoz uni ochishga sabab topmaydi), shuning uchun
+     * boshlang'ich son shu yerda, kirish bilan olinadi. Keyingi jonli xabarlar
+     * sonni oshiradi; ekran ochilganda esa `NotificationsViewModel` aniq
+     * qiymatni yozib to'g'rilaydi.
+     *
+     * So'rov yiqilsa nishon shunchaki ko'rinmaydi — bu xato dialogi ko'rsatish
+     * uchun sabab emas: ustoz hech narsa so'ramagan edi.
+     */
+    private fun observeUnreadBadge() {
+        appScope.launch {
+            Session.loggedIn.collect { loggedIn ->
+                if (!loggedIn) {
+                    NotificationsBadge.clear()
+                    return@collect
+                }
+                NotificationsRepository.create().unreadCount()
+                    .onSuccess { NotificationsBadge.set(it) }
+            }
+        }
+        appScope.launch {
+            Realtime.client.events.collect { event ->
+                if (event is RealtimeEvent.Notification) NotificationsBadge.increment()
             }
         }
     }

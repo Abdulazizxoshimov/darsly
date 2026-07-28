@@ -6,6 +6,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -23,13 +24,19 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -49,6 +56,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -67,12 +75,19 @@ import uz.darsly.mentor.util.Share
 @Composable
 fun LessonsScreen(
     onOpenLesson: (Lesson) -> Unit,
+    onOpenRecordings: (Lesson) -> Unit,
     vm: LessonsViewModel = viewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
     var createOpen by rememberSaveable { mutableStateOf(false) }
+    // Tahrirlanayotgan darsning ID'si — `Lesson` obyektining o'zi emas.
+    // Sabab: ro'yxat yangilanganda (pull-to-refresh yoki WS) saqlangan obyekt
+    // eskirib qolardi va forma eski qiymatlarni ko'rsatardi. ID bo'yicha har
+    // kompozitsiyada joriy nusxa topiladi.
+    var editingId by rememberSaveable { mutableStateOf<String?>(null) }
+    val editing = editingId?.let { id -> state.lessons.firstOrNull { it.id == id } }
 
     LaunchedEffect(Unit) { vm.start() }
 
@@ -85,17 +100,11 @@ fun LessonsScreen(
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
-        topBar = {
-            TopAppBar(
-                title = { Text("Darslar") },
-                actions = {
-                    // M3 — chiqish. Sessiya tozalanadi va login ekraniga qaytiladi.
-                    TextButton(onClick = { vm.logout() }, enabled = !state.loggingOut) {
-                        Text("Chiqish")
-                    }
-                },
-            )
-        },
+        // "Chiqish" bu yerdan OLIB TASHLANDI — u endi shaxsiy kabinetda
+        // (`ProfileScreen`). Zoom'da ham chiqish sozlamalar ichida: asosiy
+        // ekrandagi doimiy "Chiqish" tugmasi tasodifan bosiladigan va hech qachon
+        // kerak bo'lmaydigan tugma edi.
+        topBar = { TopAppBar(title = { Text("Darslar") }) },
         floatingActionButton = {
             ExtendedFloatingActionButton(
                 onClick = { createOpen = true },
@@ -120,6 +129,8 @@ fun LessonsScreen(
                     else -> LessonList(
                         lessons = state.lessons,
                         onOpen = onOpenLesson,
+                        onEdit = { lesson -> editingId = lesson.id },
+                        onRecordings = onOpenRecordings,
                         onShare = { lesson ->
                             Share.sendText(
                                 context,
@@ -146,6 +157,21 @@ fun LessonsScreen(
             onCreated = { lesson ->
                 createOpen = false
                 vm.onLessonCreated(lesson)
+            },
+        )
+    }
+
+    editing?.let { lesson ->
+        EditLessonDialog(
+            lesson = lesson,
+            onDismiss = { editingId = null },
+            onSaved = {
+                editingId = null
+                vm.onLessonUpdated(it)
+            },
+            onDeleted = {
+                editingId = null
+                vm.onLessonDeleted(it)
             },
         )
     }
@@ -238,6 +264,8 @@ private fun EmptyState(onCreate: () -> Unit) {
 private fun LessonList(
     lessons: List<Lesson>,
     onOpen: (Lesson) -> Unit,
+    onEdit: (Lesson) -> Unit,
+    onRecordings: (Lesson) -> Unit,
     onShare: (Lesson) -> Unit,
     onCopy: (Lesson) -> Unit,
 ) {
@@ -263,6 +291,8 @@ private fun LessonList(
                 LessonCard(
                     lesson = lesson,
                     onClick = { onOpen(lesson) },
+                    onEdit = { onEdit(lesson) },
+                    onRecordings = { onRecordings(lesson) },
                     onShare = { onShare(lesson) },
                     onCopy = { onCopy(lesson) },
                 )
@@ -326,12 +356,49 @@ private fun LessonBadge(label: String) {
 private fun LessonCard(
     lesson: Lesson,
     onClick: () -> Unit,
+    onEdit: () -> Unit,
+    onRecordings: () -> Unit,
     onShare: () -> Unit,
     onCopy: () -> Unit,
 ) {
+    var menuOpen by rememberSaveable { mutableStateOf(false) }
+
     Card(Modifier.fillMaxWidth().clickable(onClick = onClick)) {
         Column(Modifier.padding(16.dp)) {
-            Text(lesson.title, style = MaterialTheme.typography.titleMedium)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    lesson.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.weight(1f),
+                )
+                // Ortiqcha amallar menyusi: kartada to'rt tugma bo'lib ketmasin.
+                // Zoom ham ro'yxatdagi uchrashuvda aynan shu naqshni ishlatadi.
+                Box {
+                    IconButton(onClick = { menuOpen = true }) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "Boshqa amallar")
+                    }
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(
+                            text = { Text("Tahrirlash") },
+                            leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
+                            onClick = {
+                                menuOpen = false
+                                onEdit()
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Yozuvlar") },
+                            leadingIcon = {
+                                Icon(Icons.Default.VideoLibrary, contentDescription = null)
+                            },
+                            onClick = {
+                                menuOpen = false
+                                onRecordings()
+                            },
+                        )
+                    }
+                }
+            }
             Spacer(Modifier.height(6.dp))
 
             Row(
@@ -339,16 +406,23 @@ private fun LessonCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 StatusBadge(lesson.status)
+                // Uzun sana + davomiylik telefonda sig'masdi: "1 soat" ikki qatorga
+                // bo'linardi. Sana qisqaradi (`weight` + ellipsis), davomiylik esa
+                // hech qachon bo'linmaydi — u eng qisqa va eng kerakli ma'lumot.
                 Text(
                     LessonFormat.scheduleLabel(lesson.scheduledAt) ?: "Vaqti belgilanmagan",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
                 )
                 LessonFormat.durationLabel(lesson.durationMin)?.let {
                     Text(
                         it,
                         style = MaterialTheme.typography.labelMedium,
                         color = DarslyTheme.colors.textMuted,
+                        maxLines = 1,
                     )
                 }
             }
@@ -367,24 +441,46 @@ private fun LessonCard(
             }
 
             Spacer(Modifier.height(8.dp))
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Button(onClick = onClick, modifier = Modifier.weight(1f)) {
-                    Text(if (lesson.status == "live") "Davom etish" else "Boshlash")
-                }
-                // M8 — join havolasi Telegramga tizim "Ulashish" oynasi orqali.
-                TextButton(onClick = onShare, enabled = lesson.joinSlug != null) {
-                    Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(18.dp))
-                    // 🟢J: gorizontal qator — bo'shliq `width` bo'lishi kerak
-                    // (`height(0.dp)` hech narsa qilmaydigan qator edi).
-                    Spacer(Modifier.width(6.dp))
-                    Text("Ulashish")
-                }
-                TextButton(onClick = onCopy, enabled = lesson.joinSlug != null) {
-                    Icon(Icons.Default.ContentCopy, contentDescription = "Havolani nusxalash", modifier = Modifier.size(18.dp))
+            // Tugmalar eni EKRANDAN hisoblanadi (ControlBar'dagi kabi): telefonda
+            // "Davom etish" yozuvi ikki qatorga bo'linib tugmani baland qilardi
+            // (qurilmada 2026-07-28 da ko'rindi; planshetda ko'rinmagan). Tor
+            // kartada "Ulashish" yozuvi olib tashlanadi — ikonka o'zi yetadi.
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                val compact = maxWidth < 320.dp
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    // Yakunlangan darsda tugma "Yozuvlar" bo'ladi va xona OCHILMAYDI —
+                    // yo'nalish `MainActivity` da, qoida esa `LessonActions` da (sof,
+                    // test ostida). Avval har qanday dars xonani ochib, keyin serverdan
+                    // `lesson is not active` (400) qaytardi.
+                    val primary = LessonActions.primary(lesson.status)
+                    Button(
+                        onClick = onClick,
+                        enabled = primary != LessonActions.Primary.NONE,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text(LessonActions.label(primary), maxLines = 1)
+                    }
+                    // M8 — join havolasi Telegramga tizim "Ulashish" oynasi orqali.
+                    TextButton(onClick = onShare, enabled = lesson.joinSlug != null) {
+                        Icon(
+                            Icons.Default.Share,
+                            contentDescription = "Havolani ulashish",
+                            modifier = Modifier.size(18.dp),
+                        )
+                        if (!compact) {
+                            // 🟢J: gorizontal qator — bo'shliq `width` bo'lishi kerak
+                            // (`height(0.dp)` hech narsa qilmaydigan qator edi).
+                            Spacer(Modifier.width(6.dp))
+                            Text("Ulashish")
+                        }
+                    }
+                    TextButton(onClick = onCopy, enabled = lesson.joinSlug != null) {
+                        Icon(Icons.Default.ContentCopy, contentDescription = "Havolani nusxalash", modifier = Modifier.size(18.dp))
+                    }
                 }
             }
         }

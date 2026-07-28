@@ -55,9 +55,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material3.Icon
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.TopAppBar
 import androidx.compose.ui.text.style.TextOverflow
@@ -80,9 +83,25 @@ fun RoomScreen(
     lessonId: String,
     onLeave: () -> Unit,
     vm: RoomViewModel = viewModel(),
+    // M27: kutish xonasi alohida ViewModel — u faqat so'rovlar bilan ishlaydi
+    // va `RoomViewModel` (LiveKit, MediaProjection, foreground servis) bilan
+    // aralashmaydi. Ikkalasini birlashtirish bu fayldagi eng murakkab sinfni
+    // yana kattalashtirardi va WS mantiqini media mantig'i bilan chalkashtirardi.
+    waitingVm: WaitingRoomViewModel = viewModel(),
 ) {
     val ctx = LocalContext.current
     val state by vm.state.collectAsStateWithLifecycle()
+    val waiting by waitingVm.state.collectAsStateWithLifecycle()
+    val waitingSnackbar = remember { SnackbarHostState() }
+
+    LaunchedEffect(lessonId) { waitingVm.start(lessonId) }
+
+    LaunchedEffect(waiting.notice) {
+        waiting.notice?.let {
+            waitingSnackbar.showSnackbar(it)
+            waitingVm.noticeShown()
+        }
+    }
 
     // 1) Media ruxsatlari (kamera, mikrofon, Android 13+ bildirishnoma).
     val permissions = buildList {
@@ -149,15 +168,25 @@ fun RoomScreen(
     // TASDIQ so'raladi: tasodifiy bosilgan "Orqaga" 90 daqiqalik darsni uzib
     // qo'ymasligi kerak.
     var confirmLeave by rememberSaveable { mutableStateOf(false) }
+    // Panellar `rememberSaveable` EMAS: ekran burilganda ochiq qolishi shart emas,
+    // va ModalBottomSheet holati baribir qayta yaratiladi.
+    var showParticipants by remember { mutableStateOf(false) }
+    var showChat by remember { mutableStateOf(false) }
 
     // B-1: tizim dialogidan OLDIN ko'rsatiladigan tushuntirish holati.
     val uiPrefs = remember { PrefsUiPrefs.create(ctx) }
     var shareTipOpen by rememberSaveable { mutableStateOf(false) }
     var tipMuted by rememberSaveable { mutableStateOf(false) }
 
-    /** Ekran ulashishni boshlash: kerak bo'lsa avval tushuntirish, keyin tizim dialogi. */
-    fun requestScreenShare() {
-        if (uiPrefs.screenShareTipEnabled) {
+    /**
+     * Ekran ulashishni boshlash: kerak bo'lsa avval tushuntirish, keyin tizim dialogi.
+     *
+     * [skipTip] — uzilgan ulashishni TIKLASH uchun `true`: ustoz "Butun ekran"
+     * tushuntirishini shu darsda allaqachon ko'rgan va hozir undan kutilayotgani
+     * bitta bosish. Ikkinchi tushuntirish darsni yana bir necha soniyaga cho'zardi.
+     */
+    fun requestScreenShare(skipTip: Boolean = false) {
+        if (uiPrefs.screenShareTipEnabled && !skipTip) {
             shareTipOpen = true
         } else {
             val mgr = ctx.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
@@ -221,29 +250,50 @@ fun RoomScreen(
         )
     }
 
+    // ⭐ CHIQISH — IKKI XIL (Zoom "Leave" ↔ "End meeting for all" naqshi).
+    //
+    // Avval faqat "Chiqish" bor edi va u darsni YAKUNLAMASDI. Natijada mobil
+    // ilovada darsni yakunlash yo'li UMUMAN yo'q edi: dars abadiy `live` bo'lib
+    // qolardi, ro'yxatda "Jonli · Davom etish" bo'lib turardi va bosilganda
+    // xona qaytadan ochilardi. Ustoz uchun bu "dars tugamayapti" degani.
     if (confirmLeave) {
         AlertDialog(
             onDismissRequest = { confirmLeave = false },
-            title = { Text("Darsdan chiqasizmi?") },
+            title = { Text("Darsni yakunlaysizmi?") },
             text = {
-                Text(
-                    if (state.screenOn) {
-                        "Ekran ulashish to'xtaydi va o'quvchilar sizni ko'rmay qoladi. " +
-                            "Dars xonasi yopilmaydi — qaytib kirishingiz mumkin."
-                    } else {
-                        "Xonadan chiqasiz. Dars yakunlanmaydi — qaytib kirishingiz mumkin."
-                    },
-                )
+                Column {
+                    Text(
+                        "\"Yakunlash\" — dars tugaydi, o'quvchilar chiqariladi va yozuv " +
+                            "saqlanadi. Bu darsga qaytib kirib bo'lmaydi.",
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        if (state.screenOn) {
+                            "\"Vaqtincha chiqish\" — ekran ulashish to'xtaydi, lekin dars " +
+                                "davom etadi va qaytib kirishingiz mumkin."
+                        } else {
+                            "\"Vaqtincha chiqish\" — dars davom etadi, qaytib kirishingiz mumkin."
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
             },
             confirmButton = {
                 TextButton(onClick = {
                     confirmLeave = false
-                    vm.leave()
+                    vm.endLesson(lessonId)
                     onLeave()
-                }) { Text("Chiqish") }
+                }) { Text("Yakunlash") }
             },
             dismissButton = {
-                TextButton(onClick = { confirmLeave = false }) { Text("Darsda qolish") }
+                Row {
+                    TextButton(onClick = { confirmLeave = false }) { Text("Bekor qilish") }
+                    TextButton(onClick = {
+                        confirmLeave = false
+                        vm.leave()
+                        onLeave()
+                    }) { Text("Vaqtincha chiqish") }
+                }
             },
         )
     }
@@ -252,6 +302,7 @@ fun RoomScreen(
     // Avval bu ekran diagnostika paneli edi: UUID qatorlari, uzun matnli tugmalar
     // ro'yxati va monospace jurnal. Endi Zoom naqshi: sarlavha → sahna → boshqaruv.
     Scaffold(
+        snackbarHost = { SnackbarHost(waitingSnackbar) },
         topBar = { RoomTopBar(state, onLeave = { if (state.lessonActive) confirmLeave = true else { vm.leave(); onLeave() } }) },
         bottomBar = {
             ControlBar(
@@ -264,6 +315,14 @@ fun RoomScreen(
                 onFlipCamera = { vm.flipCamera() },
                 onToggleShare = { if (state.screenOn) vm.stopScreenShare() else requestScreenShare() },
                 onLeave = { if (state.lessonActive) confirmLeave = true else { vm.leave(); onLeave() } },
+                onOpenParticipants = { showParticipants = true },
+                onOpenChat = {
+                    showChat = true
+                    vm.markChatRead()
+                },
+                participantCount = state.participantCount,
+                handsCount = state.hands.size,
+                unreadChat = state.unreadChat,
             )
         },
     ) { padding ->
@@ -271,8 +330,23 @@ fun RoomScreen(
 
             if (state.connecting) LinearProgressIndicator(Modifier.fillMaxWidth())
 
+            // M27: kutish xonasi — sahnadan YUQORIDA. O'quvchi eshik ortida
+            // turganda buni ustoz darhol ko'rishi kerak; pastda bo'lsa u
+            // boshqaruv paneli ostida qolib ketardi.
+            WaitingRoomPanel(
+                state = waiting,
+                onAdmit = waitingVm::admit,
+                onReject = waitingVm::reject,
+                onAdmitAll = waitingVm::admitAll,
+            )
+
             // M16: aloqa indikatori — yaxshi bo'lganda ko'rinmaydi (Zoom xulqi).
-            state.linkLabel?.let { label ->
+            //
+            // C-11: tarmoq almashganda ("Mobil internetga o'tildi") shu qatorda
+            // ko'rsatiladi va aloqa yozuvidan USTUN turadi: ustoz uchun "nima
+            // bo'ldi" savoliga javob "aloqa sifati qanday" dan muhimroq —
+            // usiz u ilovani yopib qayta ochadi va dars haqiqatan uziladi.
+            (state.networkNote ?: state.linkLabel)?.let { label ->
                 Surface(color = MaterialTheme.colorScheme.errorContainer, modifier = Modifier.fillMaxWidth()) {
                     Row(
                         Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
@@ -318,6 +392,24 @@ fun RoomScreen(
                 )
             }
 
+            // C-11: qayta ulanish ekran ulashishni oldi — bir bosishlik tiklash.
+            //
+            // Android 14+ da rozilikni qayta so'ramasdan tiklab bo'lmaydi
+            // (`ScreenSharePlan` ga qarang), shuning uchun bu karta AVTOMATIK
+            // tiklashning o'rnini bosadi: ustoz "Davom ettirish" ni bosadi va
+            // tizim oynasidan boshqa hech narsa qilmaydi.
+            if (state.restoreShare) {
+                RoomNotice(
+                    title = "Ekran ulashish uzildi",
+                    body = "Tarmoq almashgani uchun ulashish to'xtadi. Android har safar " +
+                        "yangi ruxsat so'raydi — \"Davom ettirish\" ni bosing.",
+                    primaryText = "Davom ettirish",
+                    onPrimary = { requestScreenShare(skipTip = true) },
+                    secondaryText = "Keyinroq",
+                    onSecondary = { vm.dismissRestoreShare() },
+                )
+            }
+
             // B-6: dars tugadi — resurslar bo'shatilgan.
             state.endedMessage?.let { message ->
                 RoomNotice(
@@ -354,6 +446,28 @@ fun RoomScreen(
                 DiagnosticsPanel(state.log)
             }
         }
+
+        if (showParticipants) {
+            ParticipantsSheet(
+                state = state,
+                onDismiss = { showParticipants = false },
+                onMuteAll = vm::muteAll,
+                onMute = vm::muteParticipant,
+                onRemove = vm::removeParticipant,
+                onAllowSpeak = vm::allowSpeak,
+                onLowerHand = vm::lowerHand,
+                onLowerAllHands = vm::lowerAllHands,
+                onRefresh = vm::refreshRoster,
+            )
+        }
+
+        if (showChat) {
+            ChatSheet(
+                state = state,
+                onDismiss = { showChat = false },
+                onSend = { vm.sendChat(it) },
+            )
+        }
     }
 }
 
@@ -383,7 +497,7 @@ private fun RoomTopBar(state: RoomUiState, onLeave: () -> Unit) {
                     when {
                         state.connecting -> "ulanmoqda…"
                         state.connState == "connected" -> "${state.participantCount} ishtirokchi"
-                        else -> state.connState
+                        else -> RoomStatus.connLabel(state.connState)
                     },
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -391,6 +505,35 @@ private fun RoomTopBar(state: RoomUiState, onLeave: () -> Unit) {
             }
         },
         actions = {
+            // Yozuv indikatori — darsning O'Z sozlamasidan (`is_recording_enabled`).
+            // Yozib olish default yoniq va server uni avtomatik boshlaydi, lekin
+            // ustoz o'chirgan bo'lsa indikator ham yonmasligi kerak: maxfiylik
+            // masalasida interfeys yolg'on gapirmasligi shart.
+            if (state.connState == "connected" && state.recordingEnabled) {
+                Surface(
+                    color = MaterialTheme.colorScheme.error,
+                    shape = RoundedCornerShape(percent = 50),
+                    modifier = Modifier.padding(end = 8.dp),
+                ) {
+                    Row(
+                        Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            Icons.Default.FiberManualRecord,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onError,
+                            modifier = Modifier.size(10.dp),
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            "REC",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onError,
+                        )
+                    }
+                }
+            }
             if (state.screenOn) {
                 Surface(
                     color = MaterialTheme.colorScheme.primary,
