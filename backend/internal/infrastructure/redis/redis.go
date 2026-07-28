@@ -31,6 +31,7 @@ type Cache interface {
 	// Hash
 	HSet(ctx context.Context, key string, values map[string]any, ttl time.Duration) error
 	HGetAll(ctx context.Context, key string) (map[string]string, error)
+	HDel(ctx context.Context, key string, fields ...string) error
 
 	// Pub/Sub (real-time notifications via WebSocket)
 	Publish(ctx context.Context, channel string, payload any) error

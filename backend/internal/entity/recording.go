@@ -24,6 +24,19 @@ const (
 	RecordingStatusFailed     = "failed"
 )
 
+// Qayta kodlash (CRF) holatlari — `recordings.transcode_status`.
+//
+// Nega alohida holat: yozuv `ready` bo'lishi bilan ustoz uni yuklab ola oladi,
+// qayta kodlash esa fonda va keyinroq bo'ladi. Ikkalasini bitta ustunga
+// tiqish "tayyor, lekin hali tayyor emas" degan chalkash holat yasardi.
+const (
+	TranscodePending = "pending"
+	TranscodeRunning = "running"
+	TranscodeDone    = "done"
+	TranscodeFailed  = "failed"
+	TranscodeSkipped = "skipped"
+)
+
 // RecordingDownload — vaqtinchalik yuklab olish havolasi.
 type RecordingDownload struct {
 	URL         string `json:"url"`

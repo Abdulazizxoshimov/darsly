@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"sort"
 	"strings"
@@ -27,6 +28,14 @@ type FakeLiveKit struct {
 	IsEnabled    bool
 	Participants []entity.RoomParticipant
 	Calls        map[string]int
+	// Sent — data-channel orqali tarqatilgan xabarlar (roomstate/chat testlari
+	// "nima yuborildi" ni AYNAN tekshiradi: xabar shakli klient bilan shartnoma).
+	Sent [][]byte
+	// SentTo — har `SendDataTo` chaqiruvining manzil ro'yxati (`Sent` bilan
+	// parallel emas: faqat manzilli yuborishlar).
+	SentTo [][]string
+	// TokenRoom — VerifyToken qaytaradigan xona nomi.
+	TokenRoom string
 }
 
 func NewFakeLiveKit() *FakeLiveKit {
@@ -72,9 +81,50 @@ func (f *FakeLiveKit) SetParticipantPublish(_ context.Context, _, _ string, _ bo
 	f.inc("SetParticipantPublish")
 	return nil
 }
-func (f *FakeLiveKit) SendData(_ context.Context, _ string, _ []byte) error {
+func (f *FakeLiveKit) SendData(_ context.Context, _ string, data []byte) error {
 	f.inc("SendData")
+	f.mu.Lock()
+	cp := make([]byte, len(data))
+	copy(cp, data)
+	f.Sent = append(f.Sent, cp)
+	f.mu.Unlock()
 	return nil
+}
+
+// SendDataTo — manzilli yuborish. Kimga ketgani testda tekshirilsin deb
+// `SentTo` ga yoziladi (shaxsiy xabar SIZMASLIGI shu bilan isbotlanadi).
+func (f *FakeLiveKit) SendDataTo(_ context.Context, _ string, data []byte, identities []string) error {
+	f.inc("SendDataTo")
+	f.mu.Lock()
+	cp := make([]byte, len(data))
+	copy(cp, data)
+	f.Sent = append(f.Sent, cp)
+	ids := make([]string, len(identities))
+	copy(ids, identities)
+	f.SentTo = append(f.SentTo, ids)
+	f.mu.Unlock()
+	return nil
+}
+
+// VerifyToken — `AccessToken` ning teskarisi. Fake token shakli:
+// "host-token-<identity>" yoki "part-token-<identity>". Xona nomi testda
+// tekshirilishi uchun `SetTokenRoom` bilan beriladi (default: bo'sh).
+func (f *FakeLiveKit) VerifyToken(token string) (identity, name, room string, err error) {
+	f.inc("VerifyToken")
+	for _, prefix := range []string{"host-token-", "part-token-"} {
+		if strings.HasPrefix(token, prefix) {
+			id := strings.TrimPrefix(token, prefix)
+			return id, id, f.TokenRoom, nil
+		}
+	}
+	return "", "", "", errors.New("invalid token")
+}
+
+// SetTokenRoom — VerifyToken qaytaradigan xona nomini belgilaydi.
+func (f *FakeLiveKit) SetTokenRoom(room string) {
+	f.mu.Lock()
+	f.TokenRoom = room
+	f.mu.Unlock()
 }
 func (f *FakeLiveKit) StartRoomRecording(_ context.Context, _, _ string, _ livekit.S3Config) (string, error) {
 	f.inc("StartRoomRecording")
@@ -347,10 +397,18 @@ type FakeCache struct {
 	mu       sync.Mutex
 	kv       map[string]string
 	counters map[string]int64
+	// hashes — HSet/HGetAll/HDel uchun HAQIQIY xulq. Avval bu uchtasi no-op edi
+	// (HSet nil, HGetAll nil), ya'ni hash'ga tayanadigan kod testda "hech narsa
+	// saqlanmaydi" holatida sinalardi va bu jimgina yolg'on qamrov berardi.
+	hashes map[string]map[string]string
 }
 
 func NewFakeCache() *FakeCache {
-	return &FakeCache{kv: map[string]string{}, counters: map[string]int64{}}
+	return &FakeCache{
+		kv:       map[string]string{},
+		counters: map[string]int64{},
+		hashes:   map[string]map[string]string{},
+	}
 }
 
 func (c *FakeCache) Set(_ context.Context, key string, value any, _ time.Duration) error {
@@ -379,6 +437,7 @@ func (c *FakeCache) Del(_ context.Context, keys ...string) error {
 	for _, k := range keys {
 		delete(c.kv, k)
 		delete(c.counters, k)
+		delete(c.hashes, k) // Redis'da DEL hash'ni ham o'chiradi
 	}
 	return nil
 }
@@ -399,12 +458,56 @@ func (c *FakeCache) Scan(_ context.Context, _ uint64, _ string, _ int64) ([]stri
 }
 func (c *FakeCache) ScanDel(_ context.Context, _ string) error             { return nil }
 func (c *FakeCache) MGet(_ context.Context, _ ...string) ([]string, error) { return nil, nil }
-func (c *FakeCache) HSet(_ context.Context, _ string, _ map[string]any, _ time.Duration) error {
+func (c *FakeCache) HSet(_ context.Context, key string, values map[string]any, _ time.Duration) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	h, ok := c.hashes[key]
+	if !ok {
+		h = map[string]string{}
+		c.hashes[key] = h
+	}
+	for f, v := range values {
+		if s, isStr := v.(string); isStr {
+			h[f] = s
+			continue
+		}
+		b, _ := json.Marshal(v)
+		h[f] = string(b)
+	}
 	return nil
 }
-func (c *FakeCache) HGetAll(_ context.Context, _ string) (map[string]string, error) { return nil, nil }
-func (c *FakeCache) Publish(_ context.Context, _ string, _ any) error               { return nil }
-func (c *FakeCache) Subscribe(_ context.Context, _ ...string) *goredis.PubSub       { return nil }
+
+// HGetAll — bo'sh/yo'q hash uchun XATO qaytaradi, xuddi `redisCache` kabi.
+// Fake haqiqiy implementatsiyadan farq qilsa, test yashil bo'lib turib
+// production'da yiqiladigan kodni o'tkazib yuborardi.
+func (c *FakeCache) HGetAll(_ context.Context, key string) (map[string]string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	h, ok := c.hashes[key]
+	if !ok || len(h) == 0 {
+		return nil, goredis.Nil
+	}
+	out := make(map[string]string, len(h))
+	for f, v := range h {
+		out[f] = v
+	}
+	return out, nil
+}
+
+func (c *FakeCache) HDel(_ context.Context, key string, fields ...string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	h, ok := c.hashes[key]
+	if !ok {
+		return nil
+	}
+	for _, f := range fields {
+		delete(h, f)
+	}
+	return nil
+}
+func (c *FakeCache) Publish(_ context.Context, _ string, _ any) error         { return nil }
+func (c *FakeCache) Subscribe(_ context.Context, _ ...string) *goredis.PubSub { return nil }
 func (c *FakeCache) AcquireLock(_ context.Context, _, _ string, _ time.Duration) (bool, error) {
 	return true, nil
 }
@@ -427,6 +530,14 @@ func (m *FakeMinio) Upload(_ context.Context, name, _ string, _ io.Reader, _ int
 func (m *FakeMinio) PresignedURL(_ context.Context, name string, _ time.Duration) (string, error) {
 	return "https://minio.test/" + name + "?sig=fake", nil
 }
+func (m *FakeMinio) Get(_ context.Context, name string) (io.ReadCloser, error) {
+	if !m.Objects[name] {
+		return nil, fmt.Errorf("minio(fake): %q not found", name)
+	}
+	// Mazmuni ahamiyatsiz — testlar faqat oqim borligini tekshiradi.
+	return io.NopCloser(strings.NewReader("fake-video")), nil
+}
+
 func (m *FakeMinio) Delete(_ context.Context, name string) error { delete(m.Objects, name); return nil }
 func (m *FakeMinio) EnsureBucket(_ context.Context) error        { return nil }
 
@@ -693,12 +804,18 @@ func (r *FakeNotifRepo) MarkAllRead(_ context.Context, userID string) error {
 // ─── RecordingRepo ───────────────────────────────────────────────────────────
 
 type FakeRecordingRepo struct {
-	mu   sync.Mutex
-	byID map[string]*entity.Recording
+	mu           sync.Mutex
+	byID         map[string]*entity.Recording
+	transcode    map[string]string
+	originalSize map[string]int64
 }
 
 func NewFakeRecordingRepo() *FakeRecordingRepo {
-	return &FakeRecordingRepo{byID: map[string]*entity.Recording{}}
+	return &FakeRecordingRepo{
+		byID:         map[string]*entity.Recording{},
+		transcode:    map[string]string{},
+		originalSize: map[string]int64{},
+	}
 }
 
 func (r *FakeRecordingRepo) Create(_ context.Context, rec *entity.Recording) error {
@@ -762,6 +879,79 @@ func (r *FakeRecordingRepo) MarkReady(_ context.Context, egressID, objectKey str
 	}
 	return nil
 }
+
+// ── Qayta kodlash navbati ────────────────────────────────────────────────────
+
+func (r *FakeRecordingRepo) EnqueueTranscode(_ context.Context, egressID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, rec := range r.byID {
+		if rec.EgressID == egressID && rec.Status == entity.RecordingStatusReady {
+			r.transcode[rec.ID] = entity.TranscodePending
+		}
+	}
+	return nil
+}
+
+func (r *FakeRecordingRepo) ClaimTranscode(_ context.Context) (*entity.Recording, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	// Barqaror tartib: xarita bo'ylab yurish tasodifiy va test "qaysi yozuv
+	// olindi" degan savolga javob bera olmasdi.
+	ids := make([]string, 0, len(r.transcode))
+	for id, st := range r.transcode {
+		if st == entity.TranscodePending {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	sort.Strings(ids)
+	id := ids[0]
+	r.transcode[id] = entity.TranscodeRunning
+	cp := *r.byID[id]
+	return &cp, nil
+}
+
+func (r *FakeRecordingRepo) FinishTranscode(_ context.Context, id string, newSize, originalSize int64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.transcode[id] = entity.TranscodeDone
+	if rec, ok := r.byID[id]; ok {
+		rec.SizeBytes = newSize
+	}
+	r.originalSize[id] = originalSize
+	return nil
+}
+
+func (r *FakeRecordingRepo) FailTranscode(_ context.Context, id string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.transcode[id] = entity.TranscodeFailed
+	return nil
+}
+
+func (r *FakeRecordingRepo) RequeueStaleTranscodes(_ context.Context, _ time.Time) (int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var n int64
+	for id, st := range r.transcode {
+		if st == entity.TranscodeRunning {
+			r.transcode[id] = entity.TranscodePending
+			n++
+		}
+	}
+	return n, nil
+}
+
+// TranscodeStatus — test uchun holatni o'qish.
+func (r *FakeRecordingRepo) TranscodeStatus(id string) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.transcode[id]
+}
+
 func (r *FakeRecordingRepo) MarkFailed(_ context.Context, egressID string, endedAt time.Time) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -790,7 +980,7 @@ func (r *FakeChatRepo) Create(_ context.Context, m *entity.ChatMessage) error {
 	r.items = append(r.items, &cp)
 	return nil
 }
-func (r *FakeChatRepo) ListByLesson(_ context.Context, lessonID string, before *time.Time, limit int) ([]*entity.ChatMessage, error) {
+func (r *FakeChatRepo) ListByLesson(_ context.Context, lessonID, viewerIdentity string, before *time.Time, limit int) ([]*entity.ChatMessage, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if limit <= 0 {
@@ -802,6 +992,16 @@ func (r *FakeChatRepo) ListByLesson(_ context.Context, lessonID string, before *
 		m := r.items[i]
 		if m.LessonID != lessonID {
 			continue
+		}
+		// KO'RINUVCHANLIK — haqiqiy repo bilan bir xil. Fake buni qilmasa,
+		// "begona shaxsiy xabar sizib chiqmaydi" degan testni yozib bo'lmasdi.
+		if m.ToIdentity != nil {
+			if viewerIdentity == "" {
+				continue
+			}
+			if *m.ToIdentity != viewerIdentity && m.SenderIdentity != viewerIdentity {
+				continue
+			}
 		}
 		if before != nil && !m.CreatedAt.Before(*before) {
 			continue

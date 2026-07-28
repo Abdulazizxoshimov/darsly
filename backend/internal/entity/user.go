@@ -2,6 +2,15 @@ package entity
 
 import "time"
 
+// Mahsulot qat'iy qiymatlari: vaqt mintaqasi va til interfeysda SOZLANMAYDI
+// (mobil va web profilidan olib tashlangan). Sabab: ilova butunlay o'zbekcha
+// va foydalanuvchilar O'zbekistonda; erkin maydon bo'lganda noto'g'ri mintaqa
+// dars vaqtlarini surib ko'rsatardi. Avvalgi default `UTC` edi.
+const (
+	DefaultTimezone = "Asia/Tashkent"
+	DefaultLanguage = "uz"
+)
+
 type User struct {
 	ID           string     `json:"id"`
 	Email        string     `json:"email"`

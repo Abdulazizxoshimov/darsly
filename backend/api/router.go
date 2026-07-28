@@ -162,6 +162,26 @@ func NewRouter(h *handlers.Handler, tokenMaker token.Maker, enforcer *casbin.Enf
 	// LiveKit webhook (ochiq, imzo bilan himoyalangan) — Egress status. Bitta manba (LiveKit).
 	api.POST("/webhooks/livekit", middleware.RateLimit(30, 60), v1.LiveKitWebhook(h))
 
+	// ── Xona holati (ochiq — LiveKit room-token bilan autentifikatsiya) ──────────
+	// Guest'da JWT yo'q, lekin imzolangan room-token'i bor; handler token xonasining
+	// dars bilan mosligini tekshiradi (`roomTokenIdentity`). So'rovnoma ovozida ham
+	// AYNAN shu naqsh ishlatilgan.
+	//
+	// Rate-limit reaksiya uchun ataylab kengroq (emoji tez-tez bosiladi), lekin
+	// ASOSIY cheklov usecase ichida — har ishtirokchi uchun 2 soniyada 1 marta.
+	// Bu yerdagisi esa IP darajasidagi DoS himoyasi.
+	rooms := api.Group("/rooms")
+	{
+		rooms.POST("/:lessonID/hand", middleware.RateLimit(20, 40), v1.SetHand(h))
+		rooms.POST("/:lessonID/reaction", middleware.RateLimit(30, 60), v1.SendReaction(h))
+		rooms.GET("/:lessonID/state", middleware.RateLimit(20, 40), v1.GetRoomState(h))
+		// Chat — ISHTIROKCHI yo'li. Avval faqat host xabari saqlanardi; o'quvchi
+		// yozgani hech qayerda qolmasdi (tarixda ham, yozuvda ham) va kech kirgan
+		// hech nima ko'rmasdi. Asosiy cheklov usecase ichida (5 soniyada 5 xabar).
+		rooms.POST("/:lessonID/chat", middleware.RateLimit(30, 60), v1.SendRoomChat(h))
+		rooms.GET("/:lessonID/chat", middleware.RateLimit(20, 40), v1.RoomChatHistory(h))
+	}
+
 	// WebSocket'lar — ulanish urinishlari IP bo'yicha cheklangan (DoS himoyasi).
 	api.GET("/ws", middleware.RateLimit(10, 20), auth, v1.WSConnect(h))                // mentor (authed, ?token=)
 	api.GET("/ws/waitingroom", middleware.RateLimit(10, 20), v1.WSGuestWaitingRoom(h)) // guest (ochiq, ?request_id=)
@@ -191,6 +211,15 @@ func NewRouter(h *handlers.Handler, tokenMaker token.Maker, enforcer *casbin.Enf
 		lessons.POST("/:id/participants/:identity/remove", v1.RemoveParticipant(h))
 		lessons.POST("/:id/participants/:identity/allow-speak", v1.AllowSpeak(h))
 		lessons.POST("/:id/participants/:identity/revoke-speak", v1.RevokeSpeak(h))
+		// Qo'l ko'tarish — HOST tomonidagi boshqaruv (ko'tarish o'quvchining ishi,
+		// u ochiq `/rooms/:lessonID/hand` orqali ketadi).
+		//
+		// `identity` yo'lda emas, TANADA: (a) gin daraxtida `/hands/:identity/lower`
+		// va `/hands/lower-all` bir pozitsiyada param va statik segment sifatida
+		// to'qnashadi; (b) guest identity'si ixtiyoriy satr bo'lishi mumkin va uni
+		// URL'ga joylash kodlash muammolarini keltiradi.
+		lessons.POST("/:id/hands/lower", v1.LowerHand(h))
+		lessons.POST("/:id/hands/lower-all", v1.LowerAllHands(h))
 		// Chat (host — persist + LiveKit broadcast; guest chat frontend data-channel orqali)
 		lessons.GET("/:id/chat", v1.ChatHistory(h))
 		lessons.POST("/:id/chat", v1.SendChat(h))

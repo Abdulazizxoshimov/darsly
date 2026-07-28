@@ -28,6 +28,13 @@ type Maker interface {
 	RevokeSession(ctx context.Context, sessionID string) error
 }
 
+// redisOutageGrace — Redis uzilganda access token qabul qilinadigan eng katta yosh.
+//
+// `accessTTL` odatda 15-60 daqiqa; bu oyna undan KICHIK bo'lishi kerak, aks holda
+// fail-closed himoyasi ma'nosini yo'qotadi. 5 daqiqa — Redis qayta ko'tarilishiga
+// yetadigan, lekin bekor qilingan tokenga hayot bermaydigan oraliq.
+const redisOutageGrace = 5 * time.Minute
+
 // DefaultRefreshGrace — refresh rotatsiyasining idempotentlik oynasi (grace).
 // Config'da JWT_REFRESH_GRACE berilmasa shu ishlatiladi.
 const DefaultRefreshGrace = 60 * time.Second
@@ -137,9 +144,25 @@ func (m *JWTMaker) ValidateAccess(ctx context.Context, tokenStr string) (*Claims
 
 	exists, err := m.redis.Exists(ctx, m.sessionKey(sid)).Result()
 	if err != nil {
-		// Redis temporarily unavailable: degrade gracefully — trust JWT signature/expiry
-		// rather than returning 401 to all users and causing a full outage.
-		m.log.Error(ctx, "redis: session check failed — degrading to JWT-only validation", logger.Error(err))
+		// Redis yetib bo'lmaydi. Ikki yomon variant orasida tanlov:
+		//   · fail-open — bekor qilingan tokenlar QAYTA ISHLAY boshlaydi
+		//     (chiqarib yuborilgan xodim, o'g'irlangan token, rol pasaytirilgan
+		//     foydalanuvchi — hammasi tiriladi);
+		//   · fail-closed — hamma 401 oladi va platforma to'xtaydi.
+		//
+		// Yechim: CHEKLANGAN fail-open. Redis uzilgan bo'lsa token faqat
+		// `redisOutageGrace` ichida yaratilgan bo'lsa qabul qilinadi (ya'ni
+		// uzilishdan oldingi eski tokenlar o'tmaydi). Bu jonli sessiyalarni
+		// saqlaydi, lekin bekor qilingan eski tokenga qayta hayot bermaydi.
+		iat, _ := raw["iat"].(float64)
+		age := time.Since(time.Unix(int64(iat), 0))
+		if iat == 0 || age > redisOutageGrace {
+			m.log.Error(ctx, "redis: session check failed — eski token rad etildi (fail-closed)",
+				logger.Error(err))
+			return nil, errors.New("token: session store unavailable")
+		}
+		m.log.Error(ctx, "redis: session check failed — yangi token vaqtincha qabul qilindi",
+			logger.Error(err))
 	} else if exists == 0 {
 		return nil, errors.New("token: session revoked or not found")
 	}

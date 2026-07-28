@@ -3,6 +3,7 @@ package room_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -10,10 +11,40 @@ import (
 	apperr "github.com/zoom/darsly/internal/pkg/errors"
 	"github.com/zoom/darsly/internal/testutil"
 	"github.com/zoom/darsly/internal/usecase/room"
+	"github.com/zoom/darsly/internal/usecase/roomstate"
 )
 
 // testLessonID — haqiqiy UUID: usecase ID formatini tekshiradi (shared.ValidateID).
 const testLessonID = "11111111-1111-4111-8111-111111111111"
+
+// fakeRecorder — dars yakunlanganda yozuvni to'xtatish chaqiruvini qayd etadi.
+type fakeRecorder struct {
+	stopped chan string
+}
+
+func newFakeRecorder() *fakeRecorder {
+	return &fakeRecorder{stopped: make(chan string, 4)}
+}
+
+func (f *fakeRecorder) StopActiveForLesson(_ context.Context, lessonID string) error {
+	f.stopped <- lessonID
+	return nil
+}
+
+func setupWithRecorder(t *testing.T) (room.UseCase, *testutil.FakeLessonRepo, *testutil.FakeLiveKit, *fakeRecorder) {
+	t.Helper()
+	rec := newFakeRecorder()
+	lrepo := testutil.NewFakeLessonRepo()
+	urepo := testutil.NewFakeUserRepo()
+	require.NoError(t, urepo.Create(context.Background(), &entity.User{ID: "mentor1", FullName: "Dilnoza", Role: "mentor"}))
+	require.NoError(t, lrepo.Create(context.Background(), &entity.Lesson{ID: testLessonID, MentorID: "mentor1", Status: entity.LessonStatusScheduled}))
+	lk := testutil.NewFakeLiveKit()
+	cache := testutil.NewFakeCache()
+	// Haqiqiy roomstate ulanadi (nil emas): "ruxsat berilganda qo'l tushadi" va
+	// "dars tugaganda qo'llar tozalanadi" qoidalari aynan shu integratsiyada yashaydi.
+	hands := roomstate.New(lrepo, lk, cache, testutil.NewLogger())
+	return room.New(lrepo, urepo, lk, cache, testutil.NewLogger(), rec, hands), lrepo, lk, rec
+}
 
 func setup(t *testing.T) (room.UseCase, *testutil.FakeLessonRepo, *testutil.FakeLiveKit) {
 	t.Helper()
@@ -22,7 +53,9 @@ func setup(t *testing.T) (room.UseCase, *testutil.FakeLessonRepo, *testutil.Fake
 	require.NoError(t, urepo.Create(context.Background(), &entity.User{ID: "mentor1", FullName: "Dilnoza", Role: "mentor"}))
 	require.NoError(t, lrepo.Create(context.Background(), &entity.Lesson{ID: testLessonID, MentorID: "mentor1", Status: entity.LessonStatusScheduled}))
 	lk := testutil.NewFakeLiveKit()
-	uc := room.New(lrepo, urepo, lk, testutil.NewFakeCache(), testutil.NewLogger())
+	cache := testutil.NewFakeCache()
+	hands := roomstate.New(lrepo, lk, cache, testutil.NewLogger())
+	uc := room.New(lrepo, urepo, lk, cache, testutil.NewLogger(), nil, hands)
 	return uc, lrepo, lk
 }
 
@@ -147,4 +180,96 @@ func requireBadRequest(t *testing.T, err error, msg string) {
 	ae := apperr.As(err)
 	require.NotNil(t, ae, "%s: AppError kutilgan, oldi: %v", msg, err)
 	require.Equal(t, apperr.CodeBadRequest, ae.Code, "%s: kutilgan 400 BAD_REQUEST, oldi: %v", msg, ae.Code)
+}
+
+// ─── Majburiy yozib olish ────────────────────────────────────────────────────
+
+func TestHostToken_DoesNotStartRecording(t *testing.T) {
+	// ⭐ 5 DAQIQALIK TUZOQ. Egress xonaga kirib media kutadi va 5 daqiqada
+	// hech kim chiqarmasa `egress_aborted "Start signal not received"` bilan
+	// bekor bo'ladi (jonli serverda o'lchangan). Token berilishi bilan media
+	// paydo bo'lishi orasida ruxsat so'rash va ulanish bor — ulanish yiqilsa
+	// egress bo'sh Chrome aylantirib turardi va yozuv umuman qolmasdi.
+	//
+	// Shuning uchun yozuv BU YERDA boshlanmaydi: u `track_published`
+	// webhook'ida boshlanadi. Bu test o'sha qarorni qotiradi.
+	uc, lrepo, _, _ := setupWithRecorder(t)
+
+	_, err := uc.HostToken(context.Background(), "mentor1", testLessonID)
+	require.NoError(t, err)
+
+	l, _ := lrepo.GetByID(context.Background(), testLessonID)
+	require.Equal(t, entity.LessonStatusLive, l.Status, "dars baribir jonli bo'ladi")
+}
+
+func TestEndLesson_StopsRecording(t *testing.T) {
+	uc, _, _, rec := setupWithRecorder(t)
+	_, err := uc.HostToken(context.Background(), "mentor1", testLessonID)
+	require.NoError(t, err)
+
+	require.NoError(t, uc.EndLesson(context.Background(), "mentor1", testLessonID))
+
+	select {
+	case id := <-rec.stopped:
+		require.Equal(t, testLessonID, id)
+	case <-time.After(2 * time.Second):
+		t.Fatal("dars yakunlanganda yozuv to'xtatilmadi")
+	}
+}
+
+func TestHostToken_NilRecorderIsSafe(t *testing.T) {
+	// Yozib olish sozlanmagan muhit (masalan lokal dev) ilovani yiqitmasligi kerak.
+	uc, _, _ := setup(t)
+	_, err := uc.HostToken(context.Background(), "mentor1", testLessonID)
+	require.NoError(t, err)
+}
+
+// ── F4 xavfsizlik: chiqarish = ban ──────────────────────────────────────────
+
+// Chiqarilgan ishtirokchi QAYTIB KIRA OLMAYDI. Avval `RemoveParticipant` faqat
+// joriy ulanishni uzardi: token hali yaroqli va `auto_create` yoqilgan bo'lgani
+// uchun buzg'unchi darhol qaytib ulanar, hatto yopilgan xonani qayta yaratardi.
+func TestRemoveParticipant_BansFromRejoining(t *testing.T) {
+	uc, lrepo, _ := setup(t)
+	ctx := context.Background()
+	lesson, err := lrepo.GetByID(ctx, testLessonID)
+	require.NoError(t, err)
+
+	// Chiqarishdan OLDIN token beriladi.
+	_, err = uc.ParticipantToken(ctx, lesson, "buzgunchi", "Buzg'unchi")
+	require.NoError(t, err)
+
+	require.NoError(t, uc.RemoveParticipant(ctx, "mentor1", testLessonID, "buzgunchi"))
+
+	// Chiqarishdan KEYIN token berilmaydi.
+	_, err = uc.ParticipantToken(ctx, lesson, "buzgunchi", "Buzg'unchi")
+	require.True(t, apperr.IsForbidden(err), "chiqarilgan ishtirokchi qayta token ololmasligi kerak")
+
+	// Boshqalar ta'sirlanmaydi.
+	_, err = uc.ParticipantToken(ctx, lesson, "oddiy_oquvchi", "Ali")
+	require.NoError(t, err, "ban faqat chiqarilgan kishiga tegishli")
+}
+
+// Ban DARSGA bog'langan: bir darsdan chiqarilgan boshqa darsga kira oladi.
+func TestRemoveParticipant_BanIsPerLesson(t *testing.T) {
+	uc, lrepo, _ := setup(t)
+	ctx := context.Background()
+
+	other := &entity.Lesson{ID: "22222222-2222-4222-8222-222222222222", MentorID: "mentor1", Status: entity.LessonStatusLive}
+	require.NoError(t, lrepo.Create(ctx, other))
+
+	require.NoError(t, uc.RemoveParticipant(ctx, "mentor1", testLessonID, "ali"))
+
+	_, err := uc.ParticipantToken(ctx, other, "ali", "Ali")
+	require.NoError(t, err, "boshqa darsga kirish bloklanmasligi kerak")
+}
+
+// MuteAll parallel bo'lgach ham HOST'ga tegmasligi va hammani qamrashi kerak.
+func TestMuteAll_SkipsHostAndCoversEveryone(t *testing.T) {
+	uc, _, lk := setup(t)
+	lk.Participants = []entity.RoomParticipant{
+		{Identity: "mentor1"}, {Identity: "u1"}, {Identity: "u2"}, {Identity: "u3"},
+	}
+	require.NoError(t, uc.MuteAll(context.Background(), "mentor1", testLessonID))
+	require.Equal(t, 3, lk.Calls["MuteParticipant"], "host'dan tashqari hamma mute qilinishi kerak")
 }

@@ -58,8 +58,11 @@ func (uc *useCase) Create(ctx context.Context, req *entity.CreateUserReq) (*enti
 		FullName:     req.FullName,
 		Color:        "#6366F1",
 		Role:         role,
-		Timezone:     "UTC",
-		Language:     "uz",
+		// Mahsulot O'zbekiston uchun: yangi hisob darhol Toshkent vaqtida
+		// bo'lsin. Avval "UTC" edi va ustoz profilda o'zi tuzatishi kerak edi —
+		// tuzatmasa dars vaqtlari 5 soat surilib ko'rinardi.
+		Timezone:     entity.DefaultTimezone,
+		Language:     entity.DefaultLanguage,
 		IsActive:     true,
 	}
 	if err := uc.repo.Create(ctx, u); err != nil {
@@ -116,16 +119,39 @@ func (uc *useCase) Update(ctx context.Context, id string, req *entity.UpdateUser
 	if req.Language != nil {
 		u.Language = *req.Language
 	}
+	roleChanged := false
 	if req.Role != nil {
 		if !validRole(*req.Role) {
 			return nil, apperr.BadRequest("invalid role")
 		}
+		roleChanged = u.Role != *req.Role
 		u.Role = *req.Role
 	}
 	if err := uc.repo.Update(ctx, u); err != nil {
 		uc.log.Error(ctx, "user.Update: db error", logger.String("id", id), logger.SafeString("err", err.Error()))
 		return nil, err
 	}
+
+	// ROL O'ZGARDI → barcha sessiyalar bekor qilinadi.
+	//
+	// Sabab: rol JWT `role` claim'ida yashaydi va `Rotate` uni ESKI token'dan
+	// meros qiladi (token qatlami DB'ni bilmaydi — bu ataylab, u yerga repository
+	// bog'lash qatlamlarni chalkashtirardi). Natijada adminlikdan olingan
+	// foydalanuvchi refresh qilib admin claim'ini CHEKSIZ uzaytira olardi.
+	// Sessiyani o'ldirish bu teshikni token qatlamiga tegmasdan yopadi: keyingi
+	// kirishda claim DB'dagi haqiqiy roldan olinadi.
+	//
+	// Xato bo'lsa amal BEKOR QILINMAYDI (rol allaqachon DB'da), lekin bu
+	// xavfsizlik hodisasi — Error darajasida yoziladi.
+	if roleChanged && uc.tokens != nil {
+		if err := uc.tokens.RevokeAllUserSessions(ctx, id); err != nil {
+			uc.log.Error(ctx, "user.Update: rol o'zgardi, lekin sessiyalarni bekor qilib bo'lmadi",
+				logger.String("id", id), logger.SafeString("err", err.Error()))
+		} else {
+			uc.log.Info(ctx, "user role changed — sessions revoked", logger.String("id", id))
+		}
+	}
+
 	uc.log.Info(ctx, "user updated", logger.String("id", id))
 	return u, nil
 }
@@ -251,6 +277,15 @@ func (uc *useCase) Delete(ctx context.Context, id string) error {
 	if err := uc.repo.SoftDelete(ctx, id); err != nil {
 		uc.log.Error(ctx, "user.Delete: db error", logger.String("id", id), logger.SafeString("err", err.Error()))
 		return err
+	}
+	// O'chirilgan foydalanuvchining tokeni ishlashda davom etmasin: `ValidateAccess`
+	// faqat Redis sessiyasini tekshiradi, DB'dagi `deleted_at` ni emas. Bu
+	// `Deactivate` dagi bilan bir xil qoida.
+	if uc.tokens != nil {
+		if err := uc.tokens.RevokeAllUserSessions(ctx, id); err != nil {
+			uc.log.Error(ctx, "user.Delete: sessiyalarni bekor qilib bo'lmadi",
+				logger.String("id", id), logger.SafeString("err", err.Error()))
+		}
 	}
 	uc.log.Info(ctx, "user deleted", logger.String("id", id))
 	return nil

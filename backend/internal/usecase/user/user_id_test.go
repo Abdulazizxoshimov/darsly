@@ -64,3 +64,53 @@ func TestUser_ValidButMissingUUID_SameAsInvalid(t *testing.T) {
 	require.ErrorAs(t, err, &ae)
 	require.Equal(t, http.StatusNotFound, ae.HTTPStatus)
 }
+
+// ── F4: rol o'zgarishi va o'chirish sessiyani o'ldiradi ─────────────────────
+
+// Rol JWT claim'ida yashaydi va `Rotate` uni ESKI token'dan meros qiladi.
+// Shuning uchun rol o'zgarganda sessiyalar bekor qilinishi SHART — aks holda
+// adminlikdan olingan foydalanuvchi refresh qilib admin claim'ini cheksiz
+// uzaytira olardi.
+func TestUpdate_RoleChangeRevokesSessions(t *testing.T) {
+	repo := testutil.NewFakeUserRepo()
+	tokens := testutil.NewFakeTokenMaker()
+	uc := user.New(repo, hasher.New(4), tokens, testutil.NewLogger())
+	ctx := context.Background()
+
+	id := "33333333-3333-4333-8333-333333333333"
+	require.NoError(t, repo.Create(ctx, &entity.User{ID: id, Email: "r@x.uz", FullName: "R", Role: "admin", IsActive: true}))
+
+	student := "student"
+	_, err := uc.Update(ctx, id, &entity.UpdateUserReq{Role: &student})
+	require.NoError(t, err)
+	require.Contains(t, tokens.RevokedUsers, id, "rol pasaytirilganda sessiyalar bekor qilinishi kerak")
+}
+
+func TestUpdate_SameRoleDoesNotRevoke(t *testing.T) {
+	repo := testutil.NewFakeUserRepo()
+	tokens := testutil.NewFakeTokenMaker()
+	uc := user.New(repo, hasher.New(4), tokens, testutil.NewLogger())
+	ctx := context.Background()
+
+	id := "44444444-4444-4444-8444-444444444444"
+	require.NoError(t, repo.Create(ctx, &entity.User{ID: id, Email: "s@x.uz", FullName: "S", Role: "mentor", IsActive: true}))
+
+	same := "mentor"
+	_, err := uc.Update(ctx, id, &entity.UpdateUserReq{Role: &same})
+	require.NoError(t, err)
+	// Bekorga sessiya o'ldirish foydalanuvchini har tahrirda tizimdan chiqarardi.
+	require.NotContains(t, tokens.RevokedUsers, id, "rol o'zgarmasa sessiya tegilmasligi kerak")
+}
+
+func TestDelete_RevokesSessions(t *testing.T) {
+	repo := testutil.NewFakeUserRepo()
+	tokens := testutil.NewFakeTokenMaker()
+	uc := user.New(repo, hasher.New(4), tokens, testutil.NewLogger())
+	ctx := context.Background()
+
+	id := "55555555-5555-4555-8555-555555555555"
+	require.NoError(t, repo.Create(ctx, &entity.User{ID: id, Email: "d@x.uz", FullName: "D", Role: "student", IsActive: true}))
+
+	require.NoError(t, uc.Delete(ctx, id))
+	require.Contains(t, tokens.RevokedUsers, id, "o'chirilgan foydalanuvchi tokeni ishlashda davom etmasligi kerak")
+}

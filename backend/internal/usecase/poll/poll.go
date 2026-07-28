@@ -44,6 +44,9 @@ func (uc *useCase) Create(ctx context.Context, mentorID, lessonID, question stri
 }
 
 func (uc *useCase) Close(ctx context.Context, mentorID, pollID string) (*entity.PollResults, error) {
+	if err := shared.ValidateID(pollID, "poll"); err != nil {
+		return nil, err
+	}
 	p, err := uc.repo.GetByID(ctx, pollID)
 	if err != nil {
 		return nil, err
@@ -54,7 +57,7 @@ func (uc *useCase) Close(ctx context.Context, mentorID, pollID string) (*entity.
 	if err := uc.repo.Close(ctx, pollID); err != nil {
 		return nil, err
 	}
-	return uc.Results(ctx, pollID)
+	return uc.Results(ctx, pollID, "")
 }
 
 func (uc *useCase) ListByLesson(ctx context.Context, mentorID, lessonID string) ([]*entity.Poll, error) {
@@ -65,6 +68,11 @@ func (uc *useCase) ListByLesson(ctx context.Context, mentorID, lessonID string) 
 }
 
 func (uc *useCase) Vote(ctx context.Context, pollID, voterIdentity, tokenRoom string, optionIndex int) error {
+	// Yaroqsiz UUID Postgres'ga yetmasin (22P02 → 500): bu endpoint OCHIQ, ya'ni
+	// autentifikatsiyasiz 500 generatori bo'lardi va Sentry'ni ko'mib tashlardi.
+	if err := shared.ValidateID(pollID, "poll"); err != nil {
+		return err
+	}
 	p, err := uc.repo.GetByID(ctx, pollID)
 	if err != nil {
 		return err
@@ -87,10 +95,22 @@ func (uc *useCase) Vote(ctx context.Context, pollID, voterIdentity, tokenRoom st
 	return nil
 }
 
-func (uc *useCase) Results(ctx context.Context, pollID string) (*entity.PollResults, error) {
+// Results — natijalar. `tokenRoom` — chaqiruvchining LiveKit room-token'idagi xona
+// (bo'sh bo'lsa tekshirilmaydi: bu HOST yo'li, u allaqachon egalik bo'yicha tekshirilgan).
+//
+// Nega token kerak: avval bu endpoint UMUMAN ochiq edi — poll ID'ni bilgan har kim
+// (masalan sinfdosh, yoki ID'ni chatdan ko'rgan begona) natijani o'qiy olardi.
+// Ovoz berish esa allaqachon token talab qilardi, ya'ni himoya nomutanosib edi.
+func (uc *useCase) Results(ctx context.Context, pollID, tokenRoom string) (*entity.PollResults, error) {
+	if err := shared.ValidateID(pollID, "poll"); err != nil {
+		return nil, err
+	}
 	p, err := uc.repo.GetByID(ctx, pollID)
 	if err != nil {
 		return nil, err
+	}
+	if tokenRoom != "" && tokenRoom != shared.RoomName(p.LessonID) {
+		return nil, apperr.Forbidden("room token is not valid for this poll's lesson")
 	}
 	counts, err := uc.repo.Counts(ctx, pollID, len(p.Options))
 	if err != nil {

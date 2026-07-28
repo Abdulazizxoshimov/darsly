@@ -47,12 +47,50 @@ func normalizeLayout(l string) string {
 	return DefaultEgressLayout
 }
 
+// ⭐ YOZUV HAJMI — nega sozlamalar OSHKORA berilgan.
+//
+// Sozlama berilmasa LiveKit `H264_720P_30` presetini oladi: 1280x720, 30 fps,
+// video 3000 kbps + audio 128 kbps. 2.5 soatlik dars uchun bu ≈ **3.5 GB**.
+// Dars mazmuni esa deyarli statik: slayd, PDF, GeoGebra, gapirayotgan bosh.
+// Bunday kadrga 30 fps ham, 3 Mbit ham keragidan ortiq — fayl kattaligi
+// yozuvni yuklab olishni ham, MinIO diskini ham behuda yeydi.
+//
+// Quyidagi qiymatlar Zoom bulut yozuvi bilan bir xil mantiqda tanlangan:
+// past kadr chastotasi + past bitrate, lekin TO'LIQ 720p ravshanlik — chunki
+// o'qilishi kerak bo'lgan narsa harakat emas, MATN.
+//
+//	1280x720 · 15 fps · video 900 kbps · audio 64 kbps (mono nutq uchun yetarli)
+//	→ 2.5 soat ≈ 1.05 GB (avvalgi 3.5 GB o'rniga, ya'ni ~3.3 barobar kichik)
+//
+// Kalit kadr oralig'i 4 s: brauzerda oldinga/orqaga o'tish shu qadamda ishlaydi
+// (kattaroq oraliq faylni yana kichraytiradi, lekin "sakrash" qo'polashadi).
+const (
+	recWidth        = 1280
+	recHeight       = 720
+	recFramerate    = 15
+	recVideoKbps    = 900
+	recAudioKbps    = 64
+	recKeyFrameSecs = 4.0
+)
+
 // StartRoomRecording xonani MP4 sifatida MinIO'ga (S3) yozib olishni boshlaydi.
 // objectKey — MinIO ichidagi yakuniy fayl yo'li. Egress ID qaytaradi.
 func (c *Client) StartRoomRecording(ctx context.Context, roomName, objectKey string, s3 S3Config) (string, error) {
 	req := &livekit.RoomCompositeEgressRequest{
 		RoomName: roomName,
 		Layout:   normalizeLayout(c.layout),
+		Options: &livekit.RoomCompositeEgressRequest_Advanced{
+			Advanced: &livekit.EncodingOptions{
+				Width:            recWidth,
+				Height:           recHeight,
+				Framerate:        recFramerate,
+				VideoCodec:       livekit.VideoCodec_H264_MAIN,
+				VideoBitrate:     recVideoKbps,
+				AudioCodec:       livekit.AudioCodec_AAC, // MP4 uchun standart
+				AudioBitrate:     recAudioKbps,
+				KeyFrameInterval: recKeyFrameSecs,
+			},
+		},
 		FileOutputs: []*livekit.EncodedFileOutput{
 			{
 				FileType: livekit.EncodedFileType_MP4,

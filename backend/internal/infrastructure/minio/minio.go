@@ -15,6 +15,9 @@ import (
 
 type Client interface {
 	Upload(ctx context.Context, objectName, contentType string, reader io.Reader, size int64) (string, error)
+	// Get obyektni o'qish uchun ochadi (qayta kodlash ishchisi yuklab oladi).
+	// Chaqiruvchi `Close()` qilishi SHART.
+	Get(ctx context.Context, objectName string) (io.ReadCloser, error)
 	PresignedURL(ctx context.Context, objectName string, expires time.Duration) (string, error)
 	Delete(ctx context.Context, objectName string) error
 	EnsureBucket(ctx context.Context) error
@@ -32,6 +35,9 @@ type nopClient struct{}
 func (nopClient) EnsureBucket(_ context.Context) error { return nil }
 func (nopClient) Upload(_ context.Context, _, _ string, _ io.Reader, _ int64) (string, error) {
 	return "", fmt.Errorf("minio: not configured")
+}
+func (nopClient) Get(_ context.Context, _ string) (io.ReadCloser, error) {
+	return nil, fmt.Errorf("minio: not configured")
 }
 func (nopClient) PresignedURL(_ context.Context, _ string, _ time.Duration) (string, error) {
 	return "", fmt.Errorf("minio: not configured")
@@ -89,6 +95,14 @@ func (c *minioClient) Upload(ctx context.Context, objectName, contentType string
 		return "", fmt.Errorf("minio: upload %q: %w", objectName, err)
 	}
 	return objectName, nil
+}
+
+func (c *minioClient) Get(ctx context.Context, objectName string) (io.ReadCloser, error) {
+	obj, err := c.mc.GetObject(ctx, c.bucket, objectName, minio.GetObjectOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("minio: get %q: %w", objectName, err)
+	}
+	return obj, nil
 }
 
 func (c *minioClient) PresignedURL(ctx context.Context, objectName string, expires time.Duration) (string, error) {

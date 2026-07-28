@@ -64,7 +64,7 @@ func SetupTestDB(t *testing.T) *postgres.Postgres {
 	admDSN := "host=" + host + " port=" + port + " user=" + user + " password=" + pass + " dbname=postgres sslmode=disable"
 	adm, err := pgx.Connect(ctx, admDSN)
 	if err != nil {
-		t.Skipf("Postgres mavjud emas (%s:%s): %v", host, port, err)
+		SkipOrFail(t, "Postgres mavjud emas (%s:%s): %v", host, port, err)
 	}
 	if _, err := adm.Exec(ctx, "CREATE DATABASE "+db); err != nil && !strings.Contains(err.Error(), "already exists") {
 		_ = adm.Close(ctx)

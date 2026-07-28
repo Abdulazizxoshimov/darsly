@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -256,6 +257,23 @@ func Run(cfg *config.Config) error {
 		go func() { defer workersWG.Done(); worker.NewEmailWorker(mq, directSender, log).Run(workerCtx) }()
 	}
 
+	// Yozuvni qayta kodlash (CRF) — hajmni Zoom darajasiga tushiradi.
+	// `RECORDING_TRANSCODE=0` bilan o'chiriladi; ffmpeg yo'q bo'lsa ishchi
+	// o'zi ishga tushmaydi (bir marta ogohlantirib chiqadi).
+	tcCfg := worker.DefaultTranscodeConfig()
+	tcCfg.Enabled = os.Getenv("RECORDING_TRANSCODE") != "0"
+	if v, err := strconv.Atoi(os.Getenv("RECORDING_TRANSCODE_CRF")); err == nil && v >= 0 && v <= 51 {
+		tcCfg.CRF = v
+	}
+	if v := os.Getenv("RECORDING_TRANSCODE_PRESET"); v != "" {
+		tcCfg.Preset = v
+	}
+	workersWG.Add(1)
+	go func() {
+		defer workersWG.Done()
+		worker.NewTranscodeWorker(store.Recording, minioClient, log, tcCfg).Run(workerCtx)
+	}()
+
 	// ── Server ──────────────────────────────────────────────────────────────
 	readyFn := func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -337,9 +355,10 @@ func seedAdmin(ctx context.Context, cfg *config.Config, repo repository.UserRepo
 		FullName:     "Administrator",
 		Color:        "#6366F1",
 		Role:         "admin",
-		Timezone:     "UTC",
-		Language:     "uz",
-		IsActive:     true,
+		// Mahsulot O'zbekiston uchun — `entity.DefaultTimezone` ga qarang.
+		Timezone: entity.DefaultTimezone,
+		Language: entity.DefaultLanguage,
+		IsActive: true,
 	}
 	if err := repo.Create(ctx, u); err != nil {
 		return fmt.Errorf("seed admin create: %w", err)

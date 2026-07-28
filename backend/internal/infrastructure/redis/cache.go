@@ -112,6 +112,15 @@ func (c *redisCache) HGetAll(ctx context.Context, key string) (map[string]string
 	return res, nil
 }
 
+// HDel hash'dan maydon(lar)ni o'chiradi. Mavjud bo'lmagan maydon xato EMAS
+// (Redis 0 qaytaradi) — chaqiruvchi uchun "yo'q edi" va "o'chirildi" farqi yo'q.
+func (c *redisCache) HDel(ctx context.Context, key string, fields ...string) error {
+	if len(fields) == 0 {
+		return nil
+	}
+	return c.client.HDel(ctx, key, fields...).Err()
+}
+
 // ─── Pub/Sub ──────────────────────────────────────────────────────────────────
 
 func (c *redisCache) Publish(ctx context.Context, channel string, payload any) error {

@@ -46,7 +46,8 @@ func (uc *useCase) Create(ctx context.Context, mentorID string, req *entity.Crea
 		DurationMin:          duration,
 		RecurrenceRule:       req.RecurrenceRule,
 		JoinSlug:             slug,
-		IsRecordingEnabled:   req.IsRecordingEnabled,
+		// Berilmagan bo'lsa YOQILADI — mahsulot qoidasi serverda bajariladi.
+		IsRecordingEnabled:   req.RecordingEnabled(),
 		IsWaitingRoomEnabled: req.IsWaitingRoomEnabled,
 		Status:               entity.LessonStatusScheduled,
 		CreatedAt:            now,

@@ -155,3 +155,70 @@ func TestNotificationRepo_UnreadFlow(t *testing.T) {
 	cnt, _ = notifs.UnreadCount(ctx(), u.ID)
 	require.Equal(t, 0, cnt)
 }
+
+// TestChatRepo_DirectMessageVisibility — shaxsiy xabar ko'rinuvchanligi HAQIQIY SQL'da.
+//
+// Bu testni fake repo bilan almashtirib bo'lmaydi: xavf aynan SQL'da —
+// `to_identity IS NULL` shartining to'g'ri generatsiya bo'lishi va OR
+// tarmoqlarining to'g'ri qavslanishi. Xato bo'lsa ikki oqibatdan biri chiqadi:
+// ommaviy xabarlar YO'QOLADI yoki begona shaxsiy xabar SIZIB CHIQADI.
+func TestChatRepo_DirectMessageVisibility(t *testing.T) {
+	pg := testutil.SetupTestDB(t)
+	users := pgRepo.NewUserRepo(pg)
+	lessons := pgRepo.NewLessonRepo(pg)
+	chats := pgRepo.NewChatRepo(pg)
+
+	mentor := makeUser(t, users, "chat_dm_mentor@darsly.uz")
+	sched := time.Now().UTC().Add(time.Hour)
+	l := &entity.Lesson{
+		ID: uuid.NewString(), MentorID: mentor.ID, Title: "Chat DM", DurationMin: 60,
+		ScheduledAt: &sched, Status: entity.LessonStatusLive,
+		JoinSlug:  uuid.NewString()[:12],
+		CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+	}
+	require.NoError(t, lessons.Create(ctx(), l))
+
+	add := func(sender, name, body string, to *string, offset time.Duration) {
+		t.Helper()
+		require.NoError(t, chats.Create(ctx(), &entity.ChatMessage{
+			ID: uuid.NewString(), LessonID: l.ID, SenderIdentity: sender,
+			SenderName: name, Body: body, ToIdentity: to,
+			CreatedAt: time.Now().UTC().Add(offset),
+		}))
+	}
+	ptr := func(s string) *string { return &s }
+
+	add("mentor", "Ustoz", "hammaga", nil, -5*time.Minute)
+	add("ali", "Ali", "ali→ustoz", ptr("mentor"), -4*time.Minute)
+	add("mentor", "Ustoz", "ustoz→ali", ptr("ali"), -3*time.Minute)
+	add("vali", "Vali", "vali→ustoz", ptr("mentor"), -2*time.Minute)
+
+	bodies := func(identity string) []string {
+		t.Helper()
+		items, err := chats.ListByLesson(ctx(), l.ID, identity, nil, 50)
+		require.NoError(t, err)
+		out := make([]string, 0, len(items))
+		for _, m := range items {
+			out = append(out, m.Body)
+		}
+		return out
+	}
+
+	// Ali: ommaviy + o'zi ishtirok etgan ikki DM. Vali'ning DM'i KO'RINMAYDI.
+	require.ElementsMatch(t, []string{"hammaga", "ali→ustoz", "ustoz→ali"}, bodies("ali"))
+
+	// Vali: ommaviy + faqat o'ziniki.
+	require.ElementsMatch(t, []string{"hammaga", "vali→ustoz"}, bodies("vali"))
+
+	// Ustoz: ommaviy + unga/undan ketgan hamma DM.
+	require.ElementsMatch(t, []string{"hammaga", "ali→ustoz", "ustoz→ali", "vali→ustoz"}, bodies("mentor"))
+
+	// Xonaga kirmagan (identity'siz) — FAQAT ommaviy.
+	require.ElementsMatch(t, []string{"hammaga"}, bodies(""))
+
+	// Kursor-paginatsiya DM filtri bilan birga ishlashi kerak.
+	items, err := chats.ListByLesson(ctx(), l.ID, "ali", nil, 2)
+	require.NoError(t, err)
+	require.Len(t, items, 2, "limit qo'llanishi kerak")
+	require.Equal(t, "ustoz→ali", items[0].Body, "eng yangi birinchi")
+}

@@ -108,6 +108,83 @@ func (r *recordingRepo) MarkReady(ctx context.Context, egressID, objectKey strin
 	return err
 }
 
+// ─── Qayta kodlash navbati (CRF) ─────────────────────────────────────────────
+
+// EnqueueTranscode yozuvni navbatga qo'yadi. FAQAT `ready` yozuv navbatga
+// tushadi: yiqilgan egress fayli yo'q va uni qayta kodlash ma'nosiz.
+func (r *recordingRepo) EnqueueTranscode(ctx context.Context, egressID string) error {
+	sql, args, _ := r.builder.Update("recordings").
+		Set("transcode_status", entity.TranscodePending).
+		Where(sq.Eq{"egress_id": egressID, "status": entity.RecordingStatusReady}).
+		ToSql()
+	_, err := r.db.Exec(ctx, sql, args...)
+	return err
+}
+
+// ClaimTranscode navbatdan BITTA yozuvni atomik ravishda oladi.
+//
+// `FOR UPDATE SKIP LOCKED`: bir nechta backend nusxasi ishlayotganda ham bitta
+// yozuv ikki marta kodlanmaydi (ikkalasi bir vaqtda tanlab, bir-birining
+// natijasini ustiga yozardi — MinIO'da yarim yozilgan fayl qolardi).
+// Navbat bo'sh bo'lsa `nil, nil` qaytadi.
+func (r *recordingRepo) ClaimTranscode(ctx context.Context) (*entity.Recording, error) {
+	const q = `
+		UPDATE recordings SET transcode_status = $1, transcode_started_at = now()
+		WHERE id = (
+			SELECT id FROM recordings
+			WHERE transcode_status = $2
+			ORDER BY created_at
+			LIMIT 1
+			FOR UPDATE SKIP LOCKED
+		)
+		RETURNING ` + recordingCols
+	rec, err := scanRecording(r.db.QueryRow(ctx, q, entity.TranscodeRunning, entity.TranscodePending))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil // navbat bo'sh — xato emas
+	}
+	if err != nil {
+		return nil, fmt.Errorf("recordingRepo.ClaimTranscode: %w", err)
+	}
+	return rec, nil
+}
+
+// FinishTranscode muvaffaqiyatli natijani yozadi: yangi hajm + eskisi (taqqoslash uchun).
+func (r *recordingRepo) FinishTranscode(ctx context.Context, id string, newSize, originalSize int64) error {
+	sql, args, _ := r.builder.Update("recordings").
+		Set("transcode_status", entity.TranscodeDone).
+		Set("size_bytes", newSize).
+		Set("original_size_bytes", originalSize).
+		Where(sq.Eq{"id": id}).ToSql()
+	_, err := r.db.Exec(ctx, sql, args...)
+	return err
+}
+
+// FailTranscode — qayta kodlash yiqildi. Yozuvning O'ZI tegilmaydi: MinIO'dagi
+// asl fayl joyida qoladi va ustoz uni baribir yuklab ola oladi.
+func (r *recordingRepo) FailTranscode(ctx context.Context, id string) error {
+	sql, args, _ := r.builder.Update("recordings").
+		Set("transcode_status", entity.TranscodeFailed).
+		Where(sq.Eq{"id": id}).ToSql()
+	_, err := r.db.Exec(ctx, sql, args...)
+	return err
+}
+
+// RequeueStaleTranscodes — ishlab turgan paytda o'lgan (deploy, crash) ishlarni
+// navbatga qaytaradi. Usiz bunday yozuv abadiy `running` bo'lib qolardi.
+func (r *recordingRepo) RequeueStaleTranscodes(ctx context.Context, olderThan time.Time) (int64, error) {
+	sql, args, _ := r.builder.Update("recordings").
+		Set("transcode_status", entity.TranscodePending).
+		Where(sq.And{
+			sq.Eq{"transcode_status": entity.TranscodeRunning},
+			sq.Lt{"transcode_started_at": olderThan},
+		}).ToSql()
+	tag, err := r.db.Exec(ctx, sql, args...)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 func (r *recordingRepo) MarkFailed(ctx context.Context, egressID string, endedAt time.Time) error {
 	sql, args, _ := r.builder.Update("recordings").
 		Set("status", entity.RecordingStatusFailed).

@@ -14,5 +14,5 @@ type UseCase interface {
 	// tokenRoom poll'ning darsiga bog'lanadi — begona darsning tokeni bilan ovoz berib bo'lmaydi.
 	Vote(ctx context.Context, pollID, voterIdentity, tokenRoom string, optionIndex int) error
 	// Results — so'rovnoma natijalari (ochiq).
-	Results(ctx context.Context, pollID string) (*entity.PollResults, error)
+	Results(ctx context.Context, pollID, tokenRoom string) (*entity.PollResults, error)
 }

@@ -40,8 +40,24 @@ type CreateLessonReq struct {
 	DurationMin          int        `json:"duration_min"            validate:"omitempty,min=5,max=1440"`
 	RecurrenceRule       *string    `json:"recurrence_rule"         validate:"omitempty,max=255"`
 	Passcode             *string    `json:"passcode"                validate:"omitempty,min=4,max=20"`
-	IsRecordingEnabled   bool       `json:"is_recording_enabled"`
+	// IsRecordingEnabled — ko'rsatkich, chunki qiymat berilmasa DEFAULT YONIQ.
+	//
+	// Oddiy `bool` bo'lganda Go'ning nol qiymati `false` edi va "yozib olish
+	// default yoniq" degan mahsulot qoidasi faqat KLIENTLARDA bajarilardi:
+	// mobil va web `true` yuborardi, API'ga to'g'ridan-to'g'ri murojaat qilgan
+	// har qanday narsa (curl, kelajakdagi uchinchi klient, integratsiya) esa
+	// jimgina yozuvsiz dars yaratardi. Qoida bitta joyda — serverda —
+	// bajarilishi kerak.
+	//
+	// `nil` = "berilmagan" → yoqiladi. Oshkora `false` esa hurmat qilinadi.
+	IsRecordingEnabled   *bool      `json:"is_recording_enabled"`
 	IsWaitingRoomEnabled bool       `json:"is_waiting_room_enabled"`
+}
+
+// RecordingEnabled — [CreateLessonReq.IsRecordingEnabled] ning default'i
+// qo'llangan qiymati (berilmagan bo'lsa yoqilgan).
+func (r *CreateLessonReq) RecordingEnabled() bool {
+	return r.IsRecordingEnabled == nil || *r.IsRecordingEnabled
 }
 
 type UpdateLessonReq struct {

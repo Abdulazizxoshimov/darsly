@@ -88,3 +88,28 @@ func TestDelete_Ownership(t *testing.T) {
 	_, err := uc.GetByID(context.Background(), "owner", l.ID)
 	require.Error(t, err, "o'chirilgach topilmasligi kerak")
 }
+
+func TestCreate_RecordingDefaultsOn(t *testing.T) {
+	// ⭐ "Yozib olish default yoniq" — bu SERVER qoidasi, klient odobi emas.
+	//
+	// Avval `is_recording_enabled` oddiy `bool` edi va berilmasa Go'ning nol
+	// qiymati `false` bo'lardi: mobil va web `true` yuborgani uchun ular
+	// to'g'ri ishlardi, API'ga to'g'ridan-to'g'ri murojaat qilgan har qanday
+	// narsa esa jimgina yozuvsiz dars yaratardi.
+	uc := newLessonUC(testutil.NewFakeLessonRepo())
+
+	l, err := uc.Create(context.Background(), "mentor1", &entity.CreateLessonReq{Title: "Bayroqsiz"})
+	require.NoError(t, err)
+	require.True(t, l.IsRecordingEnabled, "berilmagan bayroq → YOQILGAN")
+}
+
+func TestCreate_RecordingCanBeDisabledExplicitly(t *testing.T) {
+	// Default yoniq, lekin MAJBURIY EMAS: oshkora `false` hurmat qilinadi.
+	uc := newLessonUC(testutil.NewFakeLessonRepo())
+
+	l, err := uc.Create(context.Background(), "mentor1", &entity.CreateLessonReq{
+		Title: "Yozuvsiz", IsRecordingEnabled: ptr(false),
+	})
+	require.NoError(t, err)
+	require.False(t, l.IsRecordingEnabled)
+}

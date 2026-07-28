@@ -12,6 +12,7 @@ import (
 	"github.com/zoom/darsly/internal/usecase/poll"
 	"github.com/zoom/darsly/internal/usecase/recording"
 	"github.com/zoom/darsly/internal/usecase/room"
+	"github.com/zoom/darsly/internal/usecase/roomstate"
 	"github.com/zoom/darsly/internal/usecase/user"
 	"github.com/zoom/darsly/internal/usecase/waitingroom"
 )
@@ -23,6 +24,7 @@ type Handler struct {
 	User         user.UseCase
 	Lesson       lesson.UseCase
 	Room         room.UseCase
+	RoomState    roomstate.UseCase
 	WaitingRoom  waitingroom.UseCase
 	Recording    recording.UseCase
 	Notification notification.UseCase

@@ -33,6 +33,106 @@ func New(repo repository.RecordingRepository, lessonRepo repository.LessonReposi
 	return &useCase{repo: repo, lessonRepo: lessonRepo, livekit: lk, minio: mc, s3: s3, log: log}
 }
 
+// activeFor — shu dars uchun hozir yozilayotgan yozuvni qaytaradi (bo'lmasa nil).
+func (uc *useCase) activeFor(ctx context.Context, lessonID string) *entity.Recording {
+	recs, err := uc.repo.ListByLesson(ctx, lessonID)
+	if err != nil {
+		// Xato holida "faol yozuv yo'q" deb HISOBLAMAYMIZ: aks holda DB uzilganda
+		// har qayta ulanishda yangi egress boshlanib, dublikat yozuvlar to'planardi.
+		// Chaqiruvchi buni "aniqlab bo'lmadi" deb qabul qiladi va yangi yozuv
+		// boshlamaydi — yo'qolgan yozuvdan ko'ra takrorlanmagani xavfsizroq.
+		uc.log.Warn(ctx, "recording.activeFor: list failed", logger.String("lesson_id", lessonID), logger.SafeString("err", err.Error()))
+		return &entity.Recording{ID: "", Status: entity.RecordingStatusRecording}
+	}
+	for _, r := range recs {
+		if r.Status == entity.RecordingStatusRecording {
+			return r
+		}
+	}
+	return nil
+}
+
+// EnsureRecording — majburiy yozib olishning kirish nuqtasi. Izohni
+// [UseCase.EnsureRecording] da qara.
+func (uc *useCase) EnsureRecording(ctx context.Context, lessonID string) error {
+	if !uc.livekit.Enabled() {
+		// Video servis sozlanmagan — bu dev muhitida odatiy holat, xato emas.
+		return nil
+	}
+	l, err := uc.lessonRepo.GetByID(ctx, lessonID)
+	if err != nil {
+		return err
+	}
+	if l.Status != entity.LessonStatusLive {
+		// Poyga: dars biz kelgunimizcha yakunlangan bo'lishi mumkin.
+		return nil
+	}
+	if !l.IsRecordingEnabled {
+		// Ustoz shu dars uchun yozib olishni ATAYLAB o'chirgan.
+		//
+		// Qoida: yozib olish **default yoniq** (dars yaratishda belgi o'rnatilgan
+		// holda keladi), lekin majburiy emas — ustoz uni o'chira oladi. Avtomatik
+		// boshlash shu tanlovni bekor qilmasligi kerak, aks holda "o'chirdim,
+		// baribir yozildi" degan holat bo'lardi va bu maxfiylik buzilishi.
+		uc.log.Info(ctx, "recording.Ensure: dars uchun o'chirilgan — boshlanmaydi",
+			logger.String("lesson_id", lessonID))
+		return nil
+	}
+	if active := uc.activeFor(ctx, lessonID); active != nil {
+		uc.log.Info(ctx, "recording.Ensure: allaqachon yozilmoqda", logger.String("lesson_id", lessonID))
+		return nil
+	}
+
+	rec, err := uc.startEgress(ctx, lessonID)
+	if err != nil {
+		return err
+	}
+	uc.log.Info(ctx, "recording.Ensure: avtomatik boshlandi",
+		logger.String("lesson_id", lessonID), logger.String("recording_id", rec.ID))
+	return nil
+}
+
+// EnsureForRoom — LiveKit webhook'idan kelgan xona nomi bo'yicha yozuvni boshlaydi.
+//
+// Webhook faqat xona NOMINI beradi, dars ID sini emas. Begona nom (bizniki
+// bo'lmagan xona) jimgina e'tiborsiz qoldiriladi — xato emas.
+func (uc *useCase) EnsureForRoom(ctx context.Context, roomName string) error {
+	lessonID, ok := shared.LessonIDFromRoom(roomName)
+	if !ok {
+		return nil
+	}
+	return uc.EnsureRecording(ctx, lessonID)
+}
+
+// StopActiveForLesson — dars yakunlanganda. Izohni [UseCase] da qara.
+func (uc *useCase) StopActiveForLesson(ctx context.Context, lessonID string) error {
+	if !uc.livekit.Enabled() {
+		return nil
+	}
+	recs, err := uc.repo.ListByLesson(ctx, lessonID)
+	if err != nil {
+		return err
+	}
+	for _, r := range recs {
+		if r.Status != entity.RecordingStatusRecording {
+			continue
+		}
+		if err := uc.livekit.StopRecording(ctx, r.EgressID); err != nil {
+			// To'xtatib bo'lmadi — lekin xona baribir o'chiriladi va egress
+			// o'zi tugaydi; webhook yakuniy holatni qo'yadi. Shuning uchun
+			// bu xato darsni yakunlashni BLOKLAMAYDI.
+			uc.log.Warn(ctx, "recording.StopActive: egress stop failed",
+				logger.String("egress_id", r.EgressID), logger.SafeString("err", err.Error()))
+			continue
+		}
+		if err := uc.repo.UpdateStatus(ctx, r.ID, entity.RecordingStatusProcessing); err != nil {
+			uc.log.Warn(ctx, "recording.StopActive: status update failed",
+				logger.String("recording_id", r.ID), logger.SafeString("err", err.Error()))
+		}
+	}
+	return nil
+}
+
 func (uc *useCase) StartRecording(ctx context.Context, mentorID, lessonID string) (*entity.Recording, error) {
 	// Avval egalik tekshiriladi — video servis o'chirilgan bo'lsa ham begona dars
 	// yozuvi 403 bo'lib qolsin (500 bilan niqoblanmasin).
@@ -47,6 +147,27 @@ func (uc *useCase) StartRecording(ctx context.Context, mentorID, lessonID string
 		return nil, apperr.BadRequest("lesson is not live")
 	}
 
+	rec, err := uc.startEgress(ctx, lessonID)
+	if err != nil {
+		return nil, err
+	}
+	audit.Record(ctx, uc.log, "recording.start", mentorID,
+		logger.String("recording_id", rec.ID), logger.String("lesson_id", lessonID), logger.String("egress_id", rec.EgressID))
+	return rec, nil
+}
+
+// startEgress — yozib olishning O'ZAGI: egress boshlanadi va yozuv DB'ga yoziladi.
+//
+// Qo'lda boshlash ([StartRecording]) va majburiy avtomatik boshlash
+// ([EnsureRecording]) AYNAN shu koddan foydalanadi. Nusxa ko'chirilganda
+// kompensatsiya mantig'i (DB yiqilsa egressni to'xtatish) ikkinchi yo'lda
+// unutilishi mumkin edi — bu esa serverda jimgina ishlab turgan, hech kimga
+// tegishli bo'lmagan egress qoldirardi.
+//
+// Ruxsat/holat tekshiruvlari BU YERDA EMAS: ular chaqiruvchida, chunki ikki
+// yo'lning talablari boshqa (biri mentor egaligini, ikkinchisi faqat dars
+// jonliligini talab qiladi).
+func (uc *useCase) startEgress(ctx context.Context, lessonID string) (*entity.Recording, error) {
 	recID := uuid.NewString()
 	objectKey := fmt.Sprintf("recordings/%s/%s.mp4", lessonID, recID)
 	roomName := "lesson_" + lessonID
@@ -83,8 +204,6 @@ func (uc *useCase) StartRecording(ctx context.Context, mentorID, lessonID string
 	}
 
 	metrics.RecordingsStarted.Inc()
-	audit.Record(ctx, uc.log, "recording.start", mentorID,
-		logger.String("recording_id", recID), logger.String("lesson_id", lessonID), logger.String("egress_id", egressID))
 	return rec, nil
 }
 
@@ -181,5 +300,15 @@ func (uc *useCase) HandleEgress(ctx context.Context, egressID string, completed 
 	}
 	metrics.EgressResults.WithLabelValues("ready").Inc()
 	uc.log.Info(ctx, "recording ready", logger.String("recording_id", rec.ID), logger.String("object_key", key))
+
+	// Qayta kodlash navbatiga (CRF) — fon ishchisi oladi.
+	// Xato JIM yutiladi: yozuv allaqachon tayyor va yuklab olinadi; navbatga
+	// tushmagani sifatga emas, faqat hajmga ta'sir qiladi. Bu yerda `err`
+	// qaytarish LiveKit'ni webhook'ni qayta yuborishga majburlardi va tayyor
+	// yozuv ustidan ikkinchi marta `MarkReady` ishlardi.
+	if err := uc.repo.EnqueueTranscode(ctx, egressID); err != nil {
+		uc.log.Warn(ctx, "recording: enqueue transcode failed",
+			logger.String("recording_id", rec.ID), logger.SafeString("err", err.Error()))
+	}
 	return nil
 }

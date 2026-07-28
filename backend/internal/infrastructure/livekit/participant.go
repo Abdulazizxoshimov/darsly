@@ -11,10 +11,21 @@ import (
 // SendData xonadagi barcha ishtirokchilarga data-message yuboradi (chat, reaksiya).
 // RELIABLE — yetkazish kafolatlangan.
 func (c *Client) SendData(ctx context.Context, room string, data []byte) error {
+	return c.SendDataTo(ctx, room, data, nil)
+}
+
+// SendDataTo xabarni FAQAT ko'rsatilgan ishtirokchilarga yuboradi (shaxsiy chat).
+// identities bo'sh bo'lsa — butun xonaga (SendData bilan bir xil).
+//
+// Maxfiylik shu yerda hal bo'ladi: shaxsiy xabar boshqa klientlarga UMUMAN
+// yetib bormaydi. Muqobil — hammaga yuborib, klientda yashirish — xabarni
+// brauzer konsolida ochiq qoldirardi, ya'ni "shaxsiy" so'zi yolg'on bo'lardi.
+func (c *Client) SendDataTo(ctx context.Context, room string, data []byte, identities []string) error {
 	_, err := c.room.SendData(ctx, &livekit.SendDataRequest{
-		Room: room,
-		Data: data,
-		Kind: livekit.DataPacket_RELIABLE,
+		Room:                  room,
+		Data:                  data,
+		Kind:                  livekit.DataPacket_RELIABLE,
+		DestinationIdentities: identities,
 	})
 	return err
 }

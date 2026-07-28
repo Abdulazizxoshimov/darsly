@@ -66,8 +66,9 @@ func (uc *useCase) Register(ctx context.Context, req *entity.RegisterReq, ip, us
 		FullName:     req.FullName,
 		Color:        "#6366F1",
 		Role:         "student",
-		Timezone:     "UTC",
-		Language:     "uz",
+		// Mahsulot O'zbekiston uchun — `entity.DefaultTimezone` ga qarang.
+		Timezone:     entity.DefaultTimezone,
+		Language:     entity.DefaultLanguage,
 		IsActive:     true,
 		CreatedAt:    now,
 		UpdatedAt:    now,

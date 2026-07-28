@@ -41,8 +41,10 @@ func TestRegister_Success(t *testing.T) {
 	u, err := users.GetByEmail(context.Background(), "d@darsly.uz")
 	require.NoError(t, err)
 	require.Equal(t, "student", u.Role, "yangi user default 'student' bo'lishi kerak")
-	require.Equal(t, "uz", u.Language)
-	require.Equal(t, "UTC", u.Timezone)
+	require.Equal(t, entity.DefaultLanguage, u.Language)
+	// Mahsulot O'zbekiston uchun: default `UTC` emas, Toshkent. Aks holda
+	// yangi ustozning dars vaqtlari 5 soat surilib ko'rinardi.
+	require.Equal(t, "Asia/Tashkent", u.Timezone)
 	require.True(t, u.IsActive)
 	require.NotEqual(t, "parol12345", u.PasswordHash, "parol hash qilingan bo'lishi kerak")
 	require.Len(t, tokens.Sessions, 1, "sessiya saqlanishi kerak")

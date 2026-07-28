@@ -11,6 +11,7 @@ import (
 	apperr "github.com/zoom/darsly/internal/pkg/errors"
 	"github.com/zoom/darsly/internal/testutil"
 	"github.com/zoom/darsly/internal/usecase/recording"
+	"github.com/zoom/darsly/internal/usecase/shared"
 )
 
 // Haqiqiy UUID'lar: usecase ID formatini tekshiradi (shared.ValidateID).
@@ -23,7 +24,8 @@ func setup(t *testing.T) (recording.UseCase, *testutil.FakeRecordingRepo, *testu
 	t.Helper()
 	rrepo := testutil.NewFakeRecordingRepo()
 	lrepo := testutil.NewFakeLessonRepo()
-	require.NoError(t, lrepo.Create(context.Background(), &entity.Lesson{ID: testLessonID, MentorID: "mentor1", Status: entity.LessonStatusLive}))
+	// Default: yozib olish YONIQ (dars yaratishda shunday keladi).
+	require.NoError(t, lrepo.Create(context.Background(), &entity.Lesson{ID: testLessonID, MentorID: "mentor1", Status: entity.LessonStatusLive, IsRecordingEnabled: true}))
 	lk := testutil.NewFakeLiveKit() // enabled mock — egress chaqiruvlarini assert qilamiz
 	uc := recording.New(rrepo, lrepo, lk, testutil.NewFakeMinio(), livekit.S3Config{}, testutil.NewLogger())
 	return uc, rrepo, lrepo, lk
@@ -119,4 +121,135 @@ func TestRecording_InvalidUUID_NotFound(t *testing.T) {
 		_, err = uc.DownloadURL(ctx, "mentor1", id)
 		require.True(t, apperr.IsNotFound(err), "DownloadURL(%q) → 404 kutilgan, oldi: %v", id, err)
 	}
+}
+
+// ─── Majburiy (avtomatik) yozib olish ────────────────────────────────────────
+
+func TestEnsureRecording_StartsWhenLive(t *testing.T) {
+	uc, rrepo, _, lk := setup(t)
+	require.NoError(t, uc.EnsureRecording(context.Background(), testLessonID))
+	require.Equal(t, 1, lk.Calls["StartRoomRecording"], "jonli darsda yozuv avtomatik boshlanadi")
+
+	recs, _ := rrepo.ListByLesson(context.Background(), testLessonID)
+	require.Len(t, recs, 1)
+	require.Equal(t, entity.RecordingStatusRecording, recs[0].Status)
+}
+
+func TestEnsureRecording_Idempotent(t *testing.T) {
+	// ⭐ ENG MUHIM MEZON. Ustoz dars davomida qayta ulanishi odatiy hol:
+	// internet uzildi, ilova fon rejimidan qaytdi, telefon almashtirildi.
+	// Har `HostToken` da yangi egress boshlansa, BITTA dars uchun bir nechta
+	// parallel yozuv ketardi — har biri ~1-2 yadro yeydi va 4 yadroli server
+	// yiqilardi (ya'ni "kechikish minimal" talabi ham buzilardi).
+	uc, rrepo, _, lk := setup(t)
+
+	require.NoError(t, uc.EnsureRecording(context.Background(), testLessonID))
+	require.NoError(t, uc.EnsureRecording(context.Background(), testLessonID))
+	require.NoError(t, uc.EnsureRecording(context.Background(), testLessonID))
+
+	require.Equal(t, 1, lk.Calls["StartRoomRecording"], "uch marta chaqirilsa ham egress BITTA bo'lishi kerak")
+	recs, _ := rrepo.ListByLesson(context.Background(), testLessonID)
+	require.Len(t, recs, 1, "dublikat yozuv yaratilmasligi kerak")
+}
+
+func TestEnsureRecording_SkipsWhenNotLive(t *testing.T) {
+	// Poyga: dars biz kelgunimizcha yakunlangan bo'lishi mumkin. Bunda yozuv
+	// boshlanmasligi kerak, lekin XATO ham qaytmasligi kerak — bu normal holat.
+	uc, _, lrepo, lk := setup(t)
+	l, _ := lrepo.GetByID(context.Background(), testLessonID)
+	l.Status = entity.LessonStatusEnded
+	require.NoError(t, lrepo.Update(context.Background(), l))
+
+	require.NoError(t, uc.EnsureRecording(context.Background(), testLessonID))
+	require.Equal(t, 0, lk.Calls["StartRoomRecording"])
+}
+
+func TestEnsureRecording_RestartsAfterPreviousFinished(t *testing.T) {
+	// Tugagan yozuv yangisini bloklamasligi kerak: ustoz darsni yakunlab,
+	// keyin o'sha darsni qayta ochsa (status yana live bo'lsa) yozuv qayta
+	// boshlanishi kerak. Idempotentlik faqat FAOL yozuvga tegishli.
+	uc, rrepo, _, lk := setup(t)
+	seedRecording(t, rrepo, entity.RecordingStatusReady) // eski, tugagan yozuv
+
+	require.NoError(t, uc.EnsureRecording(context.Background(), testLessonID))
+	require.Equal(t, 1, lk.Calls["StartRoomRecording"], "tugagan yozuv yangisini to'smasligi kerak")
+}
+
+func TestStopActiveForLesson(t *testing.T) {
+	uc, rrepo, _, lk := setup(t)
+	seedRecording(t, rrepo, entity.RecordingStatusRecording)
+
+	require.NoError(t, uc.StopActiveForLesson(context.Background(), testLessonID))
+
+	require.GreaterOrEqual(t, lk.Calls["StopRecording"], 1)
+	got, _ := rrepo.GetByID(context.Background(), testRecordingID)
+	require.Equal(t, entity.RecordingStatusProcessing, got.Status,
+		"to'xtatilgach holat darhol processing bo'lsin — ustoz 'hali yozilmoqda' degan yolg'onni ko'rmasin")
+}
+
+func TestStopActiveForLesson_IgnoresFinished(t *testing.T) {
+	uc, rrepo, _, lk := setup(t)
+	seedRecording(t, rrepo, entity.RecordingStatusReady)
+
+	require.NoError(t, uc.StopActiveForLesson(context.Background(), testLessonID))
+	require.Equal(t, 0, lk.Calls["StopRecording"], "tayyor yozuvni qayta to'xtatishga urinilmasin")
+}
+
+func TestEnsureRecording_RespectsDisabledLesson(t *testing.T) {
+	// ⭐ Yozib olish DEFAULT YONIQ, lekin MAJBURIY EMAS. Ustoz uni shu dars
+	// uchun o'chirgan bo'lsa, avtomatik boshlash uni bekor qilmasligi kerak:
+	// "o'chirdim, baribir yozildi" — bu maxfiylik buzilishi bo'lardi.
+	uc, rrepo, lrepo, lk := setup(t)
+	l, _ := lrepo.GetByID(context.Background(), testLessonID)
+	l.IsRecordingEnabled = false
+	require.NoError(t, lrepo.Update(context.Background(), l))
+
+	require.NoError(t, uc.EnsureRecording(context.Background(), testLessonID))
+
+	require.Equal(t, 0, lk.Calls["StartRoomRecording"], "o'chirilgan darsda yozuv boshlanmasin")
+	recs, _ := rrepo.ListByLesson(context.Background(), testLessonID)
+	require.Empty(t, recs)
+}
+
+// ─── Webhook orqali boshlash (5 daqiqalik tuzoq tuzatilishi) ─────────────────
+
+func TestEnsureForRoom_StartsFromRoomName(t *testing.T) {
+	// ⭐ Yozuv endi AYNAN shu yo'l bilan boshlanadi: LiveKit `track_published`
+	// webhook'i faqat xona NOMINI beradi, dars ID sini emas.
+	uc, rrepo, _, lk := setup(t)
+
+	require.NoError(t, uc.EnsureForRoom(context.Background(), shared.RoomName(testLessonID)))
+
+	require.Equal(t, 1, lk.Calls["StartRoomRecording"])
+	recs, _ := rrepo.ListByLesson(context.Background(), testLessonID)
+	require.Len(t, recs, 1)
+}
+
+func TestEnsureForRoom_IgnoresForeignRoom(t *testing.T) {
+	// Begona xona nomi (boshqa tizim yoki LiveKit'ning o'z xonasi) — xato emas,
+	// jimgina e'tiborsiz. Aks holda webhook 500 qaytarib, LiveKit hodisani
+	// cheksiz qayta yuborardi.
+	uc, _, _, lk := setup(t)
+
+	require.NoError(t, uc.EnsureForRoom(context.Background(), "boshqa-xona"))
+	require.NoError(t, uc.EnsureForRoom(context.Background(), ""))
+	require.NoError(t, uc.EnsureForRoom(context.Background(), "lesson_"))
+
+	require.Equal(t, 0, lk.Calls["StartRoomRecording"])
+}
+
+func TestEnsureForRoom_IdempotentAcrossManyTracks(t *testing.T) {
+	// ⭐ Bir dars ichida ko'p trek e'lon qilinadi: mikrofon, kamera, ekran,
+	// ekran audiosi — va HAR BIRI uchun webhook keladi. Ular yangi yozuv
+	// boshlamasligi kerak, aks holda bitta darsdan to'rtta egress ketardi.
+	uc, rrepo, _, lk := setup(t)
+	room := shared.RoomName(testLessonID)
+
+	for i := 0; i < 4; i++ {
+		require.NoError(t, uc.EnsureForRoom(context.Background(), room))
+	}
+
+	require.Equal(t, 1, lk.Calls["StartRoomRecording"], "to'rt trek → BITTA yozuv")
+	recs, _ := rrepo.ListByLesson(context.Background(), testLessonID)
+	require.Len(t, recs, 1)
 }

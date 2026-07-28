@@ -45,6 +45,8 @@ p, mentor, /api/v1/lessons/:id/participants/:identity/mute,   POST
 p, mentor, /api/v1/lessons/:id/participants/:identity/remove, POST
 p, mentor, /api/v1/lessons/:id/participants/:identity/allow-speak,  POST
 p, mentor, /api/v1/lessons/:id/participants/:identity/revoke-speak, POST
+p, mentor, /api/v1/lessons/:id/hands/lower,     POST
+p, mentor, /api/v1/lessons/:id/hands/lower-all, POST
 p, mentor, /api/v1/lessons/:id/chat, GET
 p, mentor, /api/v1/lessons/:id/chat, POST
 p, mentor, /api/v1/lessons/:id/polls, GET

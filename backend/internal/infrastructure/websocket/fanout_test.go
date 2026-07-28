@@ -10,6 +10,8 @@ import (
 	"github.com/zoom/darsly/internal/infrastructure/redis"
 	"github.com/zoom/darsly/internal/pkg/config"
 	"github.com/zoom/darsly/internal/pkg/logger"
+
+	"github.com/zoom/darsly/internal/testutil"
 )
 
 func testCache(t *testing.T) redis.Cache {
@@ -23,10 +25,10 @@ func testCache(t *testing.T) redis.Cache {
 	}
 	c, err := redis.New(config.RedisConfig{Host: host, Port: port})
 	if err != nil {
-		t.Skipf("redis mavjud emas: %v", err)
+		testutil.SkipOrFail(t, "redis mavjud emas: %v", err)
 	}
 	if err := c.Ping(context.Background()); err != nil {
-		t.Skipf("redis ping: %v", err)
+		testutil.SkipOrFail(t, "redis ping: %v", err)
 	}
 	return c
 }

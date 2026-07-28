@@ -7,6 +7,13 @@ type RoomToken struct {
 	RoomName string `json:"room_name"` // LiveKit xona nomi
 	Identity string `json:"identity"`  // ishtirokchi identifikatori
 	Role     string `json:"role"`      // host | participant
+	// LessonID — xona holati endpointlari (`/rooms/:lessonID/...`) uchun.
+	//
+	// Guest'da dars ID'si boshqa yo'l bilan yo'q edi (joinlink ataylab uni
+	// bermaydi), lekin `RoomName` allaqachon undan hosil qilinadi — ya'ni bu
+	// maydon YANGI ma'lumot oshkor qilmaydi, faqat klientni qator kesishdan
+	// (`strings.TrimPrefix(room_name, "lesson_")`) qutqaradi.
+	LessonID string `json:"lesson_id"`
 }
 
 // Room rollari

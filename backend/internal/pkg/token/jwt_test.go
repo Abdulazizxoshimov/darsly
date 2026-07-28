@@ -13,6 +13,8 @@ import (
 
 	"github.com/zoom/darsly/internal/pkg/logger"
 	"github.com/zoom/darsly/internal/pkg/token"
+
+	"github.com/zoom/darsly/internal/testutil"
 )
 
 // redisAddr — test Redis manzili (default dev porti 6399). Ulanib bo'lmasa test skip.
@@ -39,7 +41,7 @@ func newMakerWithGrace(t *testing.T, grace time.Duration) (token.Maker, *goredis
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 	if err := cli.Ping(ctx).Err(); err != nil {
-		t.Skipf("Redis mavjud emas (%s): %v", redisAddr(), err)
+		testutil.SkipOrFail(t, "Redis mavjud emas (%s): %v", redisAddr(), err)
 	}
 	flushTestKeys(t, cli)
 	log := logger.New("error", "test", "test")

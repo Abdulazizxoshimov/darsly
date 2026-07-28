@@ -17,6 +17,11 @@ const (
 	CodeValidation   Code = "VALIDATION_ERROR"
 	CodeBadRequest   Code = "BAD_REQUEST"
 	CodeInternal     Code = "INTERNAL_ERROR"
+	// CodeRateLimited — middleware'dagi rate-limit bilan AYNI kod (`RATE_LIMITED`).
+	// Klientlar (web `ERROR_UZ`, mobil `ApiErrors`) uni allaqachon taniydi, shuning
+	// uchun domen qatlamidagi cheklov ham xuddi shu kodni qaytarishi kerak — aks
+	// holda foydalanuvchi bir xil hodisa uchun ikki xil matn ko'rardi.
+	CodeRateLimited Code = "RATE_LIMITED"
 )
 
 // AppError is the standard domain error that carries an HTTP status, a machine
@@ -91,6 +96,15 @@ func BadRequest(msg string) *AppError {
 	return &AppError{
 		HTTPStatus: http.StatusBadRequest,
 		Code:       CodeBadRequest,
+		Message:    msg,
+	}
+}
+
+// TooManyRequests — domen qatlamidagi tezlik cheklovi (429).
+func TooManyRequests(msg string) *AppError {
+	return &AppError{
+		HTTPStatus: http.StatusTooManyRequests,
+		Code:       CodeRateLimited,
 		Message:    msg,
 	}
 }

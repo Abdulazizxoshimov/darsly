@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/livekit/protocol/livekit"
+	"github.com/livekit/protocol/webhook"
 
 	"github.com/zoom/darsly/api/handlers"
 	hs "github.com/zoom/darsly/api/http_status"
@@ -28,6 +29,22 @@ func LiveKitWebhook(h *handlers.Handler) gin.HandlerFunc {
 		if err != nil {
 			hs.AbortError(c, http.StatusUnauthorized, "UNAUTHORIZED", "invalid webhook signature")
 			return
+		}
+
+		// ⭐ YOZIB OLISHNI BOSHLASH — xonada haqiqatan media paydo bo'lganda.
+		//
+		// Nega `track_published`, `participant_joined` emas: egress "start
+		// signal"ni ishtirokchi kirganda emas, **trek e'lon qilinganda** oladi.
+		// Ishtirokchi kirib, ruxsat oynasida turib qolsa yoki mikrofonni
+		// yoqmasa — egress baribir 5 daqiqa kutib bekor bo'lardi.
+		//
+		// Xato JIMGINA yutiladi (200 qaytadi) va bu ataylab: non-200 bo'lsa
+		// LiveKit shu hodisani qayta-qayta yuboradi va har urinishda yangi
+		// egress boshlashga harakat qilinardi — 4 yadroli serverda bu
+		// yozuvlar ko'chkisiga aylanardi. Xatoning o'zi usecase ichida
+		// jurnalga yozilgan (`recording.startEgress`), ya'ni yo'qolmaydi.
+		if roomName, ok := recordingTriggerRoom(event); ok {
+			_ = h.Recording.EnsureForRoom(c.Request.Context(), roomName)
 		}
 
 		if ei := event.EgressInfo; ei != nil {
@@ -62,4 +79,24 @@ func LiveKitWebhook(h *handlers.Handler) gin.HandlerFunc {
 
 		c.Status(http.StatusOK)
 	}
+}
+
+// recordingTriggerRoom — webhook hodisasi yozib olishni boshlashi kerakmi va
+// qaysi xona uchun.
+//
+// Sof funksiya (ayrilgan sabab): bu KARORNING o'zi — qaysi hodisada yozuv
+// boshlanadi — mahsulot qoidasi, va u imzolangan HTTP so'rovi yasamasdan
+// sinalishi kerak. Handler'ning qolgani shunchaki simlash.
+//
+// `track_published` tanlanganining sababi `recording.UseCase.EnsureRecording`
+// izohida: egress "start signal"ni ishtirokchi kirganda emas, trek e'lon
+// qilinganda oladi.
+func recordingTriggerRoom(event *livekit.WebhookEvent) (string, bool) {
+	if event == nil || event.Event != webhook.EventTrackPublished {
+		return "", false
+	}
+	if event.Room == nil || event.Room.Name == "" {
+		return "", false
+	}
+	return event.Room.Name, true
 }

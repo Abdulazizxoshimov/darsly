@@ -40,10 +40,10 @@ func newTestServerLiveKit(t *testing.T) (*httptest.Server, *pgpkg.Postgres) {
 		Host: getenv("TEST_REDIS_HOST", "localhost"), Port: getenv("TEST_REDIS_PORT", "6399"),
 	})
 	if err != nil {
-		t.Skipf("redis mavjud emas: %v", err)
+		testutil.SkipOrFail(t, "redis mavjud emas: %v", err)
 	}
 	if err := cache.Ping(context.Background()); err != nil {
-		t.Skipf("redis ping: %v", err)
+		testutil.SkipOrFail(t, "redis ping: %v", err)
 	}
 
 	tokenMaker := token.NewJWTMaker([]byte("e2e-secret-at-least-32-characters-000"), 15*time.Minute, 720*time.Hour, token.DefaultRefreshGrace, cache.Client(), "e2etest", log)
