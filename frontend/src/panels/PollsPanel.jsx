@@ -137,14 +137,14 @@ function HostPolls({ lessonId, onBroadcastPoll }) {
         <p className="muted" style={{ textAlign: 'center', fontSize: 14, marginTop: 24 }}>Hali so'rovnoma yo'q</p>
       )}
       {polls.map((p) => (
-        <HostPollCard key={p.id} poll={p} onClose={() => doClose(p)} closing={close.isPending} />
+        <HostPollCard key={p.id} poll={p} roomToken={roomToken} onClose={() => doClose(p)} closing={close.isPending} />
       ))}
     </div>
   )
 }
 
-function HostPollCard({ poll, onClose, closing }) {
-  const { data } = usePollResults(poll.id, { refetchInterval: poll.is_active ? 3000 : false })
+function HostPollCard({ poll, roomToken, onClose, closing }) {
+  const { data } = usePollResults(poll.id, roomToken?.token, { refetchInterval: poll.is_active ? 3000 : false })
   return (
     <div style={{ background: 'var(--elevated)', border: '1px solid var(--border-strong)', borderRadius: 12, padding: 14 }}>
       <div className="row between" style={{ marginBottom: 8 }}>
@@ -165,7 +165,7 @@ function HostPollCard({ poll, onClose, closing }) {
 
 function GuestPoll({ guestActivePoll, roomToken }) {
   const [voted, setVoted] = useState(null)
-  const { data: results } = usePollResults(guestActivePoll?.id, {
+  const { data: results } = usePollResults(guestActivePoll?.id, roomToken?.token, {
     enabled: !!guestActivePoll && voted === guestActivePoll?.id,
     refetchInterval: 3000,
   })

@@ -1,3 +1,9 @@
+// Mahsulot qat'iy qiymatlari — profilda SOZLANMAYDI.
+// Sabab: ilova butunlay o'zbekcha va foydalanuvchilar O'zbekistonda. Erkin matn
+// maydonlari bo'lganda noto'g'ri mintaqa dars vaqtlarini surib yuborardi.
+export const DEFAULT_TIMEZONE = 'Asia/Tashkent'
+export const DEFAULT_LANGUAGE = 'uz'
+
 // Ism initsiallari: "Malika Yusupova" → "MY"
 export function initials(name) {
   const parts = String(name || '').trim().split(/\s+/).filter(Boolean)

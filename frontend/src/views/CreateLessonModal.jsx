@@ -24,6 +24,8 @@ export function CreateLessonModal({ open, onClose }) {
   const [scheduledAt, setScheduledAt] = useState('')
   const [duration, setDuration] = useState(60)
   const [passcode, setPasscode] = useState('')
+  // Yozib olish DEFAULT YONIQ — yoqishni unutish qaytarib bo'lmaydigan
+  // yo'qotish (dars o'tib ketdi), o'chirishni unutish esa tuzatiladi.
   const [recording, setRecording] = useState(true)
   const [waitingRoom, setWaitingRoom] = useState(true)
 
@@ -99,6 +101,12 @@ export function CreateLessonModal({ open, onClose }) {
           maxLength={20}
         />
         <div className="col gap-2" style={{ marginTop: 4 }}>
+          {/*
+            Yozib olish DEFAULT YONIQ (`useState(true)`), lekin majburiy emas.
+            Yoqilgan bo'lsa dars boshlanishi bilan server yozuvni O'ZI boshlaydi
+            (backend `room.HostToken` → `recording.EnsureRecording`) — ustoz
+            xona ichida hech narsa bosmaydi.
+          */}
           <Toggle label="Yozib olish yoqilsin" checked={recording} onChange={setRecording} />
           <Toggle label="Kutish xonasi yoqilsin" checked={waitingRoom} onChange={setWaitingRoom} />
         </div>

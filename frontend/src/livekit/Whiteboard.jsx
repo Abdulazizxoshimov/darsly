@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import {
   Pen,
   Eraser,
@@ -64,7 +64,11 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v))
 // FOLLOW-PRESENTER: en doim fit bo'lgani uchun faqat scrollY sinxronlanadi. Host {act:'view', scrollY} tarqatadi.
 // Guest scrollY'ni oladi, o'z en-fit scale'i bilan render → ustoz ko'rgan aynan shu enli kontentni, shu
 // vertikal pozitsiyada ko'radi. Hech narsa kichraymaydi (en to'liq). followRef — guest uchun oxirgi scrollY.
-export function Whiteboard({
+// `memo`: doska og'ir komponent (canvas + PDF). Xonadagi ishtirokchi holati,
+// chat yoki reaksiya o'zgarganda uni qayta render qilishning ma'nosi yo'q —
+// proplari faqat ref'lar, sonlar va (LiveRoom'da `useCallback` bilan) barqaror
+// funksiyalar, ya'ni memo haqiqatan kesadi.
+export const Whiteboard = memo(function Whiteboard({
   strokesRef,
   bgRef,
   viewRef,
@@ -765,4 +769,4 @@ export function Whiteboard({
       )}
     </div>
   )
-}
+})

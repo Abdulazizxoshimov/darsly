@@ -39,15 +39,33 @@ export function Recordings() {
 
 function LessonRecordings({ lesson }) {
   const { data: recs = [], isLoading } = useRecordings(lesson.id)
-  if (isLoading || !recs.length) return null
+  if (isLoading) return null
   return (
     <div>
       <h3 className="text-2" style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>{lesson.title}</h3>
-      <div className="col gap-2">
-        {recs.map((r) => (
-          <RecordingRow key={r.id} rec={r} />
-        ))}
-      </div>
+      {/*
+        Yozuvi yo'q dars AVVAL butunlay yashirilardi (`!recs.length` → null). Natijada
+        yozib olish yoqilgan darslar bor-u, hech biriniki hali tayyor bo'lmasa —
+        sahifada faqat "Yozuvlar" sarlavhasi turardi va foydalanuvchi buni nosozlik
+        deb o'ylardi. Endi dars ko'rinadi va NEGA bo'shligi yozib qo'yiladi.
+      */}
+      {recs.length ? (
+        <div className="col gap-2">
+          {recs.map((r) => (
+            <RecordingRow key={r.id} rec={r} />
+          ))}
+        </div>
+      ) : (
+        <div className="card" style={{ padding: 14 }}>
+          <div className="muted" style={{ fontSize: 13 }}>
+            {lesson.status === 'live'
+              ? 'Dars davom etmoqda — yozuv dars yakunlangach tayyor bo‘ladi.'
+              : lesson.status === 'scheduled'
+                ? 'Dars hali boshlanmagan.'
+                : 'Bu darsda yozuv saqlanmagan.'}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

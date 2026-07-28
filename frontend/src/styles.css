@@ -1011,10 +1011,43 @@ h1, h2, h3 { margin: 0; letter-spacing: -0.02em; }
 .speak-eq i:nth-child(2) { height: 11px; animation-delay: 0.18s; }
 .speak-eq i:nth-child(3) { height: 7px; animation-delay: 0.36s; }
 @keyframes eq { 0%, 100% { transform: scaleY(0.45); } 50% { transform: scaleY(1); } }
+
+/* Qo'l navbatidagi tartib raqami — "kim birinchi so'radi" savoliga javob. */
+.rail-num {
+  flex-shrink: 0;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 999px;
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+/* "Sizga gapirishga ruxsat berildi" banneri.
+   Toast emas: toast 4 soniyada yo'qoladi va o'quvchi mikrofon tugmasini
+   o'zi qidirib qolardi. Banner amal bajarilmaguncha turadi. */
+.speak-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--accent-soft);
+  color: var(--text);
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 14px;
+  font-weight: 500;
+}
+
 @media (max-width: 900px) {
   .room-rail { top: 58px; right: 8px; max-width: 150px; gap: 6px; }
   .rail-card { padding: 6px 8px; }
   .rail-row { font-size: 12px; }
+  .speak-banner { padding: 8px 10px; font-size: 13px; gap: 8px; }
 }
 
 /* Floating reactions overlay */
@@ -1093,6 +1126,41 @@ h1, h2, h3 { margin: 0; letter-spacing: -0.02em; }
 }
 .chat-input input:focus { border-color: var(--accent); }
 
+/* ── Shaxsiy xabar ───────────────────────────────────────────────────────────
+   Shaxsiy xabar OMMAVIYDAN darhol ajralib turishi shart: ustoz 40 kishilik
+   darsda "buni hamma ko'rdimi?" degan savolga bir qarashda javob topishi kerak. */
+.chat-msg__dm {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--warning);
+}
+.chat-bubble--dm {
+  border: 1px dashed var(--warning);
+  background: var(--warning-soft);
+}
+.chat-msg.self .chat-bubble--dm {
+  background: var(--warning-soft);
+  color: var(--text-bright);
+}
+
+/* Qabul qiluvchini tanlash — xabar maydonining chap tomonida. */
+.chat-to {
+  max-width: 110px;
+  background: var(--card);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  padding: 10px 8px;
+  font-size: 13px;
+  color: var(--text);
+  outline: none;
+  cursor: pointer;
+}
+.chat-to:focus { border-color: var(--accent); }
+
 /* Participant rows */
 .p-row {
   display: flex;
@@ -1169,4 +1237,186 @@ h1, h2, h3 { margin: 0; letter-spacing: -0.02em; }
   .ctrl { width: 40px; height: 40px; border-radius: var(--r-sm); }
   .leave-btn { padding: 9px 12px; font-size: 13px; gap: 6px; }
   .room__header { padding: 0 10px; }
+}
+
+/* ── Suzuvchi oyna (Document PiP) ─────────────────────────────────────────────
+   Bu uslublar PiP hujjatiga NUSXALANADI (PresenterPip.copyStyles). Oyna kichik
+   (300×400) va ustozning diqqati ulashilayotgan kontentda — shuning uchun
+   zichlik yuqori, shrift kichik, ortiqcha bezak yo'q. */
+.pip-body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+}
+.pip {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  padding: 10px;
+  gap: 10px;
+  box-sizing: border-box;
+}
+.pip__section {
+  background: var(--card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  padding: 8px 10px;
+  overflow: hidden;
+}
+.pip__section--grow { flex: 1; overflow-y: auto; }
+.pip__title {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  margin-bottom: 6px;
+}
+.pip__empty { margin: 0; font-size: 12px; color: var(--text-3); }
+.pip__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.pip__list li { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; }
+.pip__x {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--text-3);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+.pip__x:hover { color: var(--danger); }
+.pip__reactions { display: flex; flex-wrap: wrap; gap: 6px; }
+.pip__reaction {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  background: var(--elevated);
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 12px;
+}
+.pip__actions { display: flex; gap: 8px; }
+.pip__btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 9px 8px;
+  border-radius: 12px;
+  border: 1px solid var(--border-strong);
+  background: var(--elevated);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.pip__btn--danger { background: var(--danger-soft); color: var(--danger); border-color: transparent; }
+
+/* ── PiP: chat va ulashish ramkasi ──────────────────────────────────────────
+   Ramka — "ekran ulashilmoqda" belgisi (Zoom'dagi kabi). PiP oynasi har doim
+   boshqa oynalar ustida turgani uchun ustoz qaysi ilovada bo'lishidan qat'i
+   nazar ulashish davom etayotganini ko'radi. */
+.pip--sharing {
+  border: 2px dashed var(--danger);
+  border-radius: 14px;
+  animation: share-pulse 2s ease-in-out infinite;
+}
+@keyframes share-pulse {
+  0%, 100% { border-color: var(--danger); }
+  50% { border-color: rgba(239, 68, 68, 0.45); }
+}
+
+.pip__chat { display: flex; flex-direction: column; min-height: 0; }
+.pip__msgs {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 6px;
+}
+.pip__msg { display: flex; flex-direction: column; font-size: 12px; }
+.pip__msg--self { align-items: flex-end; text-align: right; }
+.pip__msg-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-3);
+}
+.pip__msg-dm {
+  color: var(--warning);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.pip__msg-body {
+  background: var(--elevated);
+  border-radius: 10px;
+  padding: 4px 8px;
+  max-width: 100%;
+  word-break: break-word;
+}
+.pip__msg--self .pip__msg-body { background: var(--accent); color: #fff; }
+.pip__reply { display: flex; gap: 5px; }
+.pip__reply input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text);
+  outline: none;
+}
+.pip__reply input:focus { border-color: var(--accent); }
+.pip__reply button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  border: none;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+
+/* ── Ekran ulashish ramkasi (asosiy oyna) ────────────────────────────────────
+   Brauzer sahifasi OS ekrani atrofiga chiza olmaydi (Zoom buni native ilova
+   bo'lgani uchun qiladi). Shuning uchun ramka ilova oynasi ichida chiziladi:
+   ustoz brauzerga qaytganda ulashish davom etayotgani darhol ko'rinadi.
+   Boshqa ilovada bo'lganda esa shu vazifani PiP oynasining ramkasi bajaradi. */
+.share-frame {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 60;
+  border: 3px dashed var(--danger);
+  border-radius: 6px;
+  animation: share-pulse 2s ease-in-out infinite;
+}
+.share-frame__tag {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--danger);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 0 0 8px 8px;
+  letter-spacing: 0.3px;
 }

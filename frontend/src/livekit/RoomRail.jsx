@@ -1,37 +1,37 @@
+import { memo } from 'react'
 import { Hand, Volume2 } from 'lucide-react'
-import { roomParticipants } from './useRoom'
 
 // Xona o'ng chekkasidagi axborot ustuni:
-//  - "Qo'l ko'targanlar" (faqat HOST ko'radi) — video ham, doska rejimida ham ko'rinadi (#3).
-//  - "Gapiryapti" — hozir kim(lar) gapirayotganini hammaga ko'rsatadi (#4).
-// room.activeSpeakers / participant.isSpeaking'dan foydalanadi; re-render useRoom bump orqali
-// (ActiveSpeakersChanged) keladi. Hech kim gapirmasa/qo'l ko'tarmasa — hech narsa ko'rsatilmaydi.
-export function RoomRail({ room, isHost, raisedHands }) {
-  const localId = room.localParticipant.identity
-  const speakers = (room.activeSpeakers || []).filter((p) => p.isSpeaking)
+//  - "Qo'l ko'targanlar" (faqat HOST ko'radi) — video ham, doska rejimida ham ko'rinadi.
+//    Tartib — KO'TARILGAN VAQT bo'yicha (Map insert tartibi): kim birinchi so'rasa,
+//    ustoz uni birinchi ko'radi. Navbat tartibi bo'lmasa "kim birinchi edi" savoli
+//    har darsda takrorlanardi.
+//  - "Gapiryapti" — hozir kim(lar) gapirayotganini hammaga ko'rsatadi.
+export const RoomRail = memo(function RoomRail({ participants, isHost, raisedHands, localId }) {
+  const speakers = participants.filter((p) => p.speaking)
 
-  // Host uchun qo'l ko'targanlar (o'zidan tashqari, faqat hali xonada bo'lganlar).
-  let raisedNames = []
-  if (isHost && raisedHands && raisedHands.size) {
-    const byId = new Map(roomParticipants(room).map((p) => [p.identity, p]))
-    raisedNames = [...raisedHands]
-      .filter((id) => id !== localId && byId.has(id))
-      .map((id) => byId.get(id).name || byId.get(id).identity)
+  // Faqat hali xonada bo'lgan va o'zimiz bo'lmagan qo'llar.
+  let raised = []
+  if (isHost && raisedHands.size) {
+    const present = new Set(participants.map((p) => p.identity))
+    raised = [...raisedHands.entries()]
+      .filter(([id]) => id !== localId && present.has(id))
+      .map(([id, h]) => ({ id, name: h.name }))
   }
 
-  if (!speakers.length && !raisedNames.length) return null
+  if (!speakers.length && !raised.length) return null
 
   return (
     <div className="room-rail">
-      {raisedNames.length > 0 && (
+      {raised.length > 0 && (
         <div className="rail-card rail-card--hand">
           <div className="rail-card__title">
             <Hand size={13} /> Qo'l ko'targanlar
           </div>
-          {raisedNames.map((name, i) => (
-            <div key={i} className="rail-row">
-              <Hand size={12} />
-              <span className="truncate">{name}</span>
+          {raised.map((r, i) => (
+            <div key={r.id} className="rail-row">
+              <span className="rail-num">{i + 1}</span>
+              <span className="truncate">{r.name}</span>
             </div>
           ))}
         </div>
@@ -50,8 +50,8 @@ export function RoomRail({ room, isHost, raisedHands }) {
                 <i />
               </span>
               <span className="truncate">
-                {p.name || p.identity}
-                {p.identity === localId ? ' (siz)' : ''}
+                {p.name}
+                {p.isLocal ? ' (siz)' : ''}
               </span>
             </div>
           ))}
@@ -59,4 +59,4 @@ export function RoomRail({ room, isHost, raisedHands }) {
       )}
     </div>
   )
-}
+})

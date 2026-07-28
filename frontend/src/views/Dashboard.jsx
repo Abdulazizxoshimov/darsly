@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Calendar, Copy, Link2, Lock, Plus, Radio, Video } from 'lucide-react'
+import { Calendar, Copy, Film, Link2, Lock, Plus, Radio, Video } from 'lucide-react'
 import { useApp } from '../store/app'
 import { useLessons } from '../store/data'
 import { Button } from '../components/Button'
@@ -84,9 +84,24 @@ function LessonCard({ lesson, isMentor }) {
       <div className="row gap-2">
         {isMentor ? (
           <>
-            <Button size="sm" className="grow" onClick={() => navigate(`/app/lesson/${lesson.id}/room`)}>
-              <Video size={16} /> {lesson.status === 'live' ? 'Davom etish' : 'Boshlash'}
-            </Button>
+            {/*
+              Yakunlangan dars xonani OCHMAYDI: server `lesson is not active` (400)
+              qaytaradi va ustoz "dars qaytadan boshlandi" deb o'ylab qolardi.
+              Uning o'rniga yozuvlar sahifasi ochiladi.
+            */}
+            {lesson.status === 'ended' ? (
+              <Button size="sm" variant="secondary" className="grow" onClick={() => navigate('/app/recordings')}>
+                <Film size={16} /> Yozuvlar
+              </Button>
+            ) : lesson.status === 'cancelled' ? (
+              <Button size="sm" variant="secondary" className="grow" disabled>
+                Bekor qilingan
+              </Button>
+            ) : (
+              <Button size="sm" className="grow" onClick={() => navigate(`/app/lesson/${lesson.id}/room`)}>
+                <Video size={16} /> {lesson.status === 'live' ? 'Davom etish' : 'Boshlash'}
+              </Button>
+            )}
             <Button size="sm" variant="secondary" onClick={copyLink} title="Havolani nusxalash">
               <Copy size={16} />
             </Button>

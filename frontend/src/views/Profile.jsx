@@ -7,6 +7,7 @@ import { Field } from '../components/Field'
 import { Button } from '../components/Button'
 import { Avatar } from '../components/Avatar'
 import { toast } from '../lib/toast'
+import { DEFAULT_LANGUAGE, DEFAULT_TIMEZONE } from '../lib/format'
 
 export function Profile() {
   const { user, setUser } = useApp()
@@ -14,15 +15,22 @@ export function Profile() {
   const changePassword = useChangePassword()
 
   const [fullName, setFullName] = useState(user?.full_name || '')
-  const [timezone, setTimezone] = useState(user?.timezone || '')
-  const [language, setLanguage] = useState(user?.language || 'uz')
   const [current, setCurrent] = useState('')
   const [next, setNext] = useState('')
 
   async function saveProfile(e) {
     e.preventDefault()
     try {
-      const updated = await updateProfile.mutateAsync({ full_name: fullName, timezone, language })
+      // Vaqt mintaqasi va til SOZLAMA emas — mahsulot butunlay o'zbekcha va
+      // O'zbekiston uchun. Avval erkin matn maydonlari bor edi: ustoz "uzbek"
+      // yoki noto'g'ri mintaqa yozib qo'ysa dars vaqtlari boshqa mintaqada
+      // ko'rsatilardi. Qiymatlar har saqlashda qat'iy yuboriladi — eski
+      // hisoblardagi "UTC" ham shu bilan tuzaladi.
+      const updated = await updateProfile.mutateAsync({
+        full_name: fullName,
+        timezone: DEFAULT_TIMEZONE,
+        language: DEFAULT_LANGUAGE,
+      })
       setUser(updated)
       toast.success('Profil saqlandi')
     } catch (err) {
@@ -57,9 +65,8 @@ export function Profile() {
         </div>
         <form onSubmit={saveProfile} className="col gap-4">
           <Field label="To'liq ism" value={fullName} onChange={(e) => setFullName(e.target.value)} minLength={2} />
-          <div className="row gap-3">
-            <Field label="Vaqt mintaqasi" value={timezone} onChange={(e) => setTimezone(e.target.value)} placeholder="Asia/Tashkent" />
-            <Field label="Til" value={language} onChange={(e) => setLanguage(e.target.value)} placeholder="uz" maxLength={8} />
+          <div className="muted" style={{ fontSize: 13 }}>
+            Dars vaqtlari Toshkent vaqtida (UTC+5) ko‘rsatiladi.
           </div>
           <div>
             <Button type="submit" loading={updateProfile.isPending}>

@@ -1,27 +1,29 @@
-import { Track } from 'livekit-client'
-import { roomParticipants } from './useRoom'
+import { memo } from 'react'
 import { ParticipantTile } from './ParticipantTile'
 
 // Gallery yoki speaker (ekran ulashilsa avtomatik speaker).
-export function Stage({ room, view, raisedHands }) {
-  const participants = roomParticipants(room)
-  const localId = room.localParticipant.identity
-
-  // Ekran ulashuvchi (agar bor bo'lsa)
-  const screenSharer = participants.find((p) => {
-    const pub = p.getTrackPublication(Track.Source.ScreenShare)
-    return pub && pub.videoTrack && !pub.isMuted
-  })
-
+// `participants` — `useRoom` snapshot'i (local birinchi). `memo`: doskadagi chizish
+// yoki chat holati o'zgarganda sahna qayta render bo'lmasin.
+export const Stage = memo(function Stage({ participants, view, raisedHands }) {
+  const screenSharer = participants.find((p) => p.screenTrack)
   const isSpeaker = view === 'speaker' || !!screenSharer
 
   if (isSpeaker) {
     const feature = screenSharer || participants[0]
-    const featureSource = screenSharer ? Track.Source.ScreenShare : Track.Source.Camera
+    if (!feature) return null
+    const showingScreen = !!screenSharer
     return (
       <div className="speaker">
         <div className="speaker__feature">
-          <ParticipantTile participant={feature} source={featureSource} isLocal={feature.identity === localId} large />
+          <ParticipantTile
+            name={feature.name}
+            track={showingScreen ? feature.screenTrack : feature.camTrack}
+            micMuted={feature.micMuted}
+            speaking={feature.speaking}
+            isLocal={feature.isLocal}
+            screen={showingScreen}
+            large
+          />
         </div>
         {participants.length > 1 && (
           <div className="filmstrip">
@@ -30,9 +32,12 @@ export function Stage({ room, view, raisedHands }) {
               .map((p) => (
                 <div className="filmstrip__tile" key={p.identity}>
                   <ParticipantTile
-                    participant={p}
+                    name={p.name}
+                    track={p.camTrack}
+                    micMuted={p.micMuted}
+                    speaking={p.speaking}
+                    isLocal={p.isLocal}
                     handRaised={raisedHands.has(p.identity)}
-                    isLocal={p.identity === localId}
                   />
                 </div>
               ))}
@@ -48,11 +53,14 @@ export function Stage({ room, view, raisedHands }) {
       {participants.map((p) => (
         <ParticipantTile
           key={p.identity}
-          participant={p}
+          name={p.name}
+          track={p.camTrack}
+          micMuted={p.micMuted}
+          speaking={p.speaking}
+          isLocal={p.isLocal}
           handRaised={raisedHands.has(p.identity)}
-          isLocal={p.identity === localId}
         />
       ))}
     </div>
   )
-}
+})

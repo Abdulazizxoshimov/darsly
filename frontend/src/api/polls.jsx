@@ -14,6 +14,7 @@ export function closePoll(pollId) {
 export function votePoll(pollId, token, option_index) {
   return api.post(`/polls/${pollId}/vote`, { token, option_index }, { auth: false })
 }
-export function pollResults(pollId) {
-  return api.get(`/polls/${pollId}/results`, { auth: false })
+// Natijalar endi ochiq EMAS — xonada bo'lganlik isboti (room-token) kerak.
+export function pollResults(pollId, token) {
+  return api.get(`/polls/${pollId}/results?token=${encodeURIComponent(token)}`, { auth: false })
 }

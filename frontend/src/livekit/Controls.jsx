@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { memo, useState } from 'react'
 import {
   BarChart3,
   Hand,
@@ -13,34 +13,42 @@ import {
   Users,
   Video,
   VideoOff,
+  Zap,
 } from 'lucide-react'
 import { toast } from '../lib/toast'
+import { SCREEN_CAPTURE } from './mediaTuning'
 
 const REACTIONS = ['👍', '👏', '❤️', '😂', '😮', '🎉', '✋']
 
-export function Controls({
+// Boshqaruv paneli. `local` — `useRoom` snapshot'i (SDK obyektini render paytida
+// o'qimaymiz), `room` esa faqat amal bajarish uchun kerak — uning identiteti barqaror,
+// shuning uchun `memo` ishlaydi: sahnadagi o'zgarish panelni qayta render qilmaydi.
+export const Controls = memo(function Controls({
   room,
+  local,
   isHost,
+  recording,
+  onToggleRecord,
   panel,
   setPanel,
   handRaised,
   onToggleHand,
   onReaction,
-  recording,
-  onToggleRecord,
   onLeave,
   unreadChat,
   waitingCount,
   raisedHandsCount = 0,
   whiteboardOn,
   onToggleBoard,
+  dataSaver,
+  onToggleDataSaver,
 }) {
   const [reactOpen, setReactOpen] = useState(false)
   const lp = room.localParticipant
-  const canPublish = lp.permissions?.canPublish ?? isHost
-  const micOn = lp.isMicrophoneEnabled
-  const camOn = lp.isCameraEnabled
-  const screenOn = lp.isScreenShareEnabled
+  const canPublish = local?.canPublish ?? isHost
+  const micOn = !!local?.micOn
+  const camOn = !!local?.camOn
+  const screenOn = !!local?.screenOn
 
   async function toggleMic() {
     if (!canPublish) return toast.info('Ustoz gapirishga ruxsat bermagan')
@@ -67,7 +75,9 @@ export function Controls({
       return toast.error("Ekran ulashish telefon/planshetda ishlamaydi — kompyuterda oching yoki 'Doska'dan foydalaning")
     }
     try {
-      await lp.setScreenShareEnabled(!screenOn)
+      // SCREEN_CAPTURE: ovoz bilan + `contentHint: 'text'` (matn keskinligi uchun).
+      // Sifat/qatlam sozlamalari `PUBLISH_DEFAULTS` da — ikkalasi `mediaTuning.js` da.
+      await lp.setScreenShareEnabled(!screenOn, screenOn ? undefined : SCREEN_CAPTURE)
     } catch (e) {
       // Foydalanuvchi tanlash oynasini bekor qilsa — bu xato emas, jim o'tamiz.
       if (e?.name === 'NotAllowedError' || /permission|denied|cancel/i.test(e?.message || '')) return
@@ -116,6 +126,19 @@ export function Controls({
         <Hand size={20} />
       </Ctrl>
 
+      {/*
+        Tejamkor rejim — zaif internet uchun. Kirish KAMERA oqimlari uziladi;
+        ekran ulashish va ovoz qoladi, ya'ni darsning mazmuni saqlanadi.
+        Ustozga ham kerak: 30 ta o'quvchi kamerasi uning yuklama kanalini yeydi.
+      */}
+      <Ctrl
+        label={dataSaver ? 'Tejamkor rejim yoqilgan' : 'Tejamkor rejim'}
+        onClick={onToggleDataSaver}
+        on={dataSaver}
+      >
+        <Zap size={20} />
+      </Ctrl>
+
       <div className="ctrl-sep" />
 
       <Ctrl
@@ -139,8 +162,13 @@ export function Controls({
         </Ctrl>
       )}
 
+      {/*
+        Yozib olish odatda SERVER tomonidan avtomatik boshlanadi (default yoniq,
+        `track_published` webhook'i → `recording.EnsureForRoom`). Bu tugma chekka
+        holatlar uchun: dars o'rtasida to'xtatish yoki avtomatik boshlash ishlamagan bo'lsa.
+      */}
       {isHost && (
-        <Ctrl label={recording ? 'Yozilmoqda' : 'Yozib olish'} onClick={onToggleRecord} on={recording} danger={recording}>
+        <Ctrl label={recording ? 'Yozilmoqda — to‘xtatish' : 'Yozib olish'} onClick={onToggleRecord} on={recording} danger={recording}>
           <Radio size={20} />
         </Ctrl>
       )}
@@ -150,14 +178,14 @@ export function Controls({
       </button>
     </div>
   )
-}
+})
 
 function Ctrl({ children, label, onClick, active, on, danger, disabled, badge }) {
   const cls = ['ctrl', on ? 'ctrl--on' : danger ? 'ctrl--danger' : active ? 'ctrl--active' : '']
     .filter(Boolean)
     .join(' ')
   return (
-    <button className={cls} onClick={onClick} disabled={disabled} title={label}>
+    <button className={cls} onClick={onClick} disabled={disabled} title={label} aria-label={label}>
       {children}
       {badge !== undefined && <span className="ctrl__badge">{badge}</span>}
     </button>

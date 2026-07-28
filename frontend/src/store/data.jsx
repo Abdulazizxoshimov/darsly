@@ -127,11 +127,11 @@ export function useMarkAllRead() {
 export function usePolls(lessonId) {
   return useQuery({ queryKey: ['polls', lessonId], queryFn: () => pollsApi.listPolls(lessonId), enabled: !!lessonId })
 }
-export function usePollResults(pollId, opts = {}) {
+export function usePollResults(pollId, token, opts = {}) {
   return useQuery({
     queryKey: ['poll-results', pollId],
-    queryFn: () => pollsApi.pollResults(pollId),
-    enabled: !!pollId && (opts.enabled ?? true),
+    queryFn: () => pollsApi.pollResults(pollId, token),
+    enabled: !!pollId && !!token && (opts.enabled ?? true),
     refetchInterval: opts.refetchInterval,
   })
 }
