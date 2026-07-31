@@ -3,6 +3,8 @@
 SERVER-CREDENTIALS.txt
 livekit.yaml
 livekit.yaml.bak
+# Prometheus scrape tokeni (`remote-setup.sh` yasaydi) — SIR.
+observability/metrics_token
 www/
 # Yuklab olish uchun binarlar (APK) — katalog o'zi va izohi qoladi.
 dl/*

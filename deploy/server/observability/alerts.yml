@@ -1,0 +1,80 @@
+# Ogohlantirish qoidalari.
+#
+# Maqsad — "hammasini o'lchash" emas, DARSNI BUZADIGAN holatlarni tutish.
+# Har bir qoidada: nima buzilgan va foydalanuvchi buni qanday sezadi.
+#
+# ⚠️ Metrika nomlari `backend/internal/pkg/metrics/metrics.go` bilan AYNAN mos
+# bo'lishi shart. Mavjud bo'lmagan metrikaga yozilgan qoida hech qachon
+# ishlamaydi va buni hech kim sezmaydi — ya'ni "alert bor" degan yolg'on
+# xotirjamlik beradi. Loyiha prefiksi: `darsly_*` (HTTP metrikalari prefiksiz).
+groups:
+  - name: darsly-availability
+    rules:
+      - alert: BackendDown
+        expr: up{job="darsly-backend"} == 0
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "Backend javob bermayapti"
+          description: >-
+            Prometheus 1 daqiqadan beri backend'ni scrape qila olmayapti.
+            Foydalanuvchi uchun bu: kirish ham, darsga qo'shilish ham ishlamaydi.
+
+      - alert: HighErrorRate
+        # 5xx ulushi 5% dan oshsa. 4xx QO'SHILMAYDI — ular odatda klient
+        # xatosi (noto'g'ri parol, muddati o'tgan token) va ular bo'yicha
+        # ogohlantirish doimiy shovqin bo'lardi.
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[5m]))
+            / sum(rate(http_requests_total[5m])) > 0.05
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "5xx xatolar ulushi yuqori"
+          description: "So'rovlarning 5% dan ortig'i server xatosi bilan tugayapti."
+
+      - alert: SlowRequests
+        # p95 > 2s. Dars boshlanishida token/joinlink sekin bo'lsa
+        # foydalanuvchi "ilova osilib qoldi" deb qabul qiladi.
+        expr: |
+          histogram_quantile(
+            0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le)
+          ) > 2
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "So'rovlar sekin (p95 > 2s)"
+
+  - name: darsly-video
+    rules:
+      - alert: LiveKitErrorsSpike
+        # Token berish / xona yaratish nosozliklari. Bu ko'tarilsa DARSGA
+        # KIRIB BO'LMAYDI, lekin API sog'lom ko'rinadi (HTTP 200 lar oqadi) —
+        # aynan shu "jimgina buzilish" turi uchun alohida qoida kerak.
+        expr: sum(rate(darsly_livekit_errors_total[5m])) > 0.1
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "LiveKit xatolari ko'paydi — darsga kirish buzilgan bo'lishi mumkin"
+          description: "Operatsiyalar bo'yicha: {{ $labels.op }}"
+
+      - alert: RecordingsFailing
+        # Yozuv nosozligi DARHOL sezilmaydi: ustoz dars tugagach, yozuvni
+        # izlaganda biladi — ya'ni tuzatish uchun kech bo'ladi. Shuning uchun
+        # buni odam emas, alert topishi kerak.
+        expr: sum(rate(darsly_egress_results_total{result="failed"}[15m])) > 0
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "Yozuvlar muvaffaqiyatsiz tugayapti (egress failed)"
+
+  - name: darsly-infra
+    rules:
+      - alert: PrometheusTargetMissing
+        # Scrape maqsadi yo'qolishi konfiguratsiya/tarmoq muammosini bildiradi.
+        # Busiz butun kuzatuv jimgina o'chib qolishi mumkin edi.
+        expr: up == 0
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Scrape maqsadi yo'qoldi: {{ $labels.job }}"

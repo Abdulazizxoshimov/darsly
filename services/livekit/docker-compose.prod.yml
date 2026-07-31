@@ -1,3 +1,7 @@
+# ⚠️ ESKIRGAN (M17) — kanonik deployment `deploy/server/` (qarang `deploy/README.md`).
+# Bu fayl domenli muqobil variantning bo'lagi; ishlab turgan serverda
+# ishlatilmaydi (kanonik stack LiveKit'ni o'z ichida ko'taradi).
+
 # LiveKit — PRODUCTION deployment (yomon internet / NAT / korporativ firewall uchun).
 #
 # A1.4 — Bu stack butun platformaning YAGONA edge reverse-proxy'sini (Caddy, 80/443)

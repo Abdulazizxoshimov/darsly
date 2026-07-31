@@ -1,0 +1,35 @@
+# LOKAL to'liq stack (yozib olish BILAN): host-tarmoqdagi LiveKit.
+#
+# Nega host-net: bridge rejimda LiveKit konteyner IP'sini e'lon qiladi va LAN'dagi
+# qurilmalar (planshet/telefon) media portlariga yeta olmaydi. Host-net'da xostning
+# barcha IP'lari (shu jumladan hotspot IP) e'lon qilinadi — qurilmalar to'g'ridan-
+# to'g'ri ulanadi. `docker-compose.local.yml` bilan ishlatiladi.
+port: 7880
+bind_addresses:
+  - "0.0.0.0"
+
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 60000
+  use_external_ip: false
+
+turn:
+  enabled: true
+  udp_port: 3478
+
+keys:
+  devkey: secret_at_least_32_characters_long_000000
+
+# Egress bilan aloqa uchun Redis — host portga chiqarilgan (6380 → konteyner 6379).
+redis:
+  address: 127.0.0.1:6380
+
+# Yozuv hodisalari backend'ga (xostning o'zida, 8087).
+webhook:
+  api_key: devkey
+  urls:
+    - http://127.0.0.1:8087/api/v1/webhooks/livekit
+
+logging:
+  level: info

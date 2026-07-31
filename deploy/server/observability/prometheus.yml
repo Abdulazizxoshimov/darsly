@@ -1,0 +1,32 @@
+# Prometheus — darsly production scrape konfiguratsiyasi.
+#
+# Auditda (M16) topilgan holat: kod `/metrics` ni ochib bergan va Prometheus
+# middleware'i o'lchovlarni yig'ib turgan, lekin ISHLAYOTGAN serverda ularni
+# hech kim SO'RAMAGAN. Ya'ni metrikalar bor edi, kuzatuv yo'q edi: incident
+# paytida "nima bo'ldi" degan savolga javob beradigan manba mavjud emasdi.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    env: production
+    service: darsly
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  - job_name: darsly-backend
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["backend:8080"]
+    # `/metrics` production'da token bilan himoyalangan (`METRICS_TOKEN`),
+    # aks holda endpoint ichki topologiyani autentifikatsiyasiz oshkor qilardi.
+    # Fayl `remote-setup.sh` tomonidan sir bilan birga yaratiladi.
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/metrics_token
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

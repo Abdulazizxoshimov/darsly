@@ -35,6 +35,8 @@ if [[ ! -f .env ]]; then
   MINIO_SECRET_KEY="$(gen 20)"
   JWT_SECRET="$(gen 32)"                 # 64 hex belgi
   LIVEKIT_API_SECRET="$(gen 24)"         # 48 hex belgi
+  METRICS_TOKEN="$(gen 24)"              # /metrics scrape tokeni (M16)
+  GRAFANA_PASSWORD="$(gen 12)"           # Grafana admin (SSH tunnel ortida)
 
   cat > .env <<EOF
 # AVTOMATIK YASALGAN — serverda qoladi, git'ga tushmaydi.
@@ -42,7 +44,9 @@ APP_PORT=8080
 APP_ENV=production
 LOG_LEVEL=info
 FRONTEND_BASE_URL=https://${APP_HOST}
-ALLOW_OPEN_REGISTRATION=true
+# Ochiq ro'yxatdan o'tish O'CHIQ: mentor hisoblarini admin ochadi (users CRUD,
+# seed-admin bilan kiriladi). Ochiq registratsiya spam/begona hisoblar manbai edi.
+ALLOW_OPEN_REGISTRATION=false
 SEED_ADMIN_EMAIL=admin@darsly.uz
 SEED_ADMIN_PASSWORD=$(gen 16)   # xavfsizlik K-1: qattiq yozilgan parol o'rniga generatsiya
 
@@ -76,12 +80,17 @@ MINIO_PUBLIC_USE_SSL=true
 
 JWT_SECRET=${JWT_SECRET}
 JWT_ACCESS_TTL=15m
-JWT_REFRESH_TTL=720h
+# 14 kun (avval 30). Refresh brauzerda localStorage'da yashaydi — XSS uni
+# o'g'irlasa token TTL tugagunicha ishlaydi. Backend default'i bilan mos
+# (`internal/pkg/config/config.go`).
+JWT_REFRESH_TTL=336h
 
 EMAIL_ENABLED=false
 SMTP_FROM=noreply@darsly.uz
 
 LIVEKIT_HOST=wss://${LK_HOST}
+# Klientlarga beriladigan manzil oshkora — backend ichki yo'lga o'tsa ham klientlar buzilmaydi.
+LIVEKIT_CLIENT_WS_URL=wss://${LK_HOST}
 LIVEKIT_API_KEY=darslykey
 LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET}
 LIVEKIT_WEBHOOK_API_KEY=darslykey
@@ -89,10 +98,33 @@ LIVEKIT_WEBHOOK_API_KEY=darslykey
 TRUSTED_PROXIES=172.16.0.0/12,10.0.0.0/8,192.168.0.0/16
 RATE_LIMIT_RPS=30
 RATE_LIMIT_BURST=60
+
+# Dars avto-yakuni (PRODUCT.md «Dars hayoti»): 4 soatlik texnik limit va
+# xona bo'shagach 20 daqiqadan keyin yakunlash. Mentor "Yakunlash"ni bosmasa ham
+# dars osilib qolmaydi (egress/CPU bekorga band bo'lmaydi).
+LESSON_MAX_DURATION=4h
+LESSON_EMPTY_GRACE=20m
+LESSON_SWEEP_INTERVAL=1m
+
+# Yozuvlar retention (PRODUCT.md №5): 30 kun saqlanadi, o'chishdan 3 kun oldin
+# mentorga bildirishnoma. Busiz 145 GB disk bir necha oyda to'lardi.
+RECORDING_RETENTION_DAYS=30
+RECORDING_RETENTION_WARN_DAYS=3
+RECORDING_RETENTION_INTERVAL=1h
+
+# Kuzatuv (M16). METRICS_TOKEN bo'sh bo'lsa production'da /metrics UMUMAN
+# yoqilmaydi (api/router.go) — ya'ni endpoint hech qachon himoyasiz qolmaydi.
+METRICS_TOKEN=${METRICS_TOKEN}
+GRAFANA_PASSWORD=${GRAFANA_PASSWORD}
 EOF
   echo ">> .env yasaldi."
 else
   echo ">> .env allaqachon bor — tegilmadi (sirlar saqlanadi)."
+  # Eski .env da yangi kalitlar bo'lmasligi mumkin — yetishmayotganini qo'shamiz
+  # (mavjud sirlarga TEGMASDAN). Busiz eski serverda Grafana ko'tarilmasdi va
+  # Prometheus 401 olardi.
+  grep -q '^METRICS_TOKEN=' .env || echo "METRICS_TOKEN=$(gen 24)" >> .env
+  grep -q '^GRAFANA_PASSWORD=' .env || echo "GRAFANA_PASSWORD=$(gen 12)" >> .env
   # Keyin qo'shilgan sozlamalar mavjud serverga ham yetib borishi kerak.
   ensure_env MINIO_PUBLIC_ENDPOINT "${FILES_HOST}"
   ensure_env MINIO_PUBLIC_USE_SSL   true
@@ -105,7 +137,26 @@ else
   ensure_env APP_ANDROID_LATEST_VERSION 1.0.0
   ensure_env APP_ANDROID_APK_URL        "https://${APP_HOST}/download/darsly-mentor.apk"
   ensure_env APP_ANDROID_FORCE_UPDATE   false
+  # Dars avto-yakuni va yozuvlar retention'i (2-hafta). Mavjud serverda ham
+  # yoqilishi kerak: busiz osilgan darslar va cheksiz o'sadigan yozuv arxivi qoladi.
+  ensure_env LESSON_MAX_DURATION            4h
+  ensure_env LESSON_EMPTY_GRACE             20m
+  ensure_env LESSON_SWEEP_INTERVAL          1m
+  ensure_env RECORDING_RETENTION_DAYS       30
+  ensure_env RECORDING_RETENTION_WARN_DAYS  3
+  ensure_env RECORDING_RETENTION_INTERVAL   1h
 fi
+
+# ── Kuzatuv sirlari (M16) ────────────────────────────────────────────────────
+# Prometheus scrape tokenini FAYL sifatida beradi (`credentials_file`), chunki
+# uni prometheus.yml ichiga yozish sirni git-tracked konfiguratsiyaga
+# olib kirardi. Fayl faqat serverda yashaydi.
+echo ">> Prometheus scrape tokeni yozilyapti..."
+MT="$(grep '^METRICS_TOKEN=' .env | cut -d= -f2-)"
+[[ -n "$MT" ]] || { echo "!! .env da METRICS_TOKEN yo'q"; exit 1; }
+mkdir -p observability
+printf '%s' "$MT" > observability/metrics_token
+chmod 600 observability/metrics_token
 
 # ── livekit.yaml — HAR SAFAR shablondan qayta yasaladi ────────────────────────
 # LiveKit config fayli ${ENV} ni KENGAYTIRMAYDI (empirik tasdiqlangan), shu sabab

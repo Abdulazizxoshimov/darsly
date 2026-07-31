@@ -24,6 +24,39 @@ app.194.163.139.242.sslip.io {
 	# SPA (Vite build). Klient-side routing uchun index.html fallback.
 	handle {
 		root * /srv
+
+		# ── Xavfsizlik sarlavhalari (M5) ────────────────────────────────────
+		#
+		# Nega bu yerda: backend'da `SecurityHeaders()` middleware'i bor, lekin u
+		# FAQAT /api/* javoblariga tegadi. HTML hujjatni esa Caddy to'g'ridan-to'g'ri
+		# /srv dan beradi — ya'ni brauzer ko'radigan ASOSIY sahifa hech qanday
+		# himoyasiz kelardi. Clickjacking va XSS to'sig'i aynan hujjat darajasida
+		# ishlaydi, JSON javoblarida emas.
+		#
+		# ⚠️ DIQQAT — Permissions-Policy: backend'dagi qiymat `camera=(), microphone=()`,
+		# ya'ni HAMMASI taqiqlangan. Uni bu yerga KO'CHIRIB BO'LMAYDI: hujjat
+		# darajasida u kamera/mikrofonni butunlay o'chiradi va dars umuman
+		# ishlamaydi. Shuning uchun bu yerda `(self)` — o'z originimizga ruxsat.
+		header {
+			Strict-Transport-Security "max-age=31536000; includeSubDomains"
+			X-Content-Type-Options "nosniff"
+			Referrer-Policy "strict-origin-when-cross-origin"
+			Permissions-Policy "camera=(self), microphone=(self), display-capture=(self), geolocation=()"
+			# frame-ancestors 'none' — X-Frame-Options DENY ning zamonaviy varianti
+			# (ikkalasi ham qo'yiladi: eski brauzerlar CSP'ni tushunmaydi).
+			X-Frame-Options "DENY"
+			# CSP manbalari (har biri build'dan tekshirilgan):
+			#   script-src  — Vite build'da INLINE skript yo'q (dist/index.html tekshirildi),
+			#                 shuning uchun 'unsafe-inline' KERAK EMAS. 'wasm-unsafe-eval'
+			#                 esa LiveKit codec WASM'i uchun zarur.
+			#   worker-src  — pdf.js worker'i o'z assetimiz; blob: pdf.js fallback'i uchun.
+			#   style/font  — index.html Google Fonts'ni tashqaridan yuklaydi.
+			#   img/media   — doska PDF sahifalarini dataURL, video esa blob sifatida beradi.
+			#   connect-src — API/WS o'z originimizda; LiveKit signaling va MinIO
+			#                 yozuvlari alohida subdomenlarda.
+			Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' blob: wss://livekit.194.163.139.242.sslip.io https://files.194.163.139.242.sslip.io; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+		}
+
 		# Hash'li assetlar — abadiy keshlanadi (fayl nomi kontent bilan o'zgaradi).
 		@static path /assets/*
 		header @static Cache-Control "public, max-age=31536000, immutable"

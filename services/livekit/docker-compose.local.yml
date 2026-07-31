@@ -1,0 +1,44 @@
+# LOKAL to'liq video stack: LiveKit (host-net, LAN qurilmalari uchun) + Egress (yozib olish).
+#
+#   docker compose -f docker-compose.local.yml up -d
+#
+# Asosiy docker-compose.yml'dan farqi:
+#  · livekit host-tarmoqda (planshet/telefon media to'g'ridan-to'g'ri oqadi);
+#  · webhook 127.0.0.1:8087 (xostdagi backend) ga boradi;
+#  · egress har doim yoqiq (profil shart emas) — yozib olish lokalda ham sinaladi.
+# Backend .env: MINIO_S3_ENDPOINT=http://172.17.0.1:9020 bo'lishi shart.
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: darsly-lk-redis
+    restart: unless-stopped
+    ports:
+      - "6380:6379" # host-tarmoqdagi LiveKit shu orqali kiradi
+
+  livekit:
+    image: livekit/livekit-server:latest
+    container_name: darsly-lk
+    restart: unless-stopped
+    network_mode: host
+    command: --config /etc/livekit.yaml
+    depends_on:
+      - redis
+    volumes:
+      - ./livekit.local.yaml:/etc/livekit.yaml:ro
+
+  egress:
+    image: livekit/egress:latest
+    container_name: darsly-egress
+    restart: unless-stopped
+    depends_on:
+      - redis
+      - livekit
+    environment:
+      EGRESS_CONFIG_FILE: /etc/egress.yaml
+    volumes:
+      - ./egress.local.yaml:/etc/egress.yaml:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    cap_add:
+      - SYS_ADMIN

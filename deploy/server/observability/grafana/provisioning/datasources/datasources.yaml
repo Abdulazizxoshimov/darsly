@@ -1,0 +1,20 @@
+apiVersion: 1
+
+# Ikkala manba ham kerak: Prometheus "qancha/qanchalik tez" savoliga,
+# Loki esa "aynan nima bo'ldi" savoliga javob beradi. Incident paytida
+# odatda birinchisidan ikkinchisiga o'tiladi.
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+
+  - name: Loki
+    uid: loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    editable: false

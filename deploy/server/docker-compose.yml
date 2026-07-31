@@ -21,6 +21,9 @@ volumes:
   darsly_minio:
   darsly_caddy_data:
   darsly_caddy_config:
+  darsly_prometheus:
+  darsly_grafana:
+  darsly_loki:
 
 services:
   postgres:
@@ -91,6 +94,16 @@ services:
       minio: {condition: service_healthy}
     networks: [darsly_net]
     expose: ["8080"]
+    # Backend YAGONA healthcheck'siz servis edi: konteyner "up" ko'rinardi,
+    # lekin ichida migratsiya yiqilgan yoki DB'ga ulanmagan bo'lishi mumkin edi.
+    # `/ready` aynan bog'liqliklarni (PG/Redis) tekshiradi, `/health` esa faqat
+    # jarayon tirikligini — shuning uchun bu yerda `/ready`.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8080/ready || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
 
   caddy:
     image: caddy:2-alpine
@@ -165,3 +178,63 @@ services:
       - SYS_ADMIN
     # Chrome headless /dev/shm ni to'ldiradi → tab crash. 1G yetarli.
     shm_size: "1gb"
+
+  # ── Kuzatuv (M16) ───────────────────────────────────────────────────────────
+  #
+  # Auditgacha ishlayotgan serverda kuzatuv NOL edi: metrikalar kodda bor edi,
+  # lekin ularni hech kim so'ramasdi va hech qanday ogohlantirish yo'q edi.
+  # Incident paytida yagona manba — `docker logs` bo'lardi.
+  #
+  # Hammasi ICHKI tarmoqda: port tashqariga chiqarilmaydi. Kirish uchun SSH
+  # tunnel ishlatiladi (`ssh -L 3030:localhost:3030 ...`), chunki Grafana'ni
+  # internetga ochish yana bitta autentifikatsiya yuzasi degani.
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: darsly-prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # 15 kun — VPS diski 145 GB va yozuvlar (MinIO) bilan bo'lishiladi.
+      - --storage.tsdb.retention.time=15d
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/alerts.yml:/etc/prometheus/alerts.yml:ro
+      # Scrape tokeni — `remote-setup.sh` .env bilan birga yaratadi.
+      - ./observability/metrics_token:/etc/prometheus/metrics_token:ro
+      - darsly_prometheus:/prometheus
+    networks: [darsly_net]
+    depends_on: [backend]
+
+  loki:
+    image: grafana/loki:2.9.0
+    container_name: darsly-loki
+    restart: unless-stopped
+    command: -config.file=/etc/loki/loki-config.yaml
+    volumes:
+      - ./observability/loki-config.yaml:/etc/loki/loki-config.yaml:ro
+      - darsly_loki:/loki
+    networks: [darsly_net]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3100/ready || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: darsly-grafana
+    restart: unless-stopped
+    # FAQAT localhost'ga bog'lanadi — SSH tunnel orqali kiriladi.
+    ports:
+      - "127.0.0.1:3030:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?GRAFANA_PASSWORD kerak}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/etc/grafana/dashboards:ro
+      - darsly_grafana:/var/lib/grafana
+    networks: [darsly_net]
+    depends_on: [prometheus]

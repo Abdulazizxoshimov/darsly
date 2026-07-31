@@ -57,10 +57,13 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      # Versiya ANIQ pin qilingan. `latest` bilan konfiguratsiya formati
+      # major yangilanishda mos kelmay qolardi va lint bosqichi kod
+      # o'zgarmasa ham bir kuni yiqilardi (`.golangci.yml` izohiga qara).
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
-          version: latest
+          version: v2.1.6
           working-directory: backend
           args: --timeout=5m
 
@@ -88,6 +91,12 @@ jobs:
 
       - name: Install
         run: npm ci
+
+      # Frontend'da lint UMUMAN yo'q edi: ishlatilmagan o'zgaruvchi, yetishmayotgan
+      # hook bog'liqligi (eng ko'p uchraydigan React xatosi manbai) va o'lik kod
+      # hech kim tomonidan tutilmasdi.
+      - name: Lint
+        run: npm run lint
 
       # Birlik + komponent testlari (vitest). Avval CI faqat build qilardi —
       # ya'ni xona mantig'idagi regressiya CI'dan bemalol o'tib ketardi.
