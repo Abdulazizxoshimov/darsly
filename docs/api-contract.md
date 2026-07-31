@@ -68,6 +68,20 @@ TIRIK sessiya ichida ishlaydi, tugatilgan sessiyani tiriltirmaydi.
 | GET | `/lessons/:id/waitingroom` | auth(mentor) | `[WaitingRoomRequest]` |
 | POST | `/waitingroom/:id/admit` | auth(mentor) | `RoomToken` |
 | POST | `/waitingroom/:id/reject` | auth(mentor) | 204 |
+| POST | `/lessons/:id/waitingroom/admit-all` | auth(mentor) | `AdmitAllResp` |
+
+> **«Hammasini kiritish»** (`admit-all`) — tanasi YO'Q. Butun navbat bitta so'rovda
+> hal bo'ladi: avval N ta alohida `admit` yuborilardi va sekin internetda ustoz
+> ro'yxatning yarmi kirib yarmi kirmagan holatni ko'rardi.
+>
+> **Qisman muvaffaqiyat NORMAL:** har so'rov mustaqil, atomik olinadi. Javob
+> **har doim 200** (navbat bo'sh bo'lsa ham — `{total:0,admitted:0,failed:0}`,
+> tugma bloklanmasin), sonlar esa rostini aytadi. Ro'yxat o'qilgandan keyin
+> alohida admit/reject qilingan so'rov o'tkazib yuboriladi (dublikat token yo'q).
+> Begona mentor → **403**, yaroqsiz/mavjud emas dars ID → **404**.
+>
+> Har bir kiritilgan guest tokenni odatdagi yo'l bilan oladi: WS
+> `waiting_room.admitted` yoki `GET /waitingroom/:id/status`.
 
 ## Lessons (himoyalangan)
 | POST | `/lessons` | `CreateLessonReq` | 201 `Lesson` |
@@ -109,6 +123,18 @@ TIRIK sessiya ichida ishlaydi, tugatilgan sessiyani tiriltirmaydi.
 > qilinadi (o'quvchi o'zini ocholmaydi). `mute-all` body'sidagi
 > `allow_self_unmute` bayroqni bir yo'la yangilaydi (Zoom checkbox'i);
 > bayroqni `PATCH /lessons/:id` bilan ham jonli o'zgartirsa bo'ladi.
+>
+> **Siyosatni endi SERVER e'lon qiladi (klient emas).** Avval `kind:"policy"`
+> data-message'ini faqat web ustoz klienti yuborardi — mobil ustoz hech narsa
+> yubormasdi va telefondan o'tilgan darsda o'quvchining mikrofon tugmasi yolg'on
+> ko'rsatardi (yoqadi, server jimgina qayta mute qiladi). Uch manba:
+> - `POST /lessons/:id/mute-all` dan keyin server xonaga tarqatadi:
+>   `{"kind":"policy","mute_on_entry":<bool>,"allow_self_unmute":<bool>}`;
+> - `LessonPublic` (joinlink preview/join javobi) — kirish paytidagi qiymat;
+> - `GET /rooms/:lessonID/state` — kech ulangan/qayta ulangan klient uchun.
+>
+> Bu maydonlar faqat **UI ko'rsatkichi**; haqiqiy chegara baribir server
+> webhook'ida qo'llanadi.
 >
 > **Ban tanlovi (№4).** `remove` da `scope:"mentor"` — ishtirokchi mentorning
 > HAMMA darslaridan doimiy bloklanadi (`mentor_blocklist`; moslik ko'rsatilgan
@@ -170,15 +196,19 @@ ko'rsatadi. Muddat o'tgach fon ishchisi faylni MinIO'dan o'chiradi va status
 ## Model shakllari (JSON tag)
 - **User**: `{id,email,full_name,avatar_url?,color,role,timezone,language,is_active,last_login_at?,created_at,updated_at}`
 - **Lesson**: `{id,mentor_id,title,description?,scheduled_at?,duration_min,recurrence_rule?,join_slug,has_passcode,is_locked,is_recording_enabled,is_waiting_room_enabled,mute_on_entry,allow_self_unmute,status,started_at?,ended_at?,created_at,updated_at}`; status: `scheduled|live|ended|cancelled`
-- **CreateLessonReq**: `{title,description?,scheduled_at?,duration_min?,recurrence_rule?,passcode?,is_recording_enabled,is_waiting_room_enabled,mute_on_entry?,allow_self_unmute?}` (mute_on_entry/allow_self_unmute berilmasa server default'i **true**)
+- **CreateLessonReq**: `{title,description?,scheduled_at?,duration_min?,recurrence_rule?,passcode?,is_recording_enabled,is_waiting_room_enabled,mute_on_entry?,allow_self_unmute?}` (mute_on_entry/allow_self_unmute berilmasa server default'i **true**;
+  `is_waiting_room_enabled` berilmasa **false** — PRODUCT.md «Kutish xonasi: default o'chiq».
+  Bu qiymat avval uch joyda zid edi: DB ustuni `TRUE`, web `true`, mobil `false` —
+  endi qaror faqat serverda)
 - **UpdateLessonReq**: `{title?,description?,scheduled_at?,duration_min?,passcode?,remove_passcode?,is_locked?,is_recording_enabled?,is_waiting_room_enabled?,mute_on_entry?,allow_self_unmute?,status?}`
 - **RoomToken**: `{token,ws_url,room_name,identity,role}`; role: `host|participant`
 - **RoomParticipant**: `{identity,name,joined_at_ms,active,audio_muted,video_muted}`
-- **LessonPublic**: `{id,title,mentor_name,scheduled_at?,status,has_passcode,is_waiting_room_enabled}`
+- **LessonPublic**: `{id,title,mentor_name,scheduled_at?,status,has_passcode,is_waiting_room_enabled,mute_on_entry,allow_self_unmute}`
 - **JoinLessonResp**: `{lesson:LessonPublic,next_step:"waiting_room"|"join"|"lesson_ended",room?:RoomToken,request_id?}`
 - **BlocklistEntry**: `{id,identity,display_name,created_at}`
 - **WaitingRoomRequest**: `{id,lesson_id,requester_name,status,created_at,decided_at?}`
 - **WaitingRoomStatusResp**: `{request_id,status:"pending"|"admitted"|"rejected",room?:RoomToken}`
+- **AdmitAllResp**: `{total,admitted,failed}` — `failed = total - admitted` (qisman muvaffaqiyat)
 - **ChatMessage**: `{id,lesson_id,sender_identity,sender_name,body,created_at,to_identity?,file?}`
 - **ChatFile** (`ChatMessage.file`): `{name,size,mime,url,expires_in_s}` — `url` presigned (1 soat), HAR javobda qayta imzolanadi (bazada saqlanmaydi)
 - **Poll**: `{id,lesson_id,question,options[],is_active,created_at,closed_at?,results_visibility,results_published_at?}`; `results_visibility`: `mentor_only|public`
@@ -196,17 +226,24 @@ Token'ning xonasi dars bilan mos kelishi shart. Token yo'q/yaroqsiz → **401**.
 |---|---|---|---|---|
 | POST | `/api/v1/rooms/:lessonID/hand` | room-token | `{token, raised}` | 204 |
 | POST | `/api/v1/rooms/:lessonID/reaction` | room-token | `{token, emoji}` | 204 · 400 (ruxsatsiz emoji) · 429 (10 s da 5) |
-| GET | `/api/v1/rooms/:lessonID/state` | room-token | `?token=` | `{data:{hands:[{identity,name,raised_at}]}}` |
+| GET | `/api/v1/rooms/:lessonID/state` | room-token | `?token=` | `{data:RoomState}` |
 | POST | `/api/v1/lessons/:id/hands/lower` | JWT (mentor) | `{identity}` | 204 |
 | POST | `/api/v1/lessons/:id/hands/lower-all` | JWT (mentor) | — | 204 |
 
+**RoomState**: `{hands:[{identity,name,raised_at}],recording,mute_on_entry,allow_self_unmute}`
+
 `hands` — **ko'tarilgan vaqt bo'yicha tartiblangan** (navbat serverda hisoblanadi).
+`mute_on_entry`/`allow_self_unmute` — darsning joriy ovoz siyosati: kech ulangan
+yoki qayta ulangan klient `mute-all` data-message'ini o'tkazib yuborgan bo'lsa
+uni FAQAT shu yerdan tiklaydi. Dars o'qib bo'lmasa ruxsat beruvchi qiymat
+qaytadi (`allow_self_unmute:true`) — mavjud bo'lmagan taqiqni ko'rsatmaslik uchun.
 Real-vaqt yetkazish: server → LiveKit data-channel → barcha klientlar:
 
 ```jsonc
 {"kind":"hand","identity":"…","name":"…","raised":true,"at":1730000000000}
 {"kind":"hand","act":"lower_all"}
 {"kind":"reaction","emoji":"👍","name":"Ali","identity":"…"}  // identity — o'z echo'sini filtrlash uchun
+{"kind":"policy","mute_on_entry":true,"allow_self_unmute":false}  // SERVERDAN (mute-all dan keyin)
 ```
 
 **Reaksiyalar (№14)** — server hech nima SAQLAMAYDI (efemer), faqat tarqatadi.

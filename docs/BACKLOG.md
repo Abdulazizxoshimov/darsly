@@ -39,10 +39,17 @@ Qolgani: Telegram-bot eslatmalari, staging yangilash + jonly.uz, pilot onboardin
 
 ## 🔴 Bloklovchi — server qaytishini kutadi
 
-Contabo VPS `194.163.139.242` **muddati tugagan / o'chirilgan** (2026-07-28:
-ICMP, 22, 443 — hammasi jim). Quyidagilar server tiklanmaguncha bajarilmaydi.
+~~Contabo VPS `194.163.139.242` o'chgan~~ → **YANGI SERVER OLINDI (2026-07-31):
+`169.58.104.245`** (Ubuntu 24.04, 4 yadro, 7 GB RAM, 94 GB bo'sh). SSH ulanish
+tekshirildi ✅. Ma'lumotlar: `deploy/server/SERVER-CREDENTIALS.txt`.
 
-- [ ] **Serverni tiklash** (Contabo paneli: to'lov / holat)
+⚠️ Serverda `telegram/Tg-bot` ning ikki boti systemd'da ishlaydi — ularga tegilmaydi.
+Serverda **Docker hali yo'q** va Jonly deploy qilinmagan.
+
+- [x] ~~Serverni tiklash~~ — yangi server olindi
+- [ ] **Docker + compose o'rnatish**, so'ng `deploy/DEPLOY-CHECKLIST.md`
+- [ ] **`deploy/server/Caddyfile` domenlarini yangilash** — hozir eski IP
+      (`194.163.139.242.sslip.io`) 3 ta subdomen va CSP'da qattiq yozilgan
 - [ ] **Kuzatuv stackini deploy qilish** — konfiguratsiya tayyor va mahalliy
       tekshirilgan (`deploy/server/observability/`). Qadamlar:
       `deploy/DEPLOY-CHECKLIST.md`
