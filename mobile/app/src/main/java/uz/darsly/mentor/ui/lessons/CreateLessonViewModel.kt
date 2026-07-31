@@ -1,8 +1,9 @@
 package uz.darsly.mentor.ui.lessons
 
-import android.app.Application
-import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import dagger.hilt.android.lifecycle.HiltViewModel
+import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -31,11 +32,10 @@ data class CreateLessonUiState(
 )
 
 /** Dars yaratish formasi (M7). */
-class CreateLessonViewModel @JvmOverloads constructor(
-    app: Application,
-    // @JvmOverloads — `viewModel()` fabrikasi `(Application)` konstruktorini qidiradi.
-    private val repo: LessonsRepository = LessonsRepository.create(app),
-) : AndroidViewModel(app) {
+@HiltViewModel
+class CreateLessonViewModel @Inject constructor(
+    private val repo: LessonsRepository,
+) : ViewModel() {
 
     private val _state = MutableStateFlow(CreateLessonUiState())
     val state: StateFlow<CreateLessonUiState> = _state.asStateFlow()

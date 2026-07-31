@@ -17,8 +17,6 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import uz.darsly.mentor.BuildConfig
-import uz.darsly.mentor.data.api.Net
-import uz.darsly.mentor.data.api.Session
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
@@ -51,6 +49,17 @@ class RealtimeClient(
     private val baseUrl: String = BuildConfig.API_BASE_URL,
     /** Test uchun: haqiqiy kutishni almashtirish. */
     private val sleep: suspend (Long) -> Unit = { delay(it) },
+    /**
+     * Joriy access token manbai. Funksiya sifatida uzatiladi (qiymat emas):
+     * soket qayta ulanganda EN SO'NGGI token kerak, ulanish yaratilgandagisi emas.
+     */
+    private val accessToken: () -> String? = { null },
+    /**
+     * Tokenni yangilaydi (401 dan keyin). Ichida oddiy authed so'rov bajariladi —
+     * OkHttp authenticator'i uni ushlab refresh qiladi. Funksiya sifatida
+     * uzatiladi, chunki `RealtimeClient` API turini bilishi shart emas.
+     */
+    private val refreshToken: suspend () -> Unit = {},
 ) {
 
     private val _events = MutableSharedFlow<RealtimeEvent>(extraBufferCapacity = 32)
@@ -90,7 +99,7 @@ class RealtimeClient(
     private suspend fun runLoop() {
         var attempt = 0
         while (currentScopeActive()) {
-            val token = Session.accessToken
+            val token = accessToken()
             if (token.isNullOrBlank()) {
                 // Hali login bo'lmagan — qisqa kutib qayta ko'ramiz.
                 sleep(Backoff.BASE_MS)
@@ -102,8 +111,8 @@ class RealtimeClient(
             _state.value = RealtimeState.DISCONNECTED
 
             if (closeReason == CloseReason.UNAUTHORIZED) {
-                // Token eskirgan — `Net` ning authenticator'i orqali yangilaymiz.
-                runCatching { Net.api.me() }
+                // Token eskirgan — OkHttp authenticator'i orqali yangilaymiz.
+                runCatching { refreshToken() }
                     .onFailure { LKLog.w(it) { "realtime: token yangilanmadi" } }
                 attempt = 0
                 continue

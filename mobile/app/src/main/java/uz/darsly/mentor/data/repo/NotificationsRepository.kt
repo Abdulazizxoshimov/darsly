@@ -1,7 +1,7 @@
 package uz.darsly.mentor.data.repo
 
 import uz.darsly.mentor.data.api.DarslyApi
-import uz.darsly.mentor.data.api.Net
+import javax.inject.Inject
 import uz.darsly.mentor.data.api.Notification
 import java.io.IOException
 
@@ -21,7 +21,7 @@ data class NotificationsPage(
  *
  * Qatlam yo'nalishi darslar bilan bir xil: `ui/ → data/repo/ → data/api/`.
  */
-class NotificationsRepository(private val api: DarslyApi) {
+class NotificationsRepository @Inject constructor(private val api: DarslyApi) {
 
     /**
      * To'liq ro'yxat — `total` qoplanguncha sahifalanadi (darslar bilan bir xil
@@ -68,6 +68,5 @@ class NotificationsRepository(private val api: DarslyApi) {
         /** @see LessonsRepository.isOffline */
         fun isOffline(t: Throwable): Boolean = t is IOException
 
-        fun create(): NotificationsRepository = NotificationsRepository(Net.api)
     }
 }

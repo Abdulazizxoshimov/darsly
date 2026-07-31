@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Darsly Mentor</string>
+    <string name="app_name">Jonly Mentor</string>
     <string name="lesson_channel_name">Jonli dars</string>
     <string name="lesson_notification_title">Dars davom etmoqda</string>
-    <string name="lesson_notification_text">Darsly ekran va ovozni ulashmoqda</string>
+    <string name="lesson_notification_text">Jonly ekran va ovozni ulashmoqda</string>
 </resources>

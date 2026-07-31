@@ -55,13 +55,13 @@ class NewRepositoriesTest {
         var writes = 0
             private set
 
-        override fun read(): CachedLessons? = value
-        override fun write(lessons: List<Lesson>, savedAtMillis: Long) {
+        override suspend fun read(): CachedLessons? = value
+        override suspend fun write(lessons: List<Lesson>, savedAtMillis: Long) {
             writes++
             value = CachedLessons(lessons, savedAtMillis)
         }
 
-        override fun clear() {
+        override suspend fun clear() {
             value = null
         }
     }
@@ -87,9 +87,9 @@ class NewRepositoriesTest {
         assertTrue(result.isSuccess)
         assertEquals("Yangi nom", result.getOrNull()?.title)
         // Kesh o'rnida yangilandi — boshqa dars joyida qoldi.
-        val cached = cache.read()!!.lessons
+        val cached = runBlocking { cache.read() }!!.lessons
         assertEquals(listOf("Yangi nom", "Boshqa dars"), cached.map { it.title })
-        assertEquals(42L, cache.read()!!.savedAtMillis)
+        assertEquals(42L, runBlocking { cache.read() }!!.savedAtMillis)
     }
 
     @Test
@@ -116,7 +116,7 @@ class NewRepositoriesTest {
 
         assertTrue(result.isFailure)
         assertEquals(0, cache.writes)
-        assertEquals("Eski", cache.read()!!.lessons.first().title)
+        assertEquals("Eski", runBlocking { cache.read() }!!.lessons.first().title)
     }
 
     @Test
@@ -130,7 +130,7 @@ class NewRepositoriesTest {
         val result = runBlocking { repo.delete("l1") }
 
         assertTrue(result.isSuccess)
-        assertEquals(listOf("l2"), cache.read()!!.lessons.map { it.id })
+        assertEquals(listOf("l2"), runBlocking { cache.read() }!!.lessons.map { it.id })
         assertEquals("DELETE", server.takeRequest().method)
     }
 
@@ -145,7 +145,7 @@ class NewRepositoriesTest {
 
         assertTrue(runBlocking { repo.delete("l1") }.isFailure)
         assertEquals(0, cache.writes)
-        assertEquals(1, cache.read()!!.lessons.size)
+        assertEquals(1, runBlocking { cache.read() }!!.lessons.size)
     }
 
     // ─── Bildirishnomalar ─────────────────────────────────────────────────────

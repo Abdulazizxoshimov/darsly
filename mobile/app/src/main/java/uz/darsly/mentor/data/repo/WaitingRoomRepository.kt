@@ -1,7 +1,7 @@
 package uz.darsly.mentor.data.repo
 
 import uz.darsly.mentor.data.api.DarslyApi
-import uz.darsly.mentor.data.api.Net
+import javax.inject.Inject
 import uz.darsly.mentor.data.api.WaitingRoomRequest
 import java.io.IOException
 import retrofit2.HttpException
@@ -22,7 +22,7 @@ import retrofit2.HttpException
  * so'rov ro'yxatdan olib tashlanadi — aks holda ekranda hal qilingan so'rov
  * "xato" bilan osilib qolardi.
  */
-class WaitingRoomRepository(private val api: DarslyApi) {
+class WaitingRoomRepository @Inject constructor(private val api: DarslyApi) {
 
     suspend fun pending(lessonId: String): Result<List<WaitingRoomRequest>> = runCatching {
         api.waitingRoom(lessonId).data.orEmpty()
@@ -49,6 +49,5 @@ class WaitingRoomRepository(private val api: DarslyApi) {
         /** @see LessonsRepository.isOffline */
         fun isOffline(t: Throwable): Boolean = t is IOException
 
-        fun create(): WaitingRoomRepository = WaitingRoomRepository(Net.api)
     }
 }

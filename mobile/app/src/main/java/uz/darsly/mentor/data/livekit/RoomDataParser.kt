@@ -28,7 +28,38 @@ sealed interface RoomSignal {
         val senderName: String,
         val body: String,
         val toIdentity: String?,
+        /** Ilova qilingan fayl (`null` — oddiy matnli xabar). */
+        val file: ChatFile? = null,
     ) : RoomSignal
+
+    /**
+     * Xabar o'chirildi (moderatsiya, №6) — ID bo'yicha ro'yxatdan olib tashlanadi.
+     *
+     * Xabar MAZMUNI hodisada YO'Q va qabrtosh («xabar o'chirilgan») ham
+     * qoldirilmaydi: o'chirilgan joyni belgilash buzg'unchiga aynan u xohlagan
+     * e'tiborni berardi.
+     */
+    data class ChatDeleted(val id: String) : RoomSignal
+
+    /**
+     * So'rovnoma natijasi e'lon qilindi (№7).
+     *
+     * Natijaning O'ZI ham hodisa ichida keladi — 300 kishilik xonada har biri
+     * alohida so'rov yuborsa bu 300 ta ortiqcha so'rov bo'lardi.
+     */
+    data class PollPublished(
+        val pollId: String,
+        val counts: List<Int>,
+        val total: Int,
+    ) : RoomSignal
+
+    /** Chat xabariga ilova qilingan fayl. [url] — muddatli presigned havola. */
+    data class ChatFile(
+        val name: String,
+        val size: Long,
+        val mime: String,
+        val url: String,
+    )
 }
 
 /**
@@ -61,14 +92,22 @@ class RoomDataParser(moshi: Moshi = Moshi.Builder().build()) {
         // uni maydonlari bo'yicha tanib olamiz (web klient ham xuddi shunday qiladi).
         val kind = root.str("kind")
         if (kind == null) {
-            val body = root.str("body") ?: return null
             val sender = root.str("sender_name") ?: return null
+            val body = root.str("body")
+            val file = chatFile(root["file"] as? Map<*, *>)
+            // ⚠️ FAYL XABARIDA `body` BO'SH BO'LISHI MUMKIN (№15): ilova
+            // qilingan fayl izohsiz yuborilsa server `body` ni bo'sh qoldiradi.
+            // Avval bu yerda `body` majburiy edi va bunday xabar JIM tashlanardi:
+            // fayl yuborilardi, lekin xonadagi ustoz ekranida hech nima
+            // ko'rinmasdi (tarixni qayta yuklaganda esa paydo bo'lardi).
+            if (body == null && file == null) return null
             return RoomSignal.Chat(
                 id = root.str("id").orEmpty(),
                 senderIdentity = root.str("sender_identity").orEmpty(),
                 senderName = sender,
-                body = body,
+                body = body.orEmpty(),
                 toIdentity = root.str("to_identity"),
+                file = file,
             )
         }
 
@@ -93,8 +132,36 @@ class RoomDataParser(moshi: Moshi = Moshi.Builder().build()) {
                 )
             }
 
-            else -> null // 'wb', 'poll' va kelajakdagi turlar — e'tiborsiz
+            KIND_CHAT_DELETED -> {
+                val id = root.str("id") ?: return null
+                RoomSignal.ChatDeleted(id)
+            }
+
+            KIND_POLL_PUBLISHED -> {
+                val results = root["results"] as? Map<*, *> ?: return null
+                val pollId = (results["poll"] as? Map<*, *>).str("id") ?: return null
+                val counts = (results["counts"] as? List<*>).orEmpty()
+                    .mapNotNull { (it as? Number)?.toInt() }
+                RoomSignal.PollPublished(
+                    pollId = pollId,
+                    counts = counts,
+                    total = (results["total"] as? Number)?.toInt() ?: counts.sum(),
+                )
+            }
+
+            else -> null // 'wb' va kelajakdagi turlar — e'tiborsiz
         }
+    }
+
+    /** `file` obyekti; nomi bo'lmasa ilova yo'q deb qaraladi. */
+    private fun chatFile(raw: Map<*, *>?): RoomSignal.ChatFile? {
+        val name = raw.str("name") ?: return null
+        return RoomSignal.ChatFile(
+            name = name,
+            size = (raw?.get("size") as? Number)?.toLong() ?: 0L,
+            mime = raw.str("mime").orEmpty(),
+            url = raw.str("url").orEmpty(),
+        )
     }
 
     /** Bo'sh satr "qiymat yo'q" bilan bir xil — UI'da bo'sh qator chiqmasin. */
@@ -104,6 +171,8 @@ class RoomDataParser(moshi: Moshi = Moshi.Builder().build()) {
     private companion object {
         const val KIND_HAND = "hand"
         const val KIND_REACTION = "reaction"
+        const val KIND_CHAT_DELETED = "chat_deleted"
+        const val KIND_POLL_PUBLISHED = "poll_published"
         const val ACT_LOWER_ALL = "lower_all"
     }
 }

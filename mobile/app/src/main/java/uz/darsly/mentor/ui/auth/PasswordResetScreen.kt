@@ -37,7 +37,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.hilt.navigation.compose.hiltViewModel
 import uz.darsly.mentor.ui.profile.ProfileForm
 
 /**
@@ -51,7 +51,7 @@ import uz.darsly.mentor.ui.profile.ProfileForm
 fun PasswordResetScreen(
     onBack: () -> Unit,
     onDone: () -> Unit,
-    vm: PasswordResetViewModel = viewModel(),
+    vm: PasswordResetViewModel = hiltViewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
 

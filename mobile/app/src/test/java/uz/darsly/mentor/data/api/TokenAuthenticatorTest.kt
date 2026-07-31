@@ -58,6 +58,7 @@ class TokenAuthenticatorTest {
 
         const val EXPIRED_BODY = """{"code":"TOKEN_EXPIRED","message":"token expired"}"""
         const val INVALID_BODY = """{"code":"TOKEN_INVALID","message":"invalid refresh token"}"""
+        const val REVOKED_BODY = """{"code":"SESSION_REVOKED","message":"session revoked"}"""
         const val ME_BODY =
             """{"data":{"id":"u1","email":"a@darsly.uz","full_name":"Ali","role":"mentor"}}"""
     }
@@ -78,6 +79,12 @@ class TokenAuthenticatorTest {
     private val refreshCount = AtomicInteger()
     private val protectedCount = AtomicInteger()
     private val logoutCount = AtomicInteger()
+
+    /** Oxirgi chiqarish sababi — login ekrani AYNAN shuni ko'rsatadi. */
+    @Volatile private var lastLogoutReason: LogoutReason = LogoutReason.UNKNOWN
+
+    /** Himoyalangan endpointning 401 tanasi (holatga qarab almashadi). */
+    @Volatile private var unauthorizedBody = EXPIRED_BODY
 
     /** Refresh javobini test o'zgartiradi (muvaffaqiyat / 401 / 500). */
     @Volatile private var refreshResponse: () -> MockResponse = {
@@ -111,7 +118,7 @@ class TokenAuthenticatorTest {
                         if (!alwaysUnauthorized && auth == "Bearer $NEW_ACCESS") {
                             MockResponse().setResponseCode(200).setBody(ME_BODY)
                         } else {
-                            MockResponse().setResponseCode(401).setBody(EXPIRED_BODY)
+                            MockResponse().setResponseCode(401).setBody(unauthorizedBody)
                         }
                     }
                 }
@@ -146,7 +153,11 @@ class TokenAuthenticatorTest {
                 TokenAuthenticator(
                     store = store,
                     refreshApi = refreshApi,
-                    onHardLogout = { logoutCount.incrementAndGet(); store.clear() },
+                    onHardLogout = { reason ->
+                        logoutCount.incrementAndGet()
+                        lastLogoutReason = reason
+                        store.clear()
+                    },
                 ),
             )
             .build()
@@ -310,5 +321,77 @@ class TokenAuthenticatorTest {
         assertEquals(listOf(401), codes)
         assertEquals(0, refreshCount.get())
         assertEquals(0, logoutCount.get())
+    }
+
+    // ─── SESSION_REVOKED (bitta akkaunt = bitta sessiya · PRODUCT.md №1) ─────
+
+    @Test
+    fun `SESSION_REVOKED da refresh UMUMAN yuborilmaydi`() {
+        // ⭐ Boshqa qurilmadan kirilgan: sessiya SERVERDA tugatilgan va refresh
+        // ham aynan shu kod bilan qaytadi (grace oynasi tugatilgan sessiyani
+        // tiriltirmaydi). Ya'ni refresh so'rovi — bekorga ketgan aylanish
+        // vaqti va bekorga sarflangan trafik.
+        unauthorizedBody = REVOKED_BODY
+
+        val codes = runParallel(1)
+
+        assertEquals(listOf(401), codes)
+        assertEquals("refresh yuborilmasligi kerak", 0, refreshCount.get())
+        assertEquals(1, logoutCount.get())
+        assertNull("tokenlar tozalanishi shart", store.read())
+        // Qayta urinish YO'Q — bitta so'rov, xolos.
+        assertEquals(1, protectedCount.get())
+    }
+
+    @Test
+    fun `SESSION_REVOKED sababi login ekraniga yetkaziladi`() {
+        unauthorizedBody = REVOKED_BODY
+        runParallel(1)
+        // "Sessiya tugadi" EMAS: ustoz hisobi ulashilganini bilishi kerak.
+        assertEquals(LogoutReason.REVOKED, lastLogoutReason)
+    }
+
+    @Test
+    fun `refresh SESSION_REVOKED bersa ham sabab uzatiladi`() {
+        // Boshqa yo'l: access hali `TOKEN_EXPIRED` beradi (odatiy eskirish),
+        // lekin refresh urinishida sessiya allaqachon tugatilgan bo'lib chiqadi.
+        refreshResponse = { MockResponse().setResponseCode(401).setBody(REVOKED_BODY) }
+
+        runParallel(1)
+
+        assertEquals(1, refreshCount.get())
+        assertEquals(1, logoutCount.get())
+        assertEquals(LogoutReason.REVOKED, lastLogoutReason)
+    }
+
+    @Test
+    fun `oddiy eskirishda sabab muddat tugashi deb qoladi`() {
+        // `TOKEN_INVALID` — "boshqa qurilma" EMAS; noto'g'ri sabab ko'rsatish
+        // ustozni yo'q muammoni qidirishga majburlardi.
+        refreshResponse = { MockResponse().setResponseCode(401).setBody(INVALID_BODY) }
+
+        runParallel(1)
+
+        assertEquals(1, logoutCount.get())
+        assertEquals(LogoutReason.EXPIRED, lastLogoutReason)
+    }
+
+    @Test
+    fun `SESSION_REVOKED tekshiruvi javob tanasini buzmaydi`() {
+        // `peekBody` ishlatilgani MUHIM: `response.body` bir marta o'qilsa
+        // chaqiruvchiga bo'sh tana yetib borardi va UI xato matnini
+        // ko'rsata olmasdi.
+        unauthorizedBody = REVOKED_BODY
+
+        val resp = api.me().execute()
+
+        assertEquals(401, resp.code())
+        val body = resp.errorBody()?.string()
+        assertNotNull(body)
+        assertEquals(
+            "chaqiruvchi ham kodni ko'rishi kerak",
+            LogoutReason.REVOKED,
+            LogoutReason.ofBody(body),
+        )
     }
 }

@@ -1,12 +1,16 @@
 package uz.darsly.mentor.data.api
 
+import okhttp3.MultipartBody
+import okhttp3.RequestBody
 import retrofit2.Call
 import retrofit2.http.Body
 import retrofit2.http.DELETE
 import retrofit2.http.GET
+import retrofit2.http.Multipart
 import retrofit2.http.PATCH
 import retrofit2.http.POST
 import retrofit2.http.PUT
+import retrofit2.http.Part
 import retrofit2.http.Path
 import retrofit2.http.Query
 
@@ -93,7 +97,10 @@ interface DarslyApi {
     suspend fun participants(@Path("id") lessonId: String): ListEnvelope<RoomParticipantDto>
 
     @POST("api/v1/lessons/{id}/mute-all")
-    suspend fun muteAll(@Path("id") lessonId: String): retrofit2.Response<Unit>
+    suspend fun muteAll(
+        @Path("id") lessonId: String,
+        @Body body: MuteAllReq,
+    ): retrofit2.Response<Unit>
 
     @POST("api/v1/lessons/{id}/participants/{identity}/mute")
     suspend fun muteParticipant(
@@ -105,6 +112,7 @@ interface DarslyApi {
     suspend fun removeParticipant(
         @Path("id") lessonId: String,
         @Path("identity") identity: String,
+        @Body body: RemoveParticipantReq,
     ): retrofit2.Response<Unit>
 
     @POST("api/v1/lessons/{id}/participants/{identity}/allow-speak")
@@ -141,6 +149,94 @@ interface DarslyApi {
         @Path("lessonId") lessonId: String,
         @Body body: SendRoomChatReq,
     ): Envelope<ChatMessageDto>
+
+    /**
+     * Xabarni o'chirish — FAQAT dars egasi (moderatsiya, №6).
+     *
+     * Yumshoq o'chirish: qator DB'da qoladi (`deleted_at`/`deleted_by` — iz),
+     * lekin hech bir tarix so'rovida qaytmaydi va qabrtosh («xabar o'chirilgan»)
+     * QOLDIRILMAYDI. Jonli xonadagilar `chat_deleted` hodisasini oladi.
+     *
+     * Takroriy o'chirish → **404** (atomik `WHERE deleted_at IS NULL`), begona
+     * mentor → 403. Shu sabab `Response<Unit>`: 204 tanasiz keladi.
+     */
+    @DELETE("api/v1/lessons/{id}/chat/{messageId}")
+    suspend fun deleteChatMessage(
+        @Path("id") lessonId: String,
+        @Path("messageId") messageId: String,
+    ): retrofit2.Response<Unit>
+
+    /**
+     * Fayl ulashish (№15) — `multipart/form-data`, maydon nomi **`file`**.
+     *
+     * JWT yo'li (mentor): tokenni interceptor qo'yadi, query'da token kerak emas.
+     * Server cheklovlari: 20 MB, kengaytma allowlist + mazmun sniff, identity
+     * bo'yicha daqiqasiga 5 ta. Klient yuborgan `Content-Type` ISHONCHSIZ deb
+     * qaraladi — MinIO'ga serverning kanonik MIME'i yoziladi.
+     */
+    @Multipart
+    @POST("api/v1/lessons/{id}/chat/upload")
+    suspend fun uploadChatFile(
+        @Path("id") lessonId: String,
+        @Part file: MultipartBody.Part,
+        @Part("body") body: RequestBody?,
+        @Part("to") to: RequestBody?,
+    ): Envelope<ChatMessageDto>
+
+    /**
+     * Emoji reaksiya (№14) — room-token bilan, chunki endpoint xonadagi HAR
+     * QANDAY ishtirokchi uchun (ustoz ham shu yo'ldan yuradi).
+     *
+     * Server saqlamaydi, faqat data-channel orqali tarqatadi; ruxsatsiz emoji
+     * 400, 10 soniyada 5 tadan ko'p bo'lsa 429.
+     */
+    @POST("api/v1/rooms/{lessonId}/reaction")
+    suspend fun sendReaction(
+        @Path("lessonId") lessonId: String,
+        @Body body: SendReactionReq,
+    ): retrofit2.Response<Unit>
+
+    // ── So'rovnoma (host — JWT) ─────────────────────────────────────────────
+
+    /** `hs.Success(items)` — sahifalanmagan ro'yxat, `total` YO'Q. */
+    @GET("api/v1/lessons/{id}/polls")
+    suspend fun polls(@Path("id") lessonId: String): Envelope<List<Poll>>
+
+    @POST("api/v1/lessons/{id}/polls")
+    suspend fun createPoll(
+        @Path("id") lessonId: String,
+        @Body req: CreatePollReq,
+    ): Envelope<Poll>
+
+    /**
+     * Natijani o'quvchilarga ochadi va xonaga `poll_published` yuboradi.
+     *
+     * DIQQAT: `results_visibility=mentor_only` so'rovnomada **400** — bu rejim
+     * yaratishda tanlangan va o'zgarmas. Idempotent: takroriy bosish e'lon
+     * vaqtini surmaydi.
+     */
+    @POST("api/v1/lessons/{id}/polls/{pollId}/publish")
+    suspend fun publishPoll(
+        @Path("id") lessonId: String,
+        @Path("pollId") pollId: String,
+    ): Envelope<PollResults>
+
+    /** Ovoz berishni to'xtatadi. **Yopish ≠ e'lon qilish** — natija ochilmaydi. */
+    @POST("api/v1/polls/{id}/close")
+    suspend fun closePoll(@Path("id") pollId: String): Envelope<PollResults>
+
+    /**
+     * Natijalar — room-token bilan (ochiq endpoint, JWT emas).
+     *
+     * Mentor (host token) DOIM 200 oladi; o'quvchi esa faqat `public` +
+     * e'lon qilingan bo'lsa. Shuning uchun ustoz jonli natijani shu yerdan
+     * ko'radi va buning uchun so'rovnomani yopishi shart emas.
+     */
+    @GET("api/v1/polls/{id}/results")
+    suspend fun pollResults(
+        @Path("id") pollId: String,
+        @Query("token") token: String,
+    ): Envelope<PollResults>
 
     @POST("api/v1/lessons/{id}/end")
     suspend fun endLesson(@Path("id") lessonId: String)

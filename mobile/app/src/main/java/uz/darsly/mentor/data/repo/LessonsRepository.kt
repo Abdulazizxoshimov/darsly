@@ -1,14 +1,12 @@
 package uz.darsly.mentor.data.repo
 
-import android.content.Context
 import uz.darsly.mentor.data.api.CreateLessonReq
 import uz.darsly.mentor.data.api.DarslyApi
+import javax.inject.Inject
 import uz.darsly.mentor.data.api.Lesson
-import uz.darsly.mentor.data.api.Net
 import uz.darsly.mentor.data.api.UpdateLessonReq
 import uz.darsly.mentor.data.store.CachedLessons
 import uz.darsly.mentor.data.store.LessonsCache
-import uz.darsly.mentor.data.store.PrefsLessonsCache
 import java.io.IOException
 
 /**
@@ -35,11 +33,44 @@ data class LessonsPage(
 class LessonsRepository(
     private val api: DarslyApi,
     private val cache: LessonsCache,
-    private val now: () -> Long = System::currentTimeMillis,
+    private val now: () -> Long,
 ) {
 
-    /** Tarmoqqa chiqmasdan, darhol: oxirgi ma'lum ro'yxat (bo'lmasa `null`). */
-    fun cached(): CachedLessons? = cache.read()
+    /**
+     * Hilt uchun konstruktor. `now` ni graph'dan yechib bo'lmaydi (u soat, bog'liqlik
+     * emas), shuning uchun alohida: ishlab chiqarishda haqiqiy soat, testda esa
+     * to'liq konstruktor orqali qotirilgan vaqt beriladi.
+     */
+    @Inject
+    constructor(api: DarslyApi, cache: LessonsCache) : this(api, cache, System::currentTimeMillis)
+
+    /**
+     * Tarmoqqa chiqmasdan: oxirgi ma'lum ro'yxat (bo'lmasa `null`).
+     *
+     * `suspend` — kesh diskka tegadi (shifr ochish + JSON parse) va uni asosiy
+     * oqimda bajarish ANR xavfini tug'dirardi.
+     */
+    suspend fun cached(): CachedLessons? = cache.read()
+
+    /**
+     * Bitta darsni ID bo'yicha topadi (xona sarlavhasi uchun).
+     *
+     * Avval `RoomViewModel` buni o'zi qilardi: `api.lessons(limit = 50)` chaqirib
+     * ro'yxatdan `firstOrNull`. Ikki muammosi bor edi — repozitoriy qatlamini
+     * chetlab o'tardi va 50 tadan ko'p darsi bor ustozda dars TOPILMASDI
+     * (sarlavhada UUID qolardi).
+     *
+     * Bu yerda avval KESH ko'riladi: xonaga kirishda ro'yxat odatda allaqachon
+     * yuklangan bo'ladi, ya'ni ortiqcha tarmoq so'rovi ketmaydi. Topilmasa
+     * serverdan olinadi.
+     *
+     * Xato yoki topilmaslik `null` beradi: dars nomi — qulaylik, uning yo'qligi
+     * darsni boshlashga to'sqinlik qilmasligi kerak.
+     */
+    suspend fun byId(lessonId: String): Lesson? {
+        cache.read()?.lessons?.firstOrNull { it.id == lessonId }?.let { return it }
+        return refresh().getOrNull()?.lessons?.firstOrNull { it.id == lessonId }
+    }
 
     /**
      * Serverdan **to'liq** ro'yxat. Muvaffaqiyatda kesh ustiga yoziladi.
@@ -143,9 +174,5 @@ class LessonsRepository(
          */
         fun isOffline(t: Throwable): Boolean = t is IOException
 
-        fun create(context: Context): LessonsRepository = LessonsRepository(
-            api = Net.api,
-            cache = PrefsLessonsCache.create(context),
-        )
     }
 }

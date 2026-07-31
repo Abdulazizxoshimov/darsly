@@ -2,6 +2,8 @@ package uz.darsly.mentor.ui.auth
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import dagger.hilt.android.lifecycle.HiltViewModel
+import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -50,8 +52,9 @@ data class PasswordResetUiState(
  * "agar bunday email ro'yxatdan o'tgan bo'lsa, xat yuborildi". Bu chalg'itish
  * emas — bu rost va to'liq: biz ham bilmaymiz.
  */
-class PasswordResetViewModel(
-    private val auth: AuthRepository = AuthRepository,
+@HiltViewModel
+class PasswordResetViewModel @Inject constructor(
+    private val auth: AuthRepository,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(PasswordResetUiState())

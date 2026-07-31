@@ -1,8 +1,9 @@
 package uz.darsly.mentor.ui.lessons
 
-import android.app.Application
-import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import dagger.hilt.android.lifecycle.HiltViewModel
+import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -52,11 +53,10 @@ data class EditLessonUiState(
  * Ro'yxat esa `LessonsViewModel.start()` da har safar serverdan yangilanadi,
  * ya'ni ma'lumot eskirmaydi.
  */
-class EditLessonViewModel @JvmOverloads constructor(
-    app: Application,
-    // @JvmOverloads — `viewModel()` fabrikasi AYNAN `(Application)` konstruktorini qidiradi.
-    private val repo: LessonsRepository = LessonsRepository.create(app),
-) : AndroidViewModel(app) {
+@HiltViewModel
+class EditLessonViewModel @Inject constructor(
+    private val repo: LessonsRepository,
+) : ViewModel() {
 
     private val _state = MutableStateFlow(EditLessonUiState())
     val state: StateFlow<EditLessonUiState> = _state.asStateFlow()

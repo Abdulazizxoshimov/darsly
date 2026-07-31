@@ -298,7 +298,7 @@ adb shell am start -n uz.darsly.mentor/.MainActivity
 | # | Cheklov | Izoh |
 |---|---|---|
 | 1 | **Ekran audiosi Android 10 (API 29)+ talab qiladi** | SDK `ScreenAudioCapturer` `@RequiresApi(Q)`. `minSdk 26` bo'lgani uchun Android 8/9 da bu funksiya **prinsipial ishlamaydi** |
-| 2 | **Ekran audiosi mikrofon track'iga mikslanadi** | Alohida track emas — `LocalAudioTrack.setAudioBufferCallback`. Ya'ni **mikrofon yoniq bo'lishi shart**. Mikrofon o'chirilsa audio to'xtaydi va UI shuni **aytadi** (`ScreenAudioPolicy`), resurs bo'shatiladi. **Qaror:** 3-blokda alohida trekka o'tkaziladi (Zoom xulqi) — `docs/MOBILE-STATUS.md` §7 |
+| 2 | **Ekran audiosi mikrofon track'iga mikslanadi** | Alohida track emas — `LocalAudioTrack.setAudioBufferCallback`. Ya'ni **mikrofon yoniq bo'lishi shart**. Mikrofon o'chirilsa audio to'xtaydi va UI shuni **aytadi** (`ScreenAudioPolicy`), resurs bo'shatiladi. **Qaror:** keyingi blokda alohida trekka o'tkaziladi (Zoom xulqi) |
 | 3 | Manba ilova capture'ga ruxsat bermasa — jimlik | `AudioAttributes.ALLOW_CAPTURE_BY_ALL` qo'ymagan ilovalar (YouTube va boshqalar) tizim tomonidan jim qaytariladi. Bizning xatomiz emas |
 | 4 | ~~Token faqat xotirada~~ | ✅ **1-blokda yopildi** — `EncryptedSharedPreferences`, §9 |
 | 5 | ~~Token yangilash yo'q~~ | ✅ **1-blokda yopildi** — single-flight refresh, §9.2 |
@@ -367,7 +367,7 @@ mobile/
 
 ## 8. Keyingi qadam
 
-Roadmap `docs/darsly-mobile-roadmap.md` §5. Backend blokerlari (BE-1…BE-5) **yopilgan**.
+Ochiq ishlar: `docs/BACKLOG.md`. Backend blokerlari (BE-1…BE-5) **yopilgan**.
 Keyingi blok — **3-blok, jonli xona** (eng kattasi): B-1 "Entire screen" ogohlantirishi,
 B-4 ekran audiosi holatining rostgo'yligi, C-6 (ekran audiosi alohida trekmi — **qaror kerak**),
 B-6 MediaProjection'ni bo'shatish, M12 kamera almashtirish, M16 qayta ulanish, M18 adaptiv sifat.

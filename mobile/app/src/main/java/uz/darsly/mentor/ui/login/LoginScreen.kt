@@ -2,6 +2,7 @@ package uz.darsly.mentor.ui.login
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -9,18 +10,25 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -30,16 +38,22 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.ui.platform.LocalContext
 import uz.darsly.mentor.BuildConfig
+import uz.darsly.mentor.ui.theme.PulseMark
+import uz.darsly.mentor.util.DevServer
 
 @Composable
 fun LoginScreen(
     onLoggedIn: () -> Unit,
     onForgotPassword: () -> Unit,
-    vm: LoginViewModel = viewModel(),
+    vm: LoginViewModel = hiltViewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
+    val notice by vm.notice.collectAsStateWithLifecycle()
 
     // Debug build'da local.properties'dan kelgan test hisobi bilan oldindan to'ldiramiz
     // (sirlar kodda yo'q — BuildConfig'ga local.properties orqali tushadi).
@@ -58,7 +72,10 @@ fun LoginScreen(
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text("Darsly Mentor", style = MaterialTheme.typography.headlineMedium)
+        // Brend belgisi — puls (B «Jonli efir» tili).
+        PulseMark(size = 44.dp)
+        Spacer(Modifier.height(14.dp))
+        Text("Jonly Mentor", style = MaterialTheme.typography.headlineMedium)
         Spacer(Modifier.height(4.dp))
         Text(
             "versiya ${BuildConfig.VERSION_NAME}",
@@ -66,6 +83,39 @@ fun LoginScreen(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(32.dp))
+
+        // ⭐ NEGA chiqarilgan edik (`SESSION_REVOKED`).
+        //
+        // Forma USTIDA turadi — pastdagi xato qatori bilan chalkashmasin: bu
+        // hozirgi urinishning xatosi emas, o'tgan sessiyaning sababi. Yopish
+        // tugmasi bor, chunki ustoz uni o'qib bo'lgach u faqat xalaqit beradi.
+        notice?.let { text ->
+            Surface(
+                color = MaterialTheme.colorScheme.errorContainer,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth().widthIn(max = 420.dp),
+            ) {
+                Row(
+                    Modifier.padding(start = 14.dp, top = 10.dp, bottom = 10.dp, end = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier.weight(1f),
+                    )
+                    IconButton(onClick = { vm.noticeShown() }) {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = "Yopish",
+                            tint = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+        }
 
         OutlinedTextField(
             value = email,
@@ -114,6 +164,60 @@ fun LoginScreen(
         state.error?.let {
             Spacer(Modifier.height(16.dp))
             Text(it, color = MaterialTheme.colorScheme.error)
+        }
+
+        // DEV: server manzilini shu yerdan almashtirish (faqat debug build).
+        // Tarmoq/IP o'zgarganda APK qayta build qilinmaydi — qarang: DevServer.
+        if (BuildConfig.DEBUG) {
+            val ctx = LocalContext.current
+            var serverDialogOpen by remember { mutableStateOf(false) }
+            var serverBase by remember { mutableStateOf(DevServer.currentBase(ctx)) }
+            Spacer(Modifier.height(24.dp))
+            TextButton(onClick = { serverDialogOpen = true }) {
+                Text(
+                    "Server: $serverBase",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (serverDialogOpen) {
+                var input by remember { mutableStateOf(serverBase) }
+                var invalid by remember { mutableStateOf(false) }
+                AlertDialog(
+                    onDismissRequest = { serverDialogOpen = false },
+                    title = { Text("Server manzili (dev)") },
+                    text = {
+                        Column {
+                            OutlinedTextField(
+                                value = input,
+                                onValueChange = { input = it; invalid = false },
+                                label = { Text("http://IP:8087") },
+                                isError = invalid,
+                                supportingText = {
+                                    Text(
+                                        if (invalid) "Yaroqsiz URL" else
+                                            "Bo'sh qoldirilsa build'dagi manzilga qaytadi. Restart shart emas.",
+                                    )
+                                },
+                                singleLine = true,
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            if (DevServer.set(ctx, input)) {
+                                serverBase = DevServer.currentBase(ctx)
+                                serverDialogOpen = false
+                            } else {
+                                invalid = true
+                            }
+                        }) { Text("Saqlash") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { serverDialogOpen = false }) { Text("Bekor") }
+                    },
+                )
+            }
         }
     }
 }

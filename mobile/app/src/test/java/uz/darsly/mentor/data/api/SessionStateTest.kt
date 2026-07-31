@@ -18,80 +18,86 @@ import uz.darsly.mentor.data.store.InMemoryTokenStore
  * bo'lmaganda ham `true` qaytarardi, lekin qiymat tashlab yuborilardi. Refresh
  * muvaffaqiyatsizligi UI kollektori ulanishidan oldin sodir bo'lsa — tokenlar
  * o'chgan, ekran esa "Darslar"da qolib ketardi.
+ *
+ * DIQQAT: avval bu sinf global `object Session` ni sinar edi va har test
+ * `session.installForTest(...)` bilan uni "teshib" tozalardi. Endi
+ * [SessionManager] oddiy sinf — har test o'z nusxasini yasaydi, ya'ni
+ * testlar bir-biriga sizib o'tmaydi va maxsus teshik kerak emas.
  */
 class SessionStateTest {
 
     private val pair = TokenPair("access-1", "refresh-1")
 
+    private lateinit var session: SessionManager
+
     @Before
     fun setUp() {
-        // Global `object` — har test toza saqlagichdan boshlansin.
-        Session.installForTest(InMemoryTokenStore())
+        session = SessionManager(InMemoryTokenStore())
     }
 
     @Test
     fun `boshlangich holat - kirilmagan`() {
-        assertFalse(Session.isLoggedIn)
-        assertFalse(Session.loggedIn.value)
-        assertNull(Session.accessToken)
+        assertFalse(session.isLoggedIn)
+        assertFalse(session.loggedIn.value)
+        assertNull(session.accessToken)
     }
 
     @Test
     fun `saqlangan token bilan ornatilsa darhol kirgan holat`() {
         // Ilova qayta ochilishini modellaydi: saqlagichda allaqachon token bor.
-        Session.installForTest(InMemoryTokenStore(pair))
-        assertTrue(Session.isLoggedIn)
-        assertTrue(Session.loggedIn.value)
-        assertEquals("access-1", Session.accessToken)
+        session = SessionManager(InMemoryTokenStore(pair))
+        assertTrue(session.isLoggedIn)
+        assertTrue(session.loggedIn.value)
+        assertEquals("access-1", session.accessToken)
     }
 
     @Test
     fun `save va clear holatni yangilaydi`() {
-        Session.save(pair)
-        assertTrue(Session.loggedIn.value)
-        Session.clear()
-        assertFalse(Session.loggedIn.value)
-        assertNull(Session.read())
+        session.save(pair)
+        assertTrue(session.loggedIn.value)
+        session.clear()
+        assertFalse(session.loggedIn.value)
+        assertNull(session.read())
     }
 
     /** ★ ASOSIY TEST: hodisa sodir bo'lganda HECH KIM tinglamayotgan edi. */
     @Test
     fun `kech ulangan obunachi ham logoutni koradi`() = runTest {
-        Session.save(pair)
-        assertTrue(Session.loggedIn.value)
+        session.save(pair)
+        assertTrue(session.loggedIn.value)
 
         // Logout hech qanday obunachisiz sodir bo'ladi (aynan poyga holati).
-        Session.forceLogout()
+        session.forceLogout()
 
         // Obunachi FAQAT SHUNDAN KEYIN ulanadi — u baribir `false` ni olishi shart.
         // Hodisaga asoslangan yechimda bu yerda hech narsa kelmasdi va
         // `withTimeoutOrNull` `null` qaytarardi.
-        val observed = withTimeoutOrNull(1_000) { Session.loggedIn.first() }
+        val observed = withTimeoutOrNull(1_000) { session.loggedIn.first() }
         assertEquals("kech ulangan obunachi logoutni ko'rmadi", false, observed)
-        assertNull("tokenlar tozalangan bo'lishi kerak", Session.read())
+        assertNull("tokenlar tozalangan bo'lishi kerak", session.read())
     }
 
     @Test
     fun `logoutdan keyingi login holatni tiklaydi`() {
-        Session.save(pair)
-        Session.forceLogout()
-        assertFalse(Session.loggedIn.value)
+        session.save(pair)
+        session.forceLogout()
+        assertFalse(session.loggedIn.value)
 
         // Eski logout "hodisasi" qayta o'ynalib login'ni buzmasligi kerak.
-        Session.save(TokenPair("access-2", "refresh-2"))
-        assertTrue(Session.loggedIn.value)
-        assertEquals("access-2", Session.accessToken)
+        session.save(TokenPair("access-2", "refresh-2"))
+        assertTrue(session.loggedIn.value)
+        assertEquals("access-2", session.accessToken)
     }
 
     @Test
     fun `TokenAuthenticator hard logouti holatni tushiradi`() {
         // Net `Session` ni to'g'ridan-to'g'ri store sifatida beradi, hard logout esa
-        // `Session.forceLogout()` ni chaqiradi — shu zanjir ishlashini tasdiqlaymiz.
-        Session.save(pair)
-        val onHardLogout = { Session.forceLogout() }
+        // `session.forceLogout()` ni chaqiradi — shu zanjir ishlashini tasdiqlaymiz.
+        session.save(pair)
+        val onHardLogout = { session.forceLogout() }
         onHardLogout()
-        assertFalse(Session.loggedIn.value)
-        assertNull(Session.read())
+        assertFalse(session.loggedIn.value)
+        assertNull(session.read())
     }
 }
 

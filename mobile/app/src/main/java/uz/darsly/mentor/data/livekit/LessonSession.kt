@@ -61,6 +61,7 @@ class LessonSession(
             // Ekran ulashish va ovoz sozlamalari — past internetli hududlar uchun.
             // Sabablar va raqamlar `MediaTuning` da (u sof va testlar ostida).
             screenShareTrackPublishDefaults = MediaTuning.screenSharePublish(),
+            videoTrackPublishDefaults = MediaTuning.cameraPublish(),
             audioTrackPublishDefaults = MediaTuning.audioPublish(),
             // C-11: tarmoq almashuvida (Wi-Fi ↔ LTE) tez tiklanish.
             // Sabab va raqamlar `LessonReconnectPolicy` da (u sof va test ostida).

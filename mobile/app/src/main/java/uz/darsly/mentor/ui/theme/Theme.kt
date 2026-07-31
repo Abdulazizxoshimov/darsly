@@ -14,7 +14,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 /**
- * Darsly brend mavzusi — **web dizayn tizimidan** ko'chirilgan.
+ * Jonly brend mavzusi — B «Jonli efir» yo'nalishi (2026-07, ~/jonly-mockuplar).
+ *
+ * Qoida: GLOW faqat uch joyda — jonli dars kartasi, LIVE indikator, asosiy
+ * harakat tugmasi. Qolgan hamma narsa tinch va o'qiladigan qoladi.
  *
  * ## Nega bu fayl qayta yozildi
  * Avval `darkColorScheme()` ga faqat **4 ta** rol berilgan edi (`primary`, `secondary`,
@@ -34,36 +37,37 @@ import androidx.compose.ui.unit.sp
  */
 
 // ─── Web tokenlari (styles.css :root) ────────────────────────────────────────
-private val Bg = Color(0xFF0A0E14)
-private val Card = Color(0xFF12171F)
-private val Elevated = Color(0xFF161C26)
-private val Hover = Color(0xFF1B222C)
+private val Bg = Color(0xFF05080C)
+private val Card = Color(0xFF0B1117)
+private val Elevated = Color(0xFF101820)
+private val Hover = Color(0xFF131C24)
 
-private val Border = Color(0xFF232B37)
-private val BorderStrong = Color(0xFF262F3B)
+private val Border = Color(0xFF161F27)
+private val BorderStrong = Color(0xFF1B2833)
 
 private val TextPrimary = Color(0xFFEEF1F6)
-private val Text2 = Color(0xFF97A3B3)
-private val Text3 = Color(0xFF6B7688)
+private val Text2 = Color(0xFF7E93A8)
+private val Text3 = Color(0xFF5D7183)
 
-private val Accent = Color(0xFF6C5CE7)
-private val AccentHover = Color(0xFF7D6FF2)
-private val AccentLight = Color(0xFF8B7CF6)
+private val Accent = Color(0xFF19D3A2)
+private val AccentHover = Color(0xFF2BE0B2)
+private val AccentLight = Color(0xFF4AE3BC)
+private val OnAccent = Color(0xFF04120D)
 
-private val Danger = Color(0xFFEF4444)
+private val Danger = Color(0xFFFF2D55)
 private val Success = Color(0xFF34D399)
 private val Warning = Color(0xFFF59E0B)
 private val Info = Color(0xFF3B82F6)
 
 private val DarslyScheme = darkColorScheme(
     primary = Accent,
-    onPrimary = Color.White,
+    onPrimary = OnAccent,
     primaryContainer = AccentHover,
-    onPrimaryContainer = Color.White,
+    onPrimaryContainer = OnAccent,
     inversePrimary = AccentLight,
 
     secondary = AccentLight,
-    onSecondary = Color.White,
+    onSecondary = OnAccent,
     secondaryContainer = Elevated,
     onSecondaryContainer = TextPrimary,
 
@@ -109,8 +113,8 @@ private val DarslyShapes = Shapes(
     extraSmall = RoundedCornerShape(8.dp),
     small = RoundedCornerShape(8.dp),
     medium = RoundedCornerShape(10.dp),
-    large = RoundedCornerShape(14.dp),
-    extraLarge = RoundedCornerShape(20.dp),
+    large = RoundedCornerShape(18.dp),
+    extraLarge = RoundedCornerShape(24.dp),
 )
 
 /**
@@ -146,6 +150,16 @@ data class DarslyColors(
     val endedSoft: Color = Text3.copy(alpha = 0.15f),
     val cancelledSoft: Color = Warning.copy(alpha = 0.15f),
     val textMuted: Color = Text3,
+
+    // ── B «Jonli efir» tili ──
+    /** Neon-mint — brend urg'usi (glow va jonli chegaralar shu rangda). */
+    val neon: Color = Accent,
+    /** Jonli karta chegarasi — mint 45% (to'liq neon matnni bosardi). */
+    val neonBorder: Color = Accent.copy(alpha = 0.45f),
+    /** Mint konturli elementlar chegarasi (ikkilamchi tugma, REC chip). */
+    val mintOutline: Color = Color(0xFF14352B),
+    /** LIVE qizili — faqat jonli efir holati uchun (xato/danger emas). */
+    val liveRed: Color = Color(0xFFFF2D55),
 )
 
 val LocalDarslyColors = staticCompositionLocalOf { DarslyColors() }

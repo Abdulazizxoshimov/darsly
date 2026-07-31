@@ -4,6 +4,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import javax.inject.Inject
+import javax.inject.Singleton
 
 /**
  * O'qilmagan bildirishnomalar soni — pastki paneldagi nishon uchun.
@@ -14,6 +16,10 @@ import kotlinx.coroutines.flow.update
  * hisoblanmasdi — ya'ni ustoz nishon sababli ekranni ochardi, nishon esa faqat
  * ekran ochilganda paydo bo'lardi. Klassik "tovuq va tuxum".
  *
+ * ## Nega endi `object` emas
+ * Jarayon darajasidagi yagonalikni endi Hilt (`@Singleton`) kafolatlaydi, lekin
+ * uni testda almashtirib bo'ladi — global `object` da bu imkonsiz edi.
+ *
  * ## Kim yozadi
  *  · `DarslyApp` — kirishda boshlang'ich qiymatni serverdan oladi va
  *    real-time `notification` hodisasida [increment] qiladi;
@@ -21,7 +27,8 @@ import kotlinx.coroutines.flow.update
  *    (server haqiqati), ya'ni oshirilgan taxmin uning ustiga yozilib to'g'rilanadi;
  *  · chiqishda [clear] — boshqa ustozning soni ko'rinib qolmasin.
  */
-object NotificationsBadge {
+@Singleton
+class NotificationsBadge @Inject constructor() {
 
     private val _count = MutableStateFlow(0)
     val count: StateFlow<Int> = _count.asStateFlow()

@@ -3,6 +3,7 @@ package uz.darsly.mentor.data.livekit
 import io.livekit.android.room.participant.AudioTrackPublishDefaults
 import io.livekit.android.room.participant.VideoTrackPublishDefaults
 import io.livekit.android.room.track.ScreenSharePresets
+import io.livekit.android.room.track.VideoPreset169
 import livekit.org.webrtc.RtpParameters
 
 /**
@@ -97,6 +98,35 @@ object MediaTuning {
      * ovozni yengillashtirardi, lekin ekran audiosi (C-6 — video/musiqa ulashish)
      * sifatini buzardi va **majburiy yozuv** ham shu ovozni saqlaydi.
      */
+    /**
+     * KAMERA — zaif tarmoqda BIRINCHI qurbon (mahsulot qoidasi: ovoz > ekran > kamera).
+     *
+     * ## Nega 360p va nega simulcast
+     * Dars mazmuni EKRANDA (slayd, misol daftari), kamera esa "gapirayotgan odam"
+     * konteksti. Unga HD trafik sarflash — ekrandan o'g'irlash degani. Shuning uchun
+     * yuqori qatlam 360p bilan cheklanadi, past qatlam 180p: zaif o'quvchi ustozni
+     * butunlay yo'qotmaydi, faqat mayda ko'radi.
+     *
+     * ## `BALANCED` — ekrандan farqli o'laroq ATAYLAB
+     * Ekranда `MAINTAIN_RESOLUTION` (matn o'qilishi shart), kamerada esa aksincha:
+     * yuz uchun ravon harakat o'lchamdan muhimroq, shuning uchun WebRTC ikkalasini
+     * ham moslashtira olsin.
+     *
+     * ⚠️ Android SDK'da trek ustuvorligini (`RtpParameters.priority`) publish
+     * default'lari orqali berish MUMKIN EMAS (web'da `VideoEncoding.priority` bor).
+     * Amaldagi ustuvorlik shu bilan ta'minlanadi: kamera tepasi past (360p),
+     * ekran yuqori (720p) va ovoz DTX+RED bilan himoyalangan.
+     */
+    val CAMERA_HIGH: VideoPreset169 = VideoPreset169.H360
+    val CAMERA_LOW: VideoPreset169 = VideoPreset169.H180
+
+    fun cameraPublish(): VideoTrackPublishDefaults = VideoTrackPublishDefaults(
+        videoEncoding = CAMERA_HIGH.encoding,
+        simulcast = true,
+        simulcastLayers = listOf(CAMERA_LOW),
+        degradationPreference = RtpParameters.DegradationPreference.BALANCED,
+    )
+
     fun audioPublish(): AudioTrackPublishDefaults = AudioTrackPublishDefaults(
         dtx = true,
         red = true,

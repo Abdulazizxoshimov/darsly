@@ -37,6 +37,10 @@ object ApiErrors {
         "AUTHZ_UNAVAILABLE" to "Xizmat vaqtincha ishlamayapti — birozdan so‘ng urinib ko‘ring",
         "TOKEN_EXPIRED" to "Sessiya tugadi — qaytadan kiring",
         "TOKEN_INVALID" to "Sessiya yaroqsiz — qaytadan kiring",
+        // Bitta akkaunt = bitta faol sessiya (PRODUCT.md №1). "Sessiya tugadi"
+        // deb yozish ADASHTIRARDI: ustoz internetni yoki parolni ayblab,
+        // akkaunti ulashilganini bilmay qolardi. Batafsil: [LogoutReason].
+        "SESSION_REVOKED" to "Boshqa qurilmada kirildi — qaytadan kiring",
     )
 
     private val moshi: Moshi = Moshi.Builder().build()

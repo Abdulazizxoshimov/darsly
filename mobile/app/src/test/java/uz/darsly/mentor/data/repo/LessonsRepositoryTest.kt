@@ -41,13 +41,13 @@ class LessonsRepositoryTest {
         var writes = 0
             private set
 
-        override fun read(): CachedLessons? = value
-        override fun write(lessons: List<Lesson>, savedAtMillis: Long) {
+        override suspend fun read(): CachedLessons? = value
+        override suspend fun write(lessons: List<Lesson>, savedAtMillis: Long) {
             writes++
             value = CachedLessons(lessons, savedAtMillis)
         }
 
-        override fun clear() {
+        override suspend fun clear() {
             value = null
         }
     }

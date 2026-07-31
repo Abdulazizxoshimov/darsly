@@ -48,7 +48,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.hilt.navigation.compose.hiltViewModel
 import uz.darsly.mentor.data.api.Recording
 import uz.darsly.mentor.ui.theme.DarslyTheme
 import uz.darsly.mentor.util.LessonFormat
@@ -67,7 +67,7 @@ fun RecordingsScreen(
     lessonId: String,
     lessonTitle: String,
     onBack: () -> Unit,
-    vm: RecordingsViewModel = viewModel(),
+    vm: RecordingsViewModel = hiltViewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -231,6 +231,7 @@ private fun RecordingCard(
     preparing: Boolean,
     onDownload: () -> Unit,
 ) {
+    val c = DarslyTheme.colors
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp)) {
             Row(
@@ -273,6 +274,22 @@ private fun RecordingCard(
                 )
             }
 
+            // ⭐ SAQLASH MUDDATI (PRODUCT.md №5) — «3 kundan keyin o'chadi».
+            //
+            // Ustoz yozuvni "abadiy turadi" deb o'ylab yuklab olmasligi mumkin;
+            // 30 kundan keyin u yo'q bo'ladi va bu jimgina yo'qotish bo'lardi.
+            // Muddat yaqinlashganda matn ogohlantiruvchi rangda — serverdagi
+            // `recording_expiring` bildirishnomasi bilan bir xil chegarada.
+            RecordingFormat.retentionLabel(recording.expiresAt)?.let { label ->
+                val soon = RecordingFormat.isExpiringSoon(recording.expiresAt)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    label,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (soon) c.warning else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
             // Tugma FAQAT mumkin bo'lgan amal uchun chiqadi: o'chiq turgan
             // "Yuklab olish" tugmasi ustozni "nega ishlamayapti?" deb o'ylatardi.
             if (RecordingFormat.canDownload(recording)) {
@@ -302,6 +319,9 @@ private fun StatusBadge(status: String) {
         RecordingFormat.STATUS_RECORDING -> c.liveSoft to MaterialTheme.colorScheme.error
         RecordingFormat.STATUS_READY -> c.scheduledSoft to c.success
         RecordingFormat.STATUS_FAILED -> c.liveSoft to MaterialTheme.colorScheme.error
+        // Muddati o'tgan yozuv — XATO EMAS, shuning uchun qizil emas: fayl
+        // rejaga muvofiq o'chirilgan va qator tarix uchun qolgan.
+        RecordingFormat.STATUS_EXPIRED -> c.cancelledSoft to c.textMuted
         else -> c.cancelledSoft to c.warning
     }
     Surface(shape = RoundedCornerShape(percent = 50), color = bg) {

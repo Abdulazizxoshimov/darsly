@@ -3,6 +3,7 @@ package uz.darsly.mentor
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import dagger.hilt.android.AndroidEntryPoint
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -33,7 +34,6 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import uz.darsly.mentor.data.api.Session
 import uz.darsly.mentor.data.livekit.LessonSessionHolder
 import uz.darsly.mentor.data.repo.NotificationsBadge
 import uz.darsly.mentor.service.LessonService
@@ -47,10 +47,13 @@ import uz.darsly.mentor.ui.profile.ProfileScreen
 import uz.darsly.mentor.ui.recordings.RecordingsScreen
 import uz.darsly.mentor.ui.room.RoomScreen
 import uz.darsly.mentor.ui.schedule.ScheduleScreen
+import androidx.hilt.navigation.compose.hiltViewModel
+import uz.darsly.mentor.ui.AppViewModel
 import uz.darsly.mentor.ui.theme.DarslyTheme
 import uz.darsly.mentor.ui.update.UpdateGate
 import uz.darsly.mentor.util.NotificationFormat
 
+@AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -112,18 +115,18 @@ private val TABS = listOf(
 )
 
 @Composable
-private fun AppNav() {
+private fun AppNav(vm: AppViewModel = hiltViewModel()) {
     val nav = rememberNavController()
     val ctx = LocalContext.current
 
     // M1: ilova qayta ochilganda tokenlar shifrlangan preferens'dan tiklanadi —
     // ustoz login ekranini umuman ko'rmaydi.
-    val start = remember { if (Session.isLoggedIn) Routes.LESSONS else Routes.LOGIN }
+    val start = remember { if (vm.isLoggedInNow) Routes.LESSONS else Routes.LOGIN }
 
     // M2/M3: sessiya HOLATI kuzatiladi (hodisa emas). `StateFlow` bo'lgani uchun
     // bu kollektor kechikib ulansa ham allaqachon sodir bo'lgan logoutni ko'radi —
     // "tokenlar o'chdi, lekin ekran Darslarda qoldi" holati bo'lishi mumkin emas.
-    val loggedIn by Session.loggedIn.collectAsStateWithLifecycle()
+    val loggedIn by vm.loggedIn.collectAsStateWithLifecycle()
     LaunchedEffect(loggedIn) {
         val route = nav.currentDestination?.route
         // Parolni tiklash ekrani chiqmagan holatda ochiladi va uning oxirida
@@ -144,7 +147,7 @@ private fun AppNav() {
     val backStack by nav.currentBackStackEntryAsState()
     val currentRoute = backStack?.destination?.route
     val showBottomBar = TABS.any { it.route == currentRoute }
-    val unread by NotificationsBadge.count.collectAsStateWithLifecycle()
+    val unread by vm.unreadCount.collectAsStateWithLifecycle()
 
     Scaffold(
         bottomBar = {

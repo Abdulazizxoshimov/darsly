@@ -2,6 +2,8 @@ package uz.darsly.mentor.ui.recordings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import dagger.hilt.android.lifecycle.HiltViewModel
+import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -35,7 +37,7 @@ data class RecordingsUiState(
 /**
  * Dars yozuvlari: ro'yxat, boshlash/to'xtatish, yuklab olish.
  *
- * ## Mahsulot qarori (MOBILE-STATUS §7, 3-band)
+ * ## Mahsulot qarori
  * Yozib olish — Zoom'da dars **ichida** bosiladigan tugma, oldindan sozlanadigan
  * belgi emas. Shuning uchun bu ekran nafaqat tarixni ko'rsatadi, balki yozishni
  * boshlash/to'xtatish imkonini ham beradi. Dars yaratishdagi "Yozib olish"
@@ -47,8 +49,9 @@ data class RecordingsUiState(
  * bo'lardi — dars video fayli yuz megabaytlarcha. Tizim brauzeri/yuklab olish
  * menejeri buni allaqachon to'g'ri qiladi: fon rejimi, davom ettirish, xabarnoma.
  */
-class RecordingsViewModel(
-    private val repo: RecordingsRepository = RecordingsRepository.create(),
+@HiltViewModel
+class RecordingsViewModel @Inject constructor(
+    private val repo: RecordingsRepository,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(RecordingsUiState())

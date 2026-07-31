@@ -42,11 +42,20 @@ import java.io.IOException
  *  · Refresh 401/403 bersa → [onHardLogout] (tokenlar o'chadi) → keyingi 401'da
  *    `store.read() == null` → refresh umuman yuborilmaydi.
  *  · `/auth/login` va `/auth/refresh` yo'llari butunlay chetlab o'tiladi.
+ *
+ * ## Sessiya SERVERDA tugatilgan bo'lsa (`SESSION_REVOKED`)
+ * Bitta akkaunt = bitta faol sessiya (PRODUCT.md №1): boshqa qurilmadan
+ * kirilsa bu qurilmaning access token'i darhol 401 + `SESSION_REVOKED` oladi.
+ * Bunday 401'ga refresh yuborish MA'NOSIZ — refresh ham aynan shu kod bilan
+ * qaytadi (tugatilgan sessiyani grace oynasi ham tiriltirmaydi). Shuning
+ * uchun bu holat javob TANASIDAN taniladi va darhol toza logout qilinadi:
+ * ustoz keraksiz so'rovni ham, "Sessiya tugadi" degan adashtiruvchi matnni
+ * ham ko'rmaydi — u aniq sababni ([LogoutReason.REVOKED]) ko'radi.
  */
 class TokenAuthenticator(
     private val store: TokenStore,
     private val refreshApi: AuthRefreshApi,
-    private val onHardLogout: () -> Unit,
+    private val onHardLogout: (LogoutReason) -> Unit,
 ) : Authenticator {
 
     private val mutex = Mutex()
@@ -63,11 +72,27 @@ class TokenAuthenticator(
         val stale = response.request.header(HEADER)?.removePrefix(PREFIX)?.takeIf { it.isNotBlank() }
             ?: return null
 
+        // 4) Sessiya serverda tugatilgan — refresh urinishi ham 401 berardi.
+        //
+        // `peekBody` — tanani BUZMAYDIGAN o'qish: chaqiruvchi javob tanasini
+        // baribir to'liq oladi (`errorBody()` ishlashda davom etadi). Chegara
+        // ataylab kichik: bizga faqat `{"code":…}` kerak.
+        if (revoked(response)) {
+            onHardLogout(LogoutReason.REVOKED)
+            return null
+        }
+
         val fresh = runBlocking { freshToken(stale) } ?: return null
 
         return response.request.newBuilder()
             .header(HEADER, PREFIX + fresh)
             .build()
+    }
+
+    /** 401 javobi `SESSION_REVOKED` bilan kelganmi (tanani buzmasdan). */
+    private fun revoked(response: Response): Boolean {
+        val body = runCatching { response.peekBody(PEEK_BYTES).string() }.getOrNull()
+        return LogoutReason.ofBody(body) == LogoutReason.REVOKED
     }
 
     /**
@@ -91,7 +116,7 @@ class TokenAuthenticator(
         if (current.accessToken != stale) return@withLock current.accessToken
 
         val refreshToken = current.refreshToken.takeIf { it.isNotBlank() } ?: run {
-            onHardLogout()
+            onHardLogout(LogoutReason.EXPIRED)
             return@withLock null
         }
 
@@ -111,10 +136,16 @@ class TokenAuthenticator(
 
         val pair = resp.body()?.data
         if (!resp.isSuccessful || pair == null) {
-            resp.errorBody()?.close()
+            // Sabab AYNAN shu tanada: `SESSION_REVOKED` (boshqa qurilma) ni
+            // `TOKEN_INVALID` (oddiy eskirish) dan ajratadigan yagona manba.
+            // `string()` oqimni o'zi yopadi, shuning uchun qo'shimcha `close()`
+            // kerak emas.
+            val reason = LogoutReason.ofBody(runCatching { resp.errorBody()?.string() }.getOrNull())
             // 4xx = refresh token haqiqatan yaroqsiz → toza logout.
             // 5xx = server nosozligi → keyinroq qayta urinsin, sessiya saqlanadi.
-            if (resp.code() in 400..499) onHardLogout()
+            if (resp.code() in 400..499) {
+                onHardLogout(if (reason == LogoutReason.UNKNOWN) LogoutReason.EXPIRED else reason)
+            }
             return@withLock null
         }
 
@@ -126,5 +157,8 @@ class TokenAuthenticator(
         const val HEADER = "Authorization"
         const val PREFIX = "Bearer "
         val SKIP_PATHS = listOf("/auth/login", "/auth/refresh", "/auth/register")
+
+        /** Xato konverti — bir necha o'nlab bayt; 1 KB bilan cheklaymiz. */
+        const val PEEK_BYTES = 1024L
     }
 }

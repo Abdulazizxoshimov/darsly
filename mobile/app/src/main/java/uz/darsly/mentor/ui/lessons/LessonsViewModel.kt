@@ -1,8 +1,9 @@
 package uz.darsly.mentor.ui.lessons
 
-import android.app.Application
-import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import dagger.hilt.android.lifecycle.HiltViewModel
+import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -36,14 +37,10 @@ data class LessonsUiState(
  * Tarmoq yiqilsa keshdagi ro'yxat **qoladi** va yuqorida "internet yo'q" chizig'i chiqadi:
  * ustoz koridorda ro'yxatni ko'ra olishi kerak.
  */
-class LessonsViewModel @JvmOverloads constructor(
-    app: Application,
-    // @JvmOverloads MAJBURIY: Compose'ning `viewModel()` standart fabrikasi
-    // AYNAN `(Application)` konstruktorini reflektsiya bilan qidiradi. Kotlin
-    // default argument o'zi bunday konstruktor yasamaydi — ilova ishga tushishida
-    // `NoSuchMethodException` bilan yiqilardi.
-    private val repo: LessonsRepository = LessonsRepository.create(app),
-) : AndroidViewModel(app) {
+@HiltViewModel
+class LessonsViewModel @Inject constructor(
+    private val repo: LessonsRepository,
+) : ViewModel() {
 
     private val _state = MutableStateFlow(LessonsUiState())
     val state: StateFlow<LessonsUiState> = _state.asStateFlow()
@@ -57,17 +54,22 @@ class LessonsViewModel @JvmOverloads constructor(
      */
     fun start() {
         if (_state.value.loading || _state.value.refreshing) return
-        if (_state.value.lessons.isEmpty()) {
-            repo.cached()?.let { cached ->
-                _state.update {
-                    it.copy(
-                        lessons = LessonFormat.sortForDisplay(cached.lessons),
-                        cachedAtMillis = cached.savedAtMillis,
-                    )
+        // Kesh o'qish DISKKA tegadi (shifr ochish + JSON parse) — shuning uchun
+        // korutinada. Avval u asosiy oqimda bajarilardi va ko'p darsli ustozda
+        // ekran ochilishida qotib qolish (ANR) xavfi bor edi.
+        viewModelScope.launch {
+            if (_state.value.lessons.isEmpty()) {
+                repo.cached()?.let { cached ->
+                    _state.update {
+                        it.copy(
+                            lessons = LessonFormat.sortForDisplay(cached.lessons),
+                            cachedAtMillis = cached.savedAtMillis,
+                        )
+                    }
                 }
             }
+            refresh(userInitiated = false)
         }
-        refresh(userInitiated = false)
     }
 
     /** Pull-to-refresh va "Qayta urinish" tugmasi. */

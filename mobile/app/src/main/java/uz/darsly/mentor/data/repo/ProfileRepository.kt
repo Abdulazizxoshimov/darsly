@@ -2,7 +2,7 @@ package uz.darsly.mentor.data.repo
 
 import uz.darsly.mentor.data.api.ChangePasswordReq
 import uz.darsly.mentor.data.api.DarslyApi
-import uz.darsly.mentor.data.api.Net
+import javax.inject.Inject
 import uz.darsly.mentor.data.api.UpdateProfileReq
 import uz.darsly.mentor.data.api.User
 
@@ -14,7 +14,7 @@ import uz.darsly.mentor.data.api.User
  * aslida so'rov yiqilgan bo'lsa. Darslar ro'yxatidan farqi shu — u ustozga
  * koridorda kerak, profil esa yo'q.
  */
-class ProfileRepository(private val api: DarslyApi) {
+class ProfileRepository @Inject constructor(private val api: DarslyApi) {
 
     suspend fun load(): Result<User> = runCatching {
         api.profile().data ?: throw IllegalStateException("Server bo'sh javob qaytardi")
@@ -40,6 +40,5 @@ class ProfileRepository(private val api: DarslyApi) {
         runCatching { api.changePassword(ChangePasswordReq(currentPassword, newPassword)) }
 
     companion object {
-        fun create(): ProfileRepository = ProfileRepository(Net.api)
     }
 }

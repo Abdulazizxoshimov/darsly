@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Monoxrom variant — Android 13+ "themed icons" uchun.
+  Tizim uni foydalanuvchi tanlagan mavzu rangi bilan bo'yaydi, shuning uchun
+  bu yerda FAQAT shakl bo'lishi kerak (rang ahamiyatsiz, alfa muhim).
+
+  Shakl foreground bilan bir xil "jon pulsi" chizig'i — faqat rang oq.
+  Busiz Android 13+ da mavzuli ikonkalar yoqilganda ilova "boshqacha" bo'lib
+  ajralib turardi — barcha tizim ikonkalari bo'yalgan, bizniki esa yo'q.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:pathData="M27,55.5 L39.5,55.5 L47,37 L58,71.5 L64.5,55.5 L81,55.5"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="6.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+</vector>

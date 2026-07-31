@@ -17,6 +17,22 @@ livekit = "2.27.0"
 # androidx.security:security-crypto — 1.1.0 BARQAROR (2025-07-30, Tink 1.8.0).
 # Avval 1.1.0-alpha06 (2023-04) edi: 3 yillik pre-release. Batafsil: mobile/README.md §9.
 securityCrypto = "1.1.0"
+# io.sentry:sentry-android — crash-hisobotlari (M15).
+# NDK qo'llab-quvvatlashi shu artefaktga KIRADI: bizdagi ma'lum yiqilish
+# (`libjingle_peerconnection_so.so` · SIGABRT) NATIV qatlamda va uni faqat
+# NDK handler tutadi — sof Java/Kotlin handler u yerda hech nima ko'rmaydi.
+sentry = "7.18.0"
+# Hilt (Dagger) — bog'liqlik injeksiyasi.
+#
+# NEGA KERAK: avval `Net`, `Session`, `Realtime`, `NotificationsBadge` global
+# `object` singleton'lar edi. Oqibati — ViewModel'larni test qilib bo'lmasdi
+# (bog'liqlikni almashtirishning yo'li yo'q) va 37 test faylida BITTA ham
+# ViewModel testi yo'q edi. Hilt shu eshikni ochadi.
+#
+# Versiya Kotlin 2.0.21 + KSP bilan mos (2.52+ KSP'ni to'liq qo'llab-quvvatlaydi).
+hilt = "2.52"
+# androidx.hilt — Compose navigatsiyasida `hiltViewModel()` uchun.
+hiltNavigationCompose = "1.2.0"
 datastore = "1.1.1"
 junit = "4.13.2"
 coroutines = "1.8.1"
@@ -42,6 +58,10 @@ retrofit = { group = "com.squareup.retrofit2", name = "retrofit", version.ref = 
 retrofit-converter-moshi = { group = "com.squareup.retrofit2", name = "converter-moshi", version.ref = "retrofit" }
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
 okhttp-logging = { group = "com.squareup.okhttp3", name = "logging-interceptor", version.ref = "okhttp" }
+sentry-android = { group = "io.sentry", name = "sentry-android", version.ref = "sentry" }
+hilt-android = { group = "com.google.dagger", name = "hilt-android", version.ref = "hilt" }
+hilt-compiler = { group = "com.google.dagger", name = "hilt-android-compiler", version.ref = "hilt" }
+hilt-navigation-compose = { group = "androidx.hilt", name = "hilt-navigation-compose", version.ref = "hiltNavigationCompose" }
 moshi = { group = "com.squareup.moshi", name = "moshi", version.ref = "moshi" }
 moshi-codegen = { group = "com.squareup.moshi", name = "moshi-kotlin-codegen", version.ref = "moshi" }
 
@@ -57,3 +77,4 @@ android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
+hilt = { id = "com.google.dagger.hilt.android", version.ref = "hilt" }

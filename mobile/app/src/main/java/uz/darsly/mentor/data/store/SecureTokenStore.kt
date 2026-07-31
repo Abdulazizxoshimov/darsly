@@ -53,14 +53,38 @@ object SecureTokenStore {
         }
     }
 
+    /**
+     * Shifrlangan preferens faylini ochadi — nom bo'yicha.
+     *
+     * `internal`: `SecureLessonsCache` ham aynan shu qattiqlashtirilgan yo'ldan
+     * (buzilish → tozalash → bir marta qayta urinish) foydalanadi. Bu mantiqni
+     * ikkinchi marta yozish OEM Keystore nosozliklarini yarim qoplashga
+     * olib kelardi.
+     */
+    internal fun openEncryptedPrefs(context: Context, prefsName: String, firstAttempt: Boolean): SharedPreferences? =
+        openEncryptedNamed(context, prefsName, firstAttempt)
+
+    /** Buzilgan keyset/faylni tozalaydi — nom bo'yicha (`openEncryptedPrefs` juftligi). */
+    internal fun wipePrefs(context: Context, prefsName: String) {
+        runCatching { context.deleteSharedPreferences(prefsName) }
+            .onFailure { LKLog.w(it) { "preferens fayli o'chirilmadi: $prefsName" } }
+        runCatching {
+            KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+                .deleteEntry(MASTER_KEY_ALIAS)
+        }.onFailure { LKLog.w(it) { "master key o'chirilmadi" } }
+    }
+
     private fun openEncrypted(context: Context, firstAttempt: Boolean): SharedPreferences? =
+        openEncryptedNamed(context, PREFS_NAME, firstAttempt)
+
+    private fun openEncryptedNamed(context: Context, prefsName: String, firstAttempt: Boolean): SharedPreferences? =
         try {
             val masterKey = MasterKey.Builder(context, MASTER_KEY_ALIAS)
                 .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
                 .build()
             EncryptedSharedPreferences.create(
                 context,
-                PREFS_NAME,
+                prefsName,
                 masterKey,
                 EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
                 EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,

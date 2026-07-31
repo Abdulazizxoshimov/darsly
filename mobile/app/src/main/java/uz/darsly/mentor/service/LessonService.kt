@@ -11,6 +11,7 @@ import android.os.IBinder
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import io.livekit.android.util.LKLog
+import uz.darsly.mentor.data.livekit.LessonSessionHolder
 
 /**
  * Dars foreground servisi (M15 — "fon rejimida davom etish").
@@ -79,7 +80,40 @@ class LessonService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        return START_STICKY
+        // START_NOT_STICKY (avval START_STICKY edi).
+        //
+        // START_STICKY da tizim servisni NULL intent bilan qayta ishga tushiradi.
+        // Bunda `withProjection=false` bo'ladi va bildirishnoma "Dars davom
+        // etmoqda" deb turadi — holbuki hech qanday sessiya yo'q: LiveKit
+        // ulanishi ham, ekran ulashish ham allaqachon o'lgan. Foydalanuvchi
+        // uchun bu yolg'on holat: u darsga qaytolmaydi, lekin ilova davom
+        // etayotgandek ko'rsatadi.
+        //
+        // Dars sessiyasi qayta tiklanishi kerak bo'lsa, buni Activity boshqaradi
+        // (`LessonSessionHolder` + token bilan) — tizimning "ko'r" restarti emas.
+        return START_NOT_STICKY
+    }
+
+    /**
+     * Foydalanuvchi ilovani "recents" (so'nggi ilovalar) ro'yxatidan surib
+     * tashladi.
+     *
+     * # Nega bu MAXFIYLIK masalasi (M14)
+     *
+     * Activity o'ladi, lekin foreground servis tirik qoladi — u bilan birga
+     * **MediaProjection ham**. Ya'ni ustoz ilovani yopdim deb o'ylaydi, ekrani
+     * esa yozib olinishda/ulashilishda davom etaveradi. Bu shunchaki resurs
+     * isrofi emas: ekranda parol, shaxsiy xat yoki boshqa dars ochilishi mumkin.
+     *
+     * Sessiya egaligi UI qatlamida bo'lgani uchun bu holat qoplanmagandi —
+     * Activity o'lganda sessiyani hech kim tozalamasdi. Endi servis o'z
+     * hayotiy siklida uni ATAYLAB bo'shatadi.
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        LKLog.i { "LessonService: ilova recents'dan olib tashlandi — sessiya tozalanmoqda" }
+        LessonSessionHolder.stop()
+        stopSelf()
+        super.onTaskRemoved(rootIntent)
     }
 
     private fun granted(permission: String): Boolean =
@@ -87,7 +121,12 @@ class LessonService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        LKLog.i { "LessonService to'xtadi" }
+        // Servis qanday sababdan o'lmasin (tizim xotira uchun o'ldirdi, ustoz
+        // yakunladi, `onTaskRemoved`) — MediaProjection va kamera/mikrofon
+        // NAZORATSIZ qolmasligi kerak. `stop()` idempotent, shuning uchun
+        // takroriy chaqiruv xavfsiz.
+        LessonSessionHolder.stop()
+        LKLog.i { "LessonService to'xtadi — sessiya bo'shatildi" }
     }
 
     companion object {

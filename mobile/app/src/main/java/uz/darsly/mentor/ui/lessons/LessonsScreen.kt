@@ -2,7 +2,13 @@
 
 package uz.darsly.mentor.ui.lessons
 
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,6 +25,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -29,7 +36,9 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -43,6 +52,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -55,14 +65,18 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.hilt.navigation.compose.hiltViewModel
 import uz.darsly.mentor.BuildConfig
 import uz.darsly.mentor.data.api.Lesson
 import uz.darsly.mentor.ui.theme.DarslyTheme
+import uz.darsly.mentor.ui.theme.PulseMark
+import uz.darsly.mentor.ui.theme.liveCardGlow
+import uz.darsly.mentor.ui.theme.neonGlow
 import uz.darsly.mentor.util.LessonFormat
 import uz.darsly.mentor.util.Share
 
@@ -76,7 +90,7 @@ import uz.darsly.mentor.util.Share
 fun LessonsScreen(
     onOpenLesson: (Lesson) -> Unit,
     onOpenRecordings: (Lesson) -> Unit,
-    vm: LessonsViewModel = viewModel(),
+    vm: LessonsViewModel = hiltViewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -104,12 +118,28 @@ fun LessonsScreen(
         // (`ProfileScreen`). Zoom'da ham chiqish sozlamalar ichida: asosiy
         // ekrandagi doimiy "Chiqish" tugmasi tasodifan bosiladigan va hech qachon
         // kerak bo'lmaydigan tugma edi.
-        topBar = { TopAppBar(title = { Text("Darslar") }) },
+        topBar = {
+            TopAppBar(title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Brend har ekranda: puls belgisi sarlavha yonida (B tili).
+                    PulseMark(size = 22.dp)
+                    Spacer(Modifier.width(10.dp))
+                    Text("Darslar")
+                }
+            })
+        },
         floatingActionButton = {
+            // Asosiy harakat — glow'ga ruxsat berilgan uch joydan biri.
             ExtendedFloatingActionButton(
                 onClick = { createOpen = true },
                 icon = { Icon(Icons.Default.Add, contentDescription = null) },
                 text = { Text("Dars yaratish") },
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
+                modifier = Modifier.neonGlow(
+                    color = DarslyTheme.colors.neon,
+                    shape = MaterialTheme.shapes.large,
+                ),
             )
         },
     ) { padding ->
@@ -157,6 +187,10 @@ fun LessonsScreen(
             onCreated = { lesson ->
                 createOpen = false
                 vm.onLessonCreated(lesson)
+                // Tezkor dars: yaratildi → DARHOL xonaga (Zoom "New meeting" oqimi).
+                // `onOpenLesson` holatga qarab yo'naltiradi; yangi dars uchun bu
+                // har doim xona (`LessonActions.primary(scheduled) == START`).
+                onOpenLesson(lesson)
             },
         )
     }
@@ -312,8 +346,44 @@ private fun LessonList(
 @Composable
 private fun StatusBadge(status: String) {
     val c = DarslyTheme.colors
+    if (status == "live") {
+        // B tili: LIVE — to'ldirilgan qizil nishon, oq matn, pulslanuvchi nuqta.
+        // Glow'ga ruxsat berilgan uch joydan biri.
+        val pulse = rememberInfiniteTransition(label = "live-pulse")
+        val dotAlpha by pulse.animateFloat(
+            initialValue = 1f,
+            targetValue = 0.25f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 800),
+                repeatMode = RepeatMode.Reverse,
+            ),
+            label = "live-dot",
+        )
+        Surface(
+            shape = RoundedCornerShape(percent = 50),
+            color = c.liveRed,
+            modifier = Modifier.neonGlow(c.liveRed, RoundedCornerShape(percent = 50), elevation = 8.dp),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+            ) {
+                Box(
+                    Modifier
+                        .size(6.dp)
+                        .background(Color.White.copy(alpha = dotAlpha), CircleShape),
+                )
+                Text(
+                    LessonFormat.statusLabel(status),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color.White,
+                )
+            }
+        }
+        return
+    }
     val (bg, fg) = when (status) {
-        "live" -> c.liveSoft to MaterialTheme.colorScheme.error
         "ended" -> c.endedSoft to c.textMuted
         "cancelled" -> c.cancelledSoft to c.warning
         else -> c.scheduledSoft to c.info
@@ -363,7 +433,21 @@ private fun LessonCard(
 ) {
     var menuOpen by rememberSaveable { mutableStateOf(false) }
 
-    Card(Modifier.fillMaxWidth().clickable(onClick = onClick)) {
+    // B tili: JONLI dars «nafas oladi» (neon chegara + mint nur), qolgan
+    // kartalar tinch, ingichka chegarali. Glow faqat shu holatda — qoidaga qara
+    // (`ui/theme/Glow.kt`).
+    val isLive = lesson.status == "live"
+    val cardShape = MaterialTheme.shapes.large
+    val cardModifier = if (isLive) {
+        Modifier.fillMaxWidth().liveCardGlow(cardShape)
+    } else {
+        Modifier.fillMaxWidth()
+    }
+    Card(
+        modifier = cardModifier.clickable(onClick = onClick),
+        shape = cardShape,
+        border = if (isLive) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
         Column(Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -457,12 +541,28 @@ private fun LessonCard(
                     // test ostida). Avval har qanday dars xonani ochib, keyin serverdan
                     // `lesson is not active` (400) qaytardi.
                     val primary = LessonActions.primary(lesson.status)
-                    Button(
-                        onClick = onClick,
-                        enabled = primary != LessonActions.Primary.NONE,
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Text(LessonActions.label(primary), maxLines = 1)
+                    if (isLive) {
+                        // Jonli darsda harakat YAGONA va yorqin — to'ldirilgan mint.
+                        Button(
+                            onClick = onClick,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text(LessonActions.label(primary), maxLines = 1)
+                        }
+                    } else {
+                        // B tili: jonli bo'lmagan kartada tugma kontur (outline) —
+                        // ekranda bir vaqtda faqat bitta narsa «yonadi».
+                        OutlinedButton(
+                            onClick = onClick,
+                            enabled = primary != LessonActions.Primary.NONE,
+                            border = BorderStroke(1.dp, DarslyTheme.colors.mintOutline),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = MaterialTheme.colorScheme.primary,
+                            ),
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text(LessonActions.label(primary), maxLines = 1)
+                        }
                     }
                     // M8 — join havolasi Telegramga tizim "Ulashish" oynasi orqali.
                     TextButton(onClick = onShare, enabled = lesson.joinSlug != null) {

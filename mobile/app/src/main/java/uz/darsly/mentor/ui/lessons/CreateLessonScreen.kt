@@ -25,11 +25,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.hilt.navigation.compose.hiltViewModel
 import uz.darsly.mentor.data.api.Lesson
 
 /**
- * Dars yaratish (M7).
+ * Tezkor dars yaratish (M7, M21'da soddalashtirildi).
+ *
+ * Mahsulot qarori: «Dars yaratish» = darhol boshlash (Zoom'ning "New meeting"i).
+ * Shuning uchun formada FAQAT nom, parol (ixtiyoriy), kutish xonasi va yozib
+ * olish bor — tavsif/vaqt/davomiylik so'ralmaydi. Vaqtli dars endi Jadval
+ * bo'limidagi «Dars rejalashtirish» orqali ([uz.darsly.mentor.ui.schedule.ScheduleLessonDialog]).
  *
  * NEGA to'liq ekranli `Dialog`, alohida navigatsiya yo'nalishi emas: forma bitta
  * qadamdan iborat va `MainActivity` navigatsiya grafigiga tegmaslik kerak edi
@@ -40,7 +45,7 @@ import uz.darsly.mentor.data.api.Lesson
 fun CreateLessonDialog(
     onDismiss: () -> Unit,
     onCreated: (Lesson) -> Unit,
-    vm: CreateLessonViewModel = viewModel(),
+    vm: CreateLessonViewModel = hiltViewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
 
@@ -66,7 +71,7 @@ fun CreateLessonDialog(
             modifier = Modifier.fillMaxSize(),
             topBar = {
                 TopAppBar(
-                    title = { Text("Yangi dars") },
+                    title = { Text("Yangi dars — hoziroq") },
                     navigationIcon = {
                         IconButton(onClick = dismiss, enabled = !state.submitting) {
                             Icon(Icons.Default.Close, contentDescription = "Yopish")
@@ -80,7 +85,7 @@ fun CreateLessonDialog(
                             if (state.submitting) {
                                 CircularProgressIndicator(Modifier.height(18.dp))
                             } else {
-                                Text("Yaratish")
+                                Text("Boshlash")
                             }
                         }
                     },
@@ -94,6 +99,7 @@ fun CreateLessonDialog(
                 errors = state.errors,
                 showErrors = state.showErrors,
                 onEdit = vm::edit,
+                instant = true,
                 serverError = state.serverError,
                 modifier = Modifier
                     .fillMaxSize()

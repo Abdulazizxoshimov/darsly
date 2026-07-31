@@ -2,6 +2,8 @@ package uz.darsly.mentor.ui.profile
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import dagger.hilt.android.lifecycle.HiltViewModel
+import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -9,9 +11,9 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import retrofit2.HttpException
 import uz.darsly.mentor.data.api.ApiErrors
-import uz.darsly.mentor.data.api.Session
 import uz.darsly.mentor.data.api.AuthRepository
 import uz.darsly.mentor.data.api.User
+import uz.darsly.mentor.data.api.SessionManager
 import uz.darsly.mentor.data.repo.ProfileRepository
 
 data class ProfileUiState(
@@ -61,8 +63,11 @@ data class ProfileUiState(
  * `@JvmOverloads` hiylasi ham kerak emas (u `(Application)` konstruktori
  * reflektsiya bilan qidirilgani uchun zarur edi).
  */
-class ProfileViewModel(
-    private val repo: ProfileRepository = ProfileRepository.create(),
+@HiltViewModel
+class ProfileViewModel @Inject constructor(
+    private val repo: ProfileRepository,
+    private val auth: AuthRepository,
+    private val session: SessionManager,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(ProfileUiState())
@@ -105,7 +110,7 @@ class ProfileViewModel(
                     // Endi bunday holatda avtomatik chiqiladi va kirish ekrani
                     // ko'rsatiladi — foydalanuvchi qayta kira oladi.
                     if (t is HttpException && t.code() == 404) {
-                        Session.forceLogout()
+                        session.forceLogout()
                         return@onFailure
                     }
                     _state.update { it.copy(loading = false, error = ApiErrors.humanError(t)) }
@@ -218,13 +223,13 @@ class ProfileViewModel(
 
     /**
      * M3 — chiqish. Serverga xabar beramiz, lekin natijadan qat'i nazar lokal
-     * tozalash bajariladi; navigatsiyani `Session.loggedIn` signali qo'zg'atadi.
+     * tozalash bajariladi; navigatsiyani `SessionManager.loggedIn` signali qo'zg'atadi.
      */
     fun logout() {
         if (_state.value.loggingOut) return
         _state.update { it.copy(loggingOut = true) }
         viewModelScope.launch {
-            AuthRepository.logout()
+            auth.logout()
             _state.update { it.copy(loggingOut = false) }
         }
     }

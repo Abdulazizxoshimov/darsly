@@ -39,6 +39,7 @@ import io.livekit.android.room.Room
 import uz.darsly.mentor.data.livekit.RaisedHand
 import uz.darsly.mentor.data.livekit.RoomReaction
 import uz.darsly.mentor.ui.theme.DarslyTheme
+import uz.darsly.mentor.ui.theme.neonGlow
 
 /**
  * Xonaning asosiy sahnasi (M20 · R-1).
@@ -202,8 +203,14 @@ private fun ParticipantGrid(room: Room?, state: RoomUiState) {
                                 // Gapirayotgan o'quvchi brend rangi bilan ajratiladi —
                                 // ustoz kim gapirayotganini bir qarashda ko'radi.
                                 if (p.speaking) {
-                                    Modifier.border(
-                                        2.dp,
+                                    // B tili: gapirayotgan — xonaning «jonli»
+                                    // elementi, neon nur bilan ajratiladi.
+                                    Modifier.neonGlow(
+                                        color = MaterialTheme.colorScheme.primary,
+                                        shape = RoundedCornerShape(14.dp),
+                                        elevation = 10.dp,
+                                    ).border(
+                                        1.5.dp,
                                         MaterialTheme.colorScheme.primary,
                                         RoundedCornerShape(14.dp),
                                     )

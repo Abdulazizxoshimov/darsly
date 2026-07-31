@@ -67,10 +67,74 @@ class RoomDataParserTest {
     }
 
     @Test
+    fun `fayl ilovasi boglangan chat xabari oqiladi`() {
+        val raw = """{"id":"m3","sender_identity":"u1","sender_name":"Ali","body":"Uy ishi",""" +
+            """"file":{"name":"uy_ishi.pdf","size":184320,"mime":"application/pdf",""" +
+            """"url":"https://minio/x?sig=1","expires_in_s":3600}}"""
+        val s = parser.parse(raw) as RoomSignal.Chat
+        assertEquals("uy_ishi.pdf", s.file?.name)
+        assertEquals(184320L, s.file?.size)
+        assertEquals("https://minio/x?sig=1", s.file?.url)
+    }
+
+    @Test
+    fun `izohsiz fayl xabari YOQOLMAYDI`() {
+        // ⭐ REGRESSIYA: `body` avval MAJBURIY edi va izohsiz yuborilgan fayl
+        // jimgina tashlanardi — fayl serverga tushardi, lekin ustoz ekranida
+        // hech nima ko'rinmasdi (faqat tarixni qayta yuklaganda paydo bo'lardi).
+        val raw = """{"id":"m4","sender_identity":"u1","sender_name":"Ali","body":"",""" +
+            """"file":{"name":"rasm.png","size":10,"mime":"image/png","url":"https://x"}}"""
+        val s = parser.parse(raw) as RoomSignal.Chat
+        assertEquals("", s.body)
+        assertEquals("rasm.png", s.file?.name)
+    }
+
+    @Test
+    fun `na matn na fayl bolsa xabar etiborsiz`() {
+        assertNull(parser.parse("""{"id":"m5","sender_name":"Ali"}"""))
+    }
+
+    @Test
+    fun `chat_deleted hodisasi ID beradi`() {
+        val raw = """{"kind":"chat_deleted","id":"m1","lesson_id":"l1","deleted_by":"mentor1"}"""
+        assertEquals(RoomSignal.ChatDeleted("m1"), parser.parse(raw))
+    }
+
+    @Test
+    fun `IDsiz chat_deleted etiborsiz`() {
+        // ID'siz hodisa bilan qiladigan ish yo'q — noto'g'ri xabarni
+        // o'chirgandan ko'ra hech narsa qilmagan yaxshi.
+        assertNull(parser.parse("""{"kind":"chat_deleted","lesson_id":"l1"}"""))
+    }
+
+    @Test
+    fun `poll_published natijasi bilan keladi`() {
+        val raw = """{"kind":"poll_published","results":{"poll":{"id":"p1","question":"Q",""" +
+            """"options":["A","B"]},"counts":[3,7],"total":10}}"""
+        val s = parser.parse(raw) as RoomSignal.PollPublished
+        assertEquals("p1", s.pollId)
+        assertEquals(listOf(3, 7), s.counts)
+        assertEquals(10, s.total)
+    }
+
+    @Test
+    fun `poll_published totalsiz kelsa ovozlar yigindisi olinadi`() {
+        val raw = """{"kind":"poll_published","results":{"poll":{"id":"p2"},"counts":[1,2,3]}}"""
+        val s = parser.parse(raw) as RoomSignal.PollPublished
+        assertEquals(6, s.total)
+    }
+
+    @Test
+    fun `natijasiz poll_published etiborsiz`() {
+        assertNull(parser.parse("""{"kind":"poll_published"}"""))
+        assertNull(parser.parse("""{"kind":"poll_published","results":{"counts":[1]}}"""))
+    }
+
+    @Test
     fun `notanish tur va buzuq JSON null qaytaradi`() {
         // Oldinga moslik: yangi signal turi qo'shilsa eski ilova YIQILMASLIGI kerak.
         assertNull(parser.parse("""{"kind":"wb","act":"stroke"}"""))
-        assertNull(parser.parse("""{"kind":"poll","action":"open"}"""))
+        assertNull(parser.parse("""{"kind":"kelajakdagi_tur","action":"open"}"""))
         assertNull(parser.parse("buzuq json"))
         assertNull(parser.parse(""))
         assertNull(parser.parse("""{}"""))
@@ -165,5 +229,50 @@ class ReactionFeedTest {
         assertEquals(ReactionFeed.MAX, f.size)
         // Eng yangisi saqlanadi, eskisi tushib qoladi.
         assertEquals("A19", f.first().name)
+    }
+
+    // ─── O'tkinchilik (TTL) ──────────────────────────────────────────────────
+    //
+    // ⭐ REGRESSIYA: reaksiya ekranda YANGISI kelguncha turardi. Ya'ni darsning
+    // 5-daqiqasidagi 👍 soat oxirigacha sahna burchagida osilib turardi va
+    // ustoz uni HOZIRGI reaksiya deb o'qirdi — serverda esa u umuman
+    // saqlanmaydi (o'tkinchi signal).
+
+    @Test
+    fun `eskirgan reaksiya royxatdan chiqadi`() {
+        val old = RoomReaction(1, "👍", "Ali", at = 1_000L)
+        val feed = listOf(old)
+        assertTrue(ReactionFeed.prune(feed, 1_000L + ReactionFeed.TTL_MS).isEmpty())
+    }
+
+    @Test
+    fun `hali muddati otmagan reaksiya qoladi`() {
+        val fresh = RoomReaction(1, "👍", "Ali", at = 1_000L)
+        val left = ReactionFeed.prune(listOf(fresh), 1_000L + ReactionFeed.TTL_MS - 1)
+        assertEquals(listOf(fresh), left)
+    }
+
+    @Test
+    fun `yangi reaksiya qoshilganda eskilari tozalanadi`() {
+        val old = RoomReaction(1, "👍", "Ali", at = 1_000L)
+        val new = RoomReaction(2, "🎉", "Vali", at = 1_000L + ReactionFeed.TTL_MS + 1)
+        val f = ReactionFeed.add(listOf(old), new)
+        assertEquals(listOf("🎉"), f.map { it.emoji })
+    }
+
+    @Test
+    fun `vaqtsiz reaksiyalar tegilmaydi`() {
+        // `at = 0` — vaqt manbai bo'lmagan joydan kelgan. Ularni "cheksiz eski"
+        // deb hisoblash butun ro'yxatni jimgina tozalab yuborardi.
+        val timeless = listOf(RoomReaction(1, "👍", "Ali"))
+        assertTrue(ReactionFeed.prune(timeless, Long.MAX_VALUE) === timeless)
+    }
+
+    @Test
+    fun `ozgarish bolmasa AYNI royxat qaytadi`() {
+        // Ortiqcha rekompozitsiya bo'lmasin (`HandQueue.apply` bilan bir naqsh).
+        val feed = listOf(RoomReaction(1, "👍", "Ali", at = 1_000L))
+        assertTrue(ReactionFeed.prune(feed, 1_500L) === feed)
+        assertTrue(ReactionFeed.prune(emptyList(), 1_500L).isEmpty())
     }
 }

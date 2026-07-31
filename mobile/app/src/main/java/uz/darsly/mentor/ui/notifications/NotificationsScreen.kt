@@ -44,7 +44,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.hilt.navigation.compose.hiltViewModel
 import uz.darsly.mentor.data.api.Notification
 import uz.darsly.mentor.ui.theme.DarslyTheme
 import uz.darsly.mentor.util.NotificationFormat
@@ -62,7 +62,7 @@ import uz.darsly.mentor.util.NotificationFormat
 @Composable
 fun NotificationsScreen(
     onOpenLesson: (String) -> Unit,
-    vm: NotificationsViewModel = viewModel(),
+    vm: NotificationsViewModel = hiltViewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }

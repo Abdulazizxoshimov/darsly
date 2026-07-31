@@ -16,17 +16,22 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
-import androidx.lifecycle.viewmodel.compose.viewModel
+import dagger.hilt.android.lifecycle.HiltViewModel
+import uz.darsly.mentor.data.api.DarslyApi
+import javax.inject.Inject
+import androidx.hilt.navigation.compose.hiltViewModel
 import io.livekit.android.util.LKLog
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import uz.darsly.mentor.BuildConfig
-import uz.darsly.mentor.data.api.Net
 
 /** Ishga tushganda `GET /api/v1/app-config` ni bir marta so'raydi (M42). */
-class UpdateViewModel : ViewModel() {
+@HiltViewModel
+class UpdateViewModel @Inject constructor(
+    private val api: DarslyApi,
+) : ViewModel() {
 
     private val _state = MutableStateFlow<UpdateState>(UpdateState.None)
     val state: StateFlow<UpdateState> = _state.asStateFlow()
@@ -35,7 +40,7 @@ class UpdateViewModel : ViewModel() {
 
     fun check() {
         viewModelScope.launch {
-            val cfg = runCatching { Net.api.appConfig().data?.android }
+            val cfg = runCatching { api.appConfig().data?.android }
                 .onFailure { LKLog.w(it) { "app-config o'qilmadi — fail-open" } }
                 .getOrNull()
             _state.value = UpdateDecider.decide(BuildConfig.VERSION_NAME, cfg)
@@ -51,7 +56,7 @@ class UpdateViewModel : ViewModel() {
  * · [UpdateState.Optional] → yopiladigan eslatma (sessiyada bir marta).
  */
 @Composable
-fun UpdateGate(vm: UpdateViewModel = viewModel()) {
+fun UpdateGate(vm: UpdateViewModel = hiltViewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
     val ctx = LocalContext.current
     var optionalDismissed by remember { mutableStateOf(false) }

@@ -2,6 +2,8 @@ package uz.darsly.mentor.ui.room
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import dagger.hilt.android.lifecycle.HiltViewModel
+import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -10,7 +12,6 @@ import kotlinx.coroutines.launch
 import uz.darsly.mentor.data.api.ApiErrors
 import uz.darsly.mentor.data.api.WaitingRoomRequest
 import uz.darsly.mentor.data.repo.WaitingRoomRepository
-import uz.darsly.mentor.data.ws.Realtime
 import uz.darsly.mentor.data.ws.RealtimeClient
 import uz.darsly.mentor.data.ws.RealtimeEvent
 
@@ -41,9 +42,10 @@ data class WaitingRoomUiState(
  * Ikkalasining birlashishi — [WaitingRoomState] da, sof funksiyalarda va
  * testlar ostida (dublikat, boshqa darsning so'rovi, tartib).
  */
-class WaitingRoomViewModel(
-    private val repo: WaitingRoomRepository = WaitingRoomRepository.create(),
-    private val realtime: RealtimeClient = Realtime.client,
+@HiltViewModel
+class WaitingRoomViewModel @Inject constructor(
+    private val repo: WaitingRoomRepository,
+    private val realtime: RealtimeClient,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(WaitingRoomUiState())

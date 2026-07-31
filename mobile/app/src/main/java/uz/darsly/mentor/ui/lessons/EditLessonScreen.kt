@@ -39,7 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.hilt.navigation.compose.hiltViewModel
 import uz.darsly.mentor.data.api.Lesson
 
 /**
@@ -59,7 +59,7 @@ fun EditLessonDialog(
     onDismiss: () -> Unit,
     onSaved: (Lesson) -> Unit,
     onDeleted: (Lesson) -> Unit,
-    vm: EditLessonViewModel = viewModel(),
+    vm: EditLessonViewModel = hiltViewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     var confirmDelete by rememberSaveable { mutableStateOf(false) }

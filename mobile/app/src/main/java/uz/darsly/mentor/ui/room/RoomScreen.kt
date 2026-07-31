@@ -68,8 +68,10 @@ import uz.darsly.mentor.BuildConfig
 import uz.darsly.mentor.data.livekit.LessonSessionHolder
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.hilt.navigation.compose.hiltViewModel
 import uz.darsly.mentor.data.store.PrefsUiPrefs
+import uz.darsly.mentor.service.ShareFrameOverlay
+import uz.darsly.mentor.ui.theme.neonGlow
 
 /**
  * R0 spike xonasi. Bu ATAYLAB chiroyli emas — maqsad ekran ulashishning
@@ -82,12 +84,12 @@ import uz.darsly.mentor.data.store.PrefsUiPrefs
 fun RoomScreen(
     lessonId: String,
     onLeave: () -> Unit,
-    vm: RoomViewModel = viewModel(),
+    vm: RoomViewModel = hiltViewModel(),
     // M27: kutish xonasi alohida ViewModel — u faqat so'rovlar bilan ishlaydi
     // va `RoomViewModel` (LiveKit, MediaProjection, foreground servis) bilan
     // aralashmaydi. Ikkalasini birlashtirish bu fayldagi eng murakkab sinfni
     // yana kattalashtirardi va WS mantiqini media mantig'i bilan chalkashtirardi.
-    waitingVm: WaitingRoomViewModel = viewModel(),
+    waitingVm: WaitingRoomViewModel = hiltViewModel(),
 ) {
     val ctx = LocalContext.current
     val state by vm.state.collectAsStateWithLifecycle()
@@ -100,6 +102,17 @@ fun RoomScreen(
         waiting.notice?.let {
             waitingSnackbar.showSnackbar(it)
             waitingVm.noticeShown()
+        }
+    }
+
+    // Chat/reaksiya amallarining natijasi — SNACKBAR, `state.error` emas.
+    // `error` xona ekranida "Ulanmadi + Qayta urinish" kartasini chiqaradi va
+    // o'chirilmagan bitta xabar yoki 429 olgan reaksiya uchun bu butunlay
+    // noto'g'ri javob bo'lardi (ustoz xonaga qayta ulanishga urinardi).
+    LaunchedEffect(state.notice) {
+        state.notice?.let {
+            waitingSnackbar.showSnackbar(it)
+            vm.noticeShown()
         }
     }
 
@@ -168,10 +181,15 @@ fun RoomScreen(
     // TASDIQ so'raladi: tasodifiy bosilgan "Orqaga" 90 daqiqalik darsni uzib
     // qo'ymasligi kerak.
     var confirmLeave by rememberSaveable { mutableStateOf(false) }
+    // Efir-ramka ruxsati taklifi (sessiyada bir marta).
+    var frameAskOpen by rememberSaveable { mutableStateOf(false) }
+    var frameAsked by rememberSaveable { mutableStateOf(false) }
     // Panellar `rememberSaveable` EMAS: ekran burilganda ochiq qolishi shart emas,
     // va ModalBottomSheet holati baribir qayta yaratiladi.
     var showParticipants by remember { mutableStateOf(false) }
     var showChat by remember { mutableStateOf(false) }
+    var showMore by remember { mutableStateOf(false) }
+    var showPoll by remember { mutableStateOf(false) }
 
     // B-1: tizim dialogidan OLDIN ko'rsatiladigan tushuntirish holati.
     val uiPrefs = remember { PrefsUiPrefs.create(ctx) }
@@ -186,6 +204,12 @@ fun RoomScreen(
      * bitta bosish. Ikkinchi tushuntirish darsni yana bir necha soniyaga cho'zardi.
      */
     fun requestScreenShare(skipTip: Boolean = false) {
+        // Efir-ramka uchun «boshqa ilovalar ustида» ruxsati — bir marta taklif
+        // qilinadi. Rad etsa ulashish RAMKASIZ davom etadi (ruxsat bloklamaydi).
+        if (!ShareFrameOverlay.canDraw(ctx) && !frameAsked) {
+            frameAskOpen = true
+            return
+        }
         if (uiPrefs.screenShareTipEnabled && !skipTip) {
             shareTipOpen = true
         } else {
@@ -210,6 +234,35 @@ fun RoomScreen(
     // ko'rmaydi** — faqat Darsly ekranini ko'rib turadi. Tizim dialogining
     // default'ini ilova o'zgartira olmaydi, shuning uchun yagona yechim —
     // oldindan tushuntirish. Ustoz "eslatmang" desa boshqa ko'rsatilmaydi.
+    if (frameAskOpen) {
+        AlertDialog(
+            onDismissRequest = { frameAskOpen = false; frameAsked = true },
+            title = { Text("Efir-ramka") },
+            text = {
+                Text(
+                    "Ekran ulashilayotganda ekran chetida rangli ramka ko'rsatiladi — " +
+                        "boshqa ilovaga o'tganingizda ham efir/yozuv ketayotganini bilib turasiz " +
+                        "(yozuvda qizil, oddiy ulashishda yashil). Buning uchun «boshqa ilovalar " +
+                        "ustida ko'rsatish» ruxsati kerak.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    frameAskOpen = false
+                    frameAsked = true
+                    runCatching { ctx.startActivity(ShareFrameOverlay.permissionIntent(ctx)) }
+                }) { Text("Ruxsat berish") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    frameAskOpen = false
+                    frameAsked = true
+                    requestScreenShare()
+                }) { Text("Ramkasiz davom etish") }
+            },
+        )
+    }
+
     if (shareTipOpen) {
         AlertDialog(
             onDismissRequest = { shareTipOpen = false },
@@ -218,7 +271,7 @@ fun RoomScreen(
                 Column {
                     Text(
                         "Keyingi oynada Android \"Bitta ilova\" ni tanlab qo'yadi. " +
-                            "Shu holda o'quvchilar faqat Darsly ekranini ko'radi — " +
+                            "Shu holda o'quvchilar faqat Jonly ekranini ko'radi — " +
                             "siz PDF yoki GeoGebra'ga o'tsangiz ular hech narsa ko'rmaydi.",
                     )
                     Spacer(Modifier.height(12.dp))
@@ -320,6 +373,7 @@ fun RoomScreen(
                     showChat = true
                     vm.markChatRead()
                 },
+                onOpenMore = { showMore = true },
                 participantCount = state.participantCount,
                 handsCount = state.hands.size,
                 unreadChat = state.unreadChat,
@@ -374,7 +428,7 @@ fun RoomScreen(
                 RoomNotice(
                     title = "Mikrofonga ruxsat berilmadi",
                     body = "Mikrofonsiz darsni boshlab bo'lmaydi. \"Ruxsat so'rash\" tugmasini bosing " +
-                        "yoki telefon sozlamalarida Darsly Mentor uchun mikrofonni yoqing.",
+                        "yoki telefon sozlamalarida Jonly Mentor uchun mikrofonni yoqing.",
                     primaryText = "Ruxsat so'rash",
                     onPrimary = {
                         vm.clearPermissionError()
@@ -413,12 +467,18 @@ fun RoomScreen(
             // B-6: dars tugadi — resurslar bo'shatilgan.
             state.endedMessage?.let { message ->
                 RoomNotice(
-                    title = "Dars tugadi",
+                    // Aloqa uzilgan, lekin dars serverda hali jonli bo'lsa —
+                    // "Dars tugadi" deyish yolg'on bo'lardi.
+                    title = if (state.lessonLive) "Aloqa uzildi" else "Dars tugadi",
                     body = message,
                     primaryText = "Qayta boshlash",
                     onPrimary = { vm.retryJoin(lessonId, withCamera = granted(Manifest.permission.CAMERA)) },
                     secondaryText = "Darslarga qaytish",
-                    onSecondary = { vm.leave(); onLeave() },
+                    // Dars hali jonli bo'lsa, bu yerdan chiqish ham "Yakunlaysizmi?"
+                    // savolidan o'tadi — aks holda dars abadiy `live` qolardi.
+                    onSecondary = {
+                        if (state.lessonActive) confirmLeave = true else { vm.leave(); onLeave() }
+                    },
                 )
             }
 
@@ -466,6 +526,28 @@ fun RoomScreen(
                 state = state,
                 onDismiss = { showChat = false },
                 onSend = { vm.sendChat(it) },
+                onSendFile = { uri -> vm.sendChatFile(uri) },
+                onDelete = { id -> vm.deleteChat(id) },
+            )
+        }
+
+        if (showMore) {
+            MoreSheet(
+                onDismiss = { showMore = false },
+                onReaction = { emoji -> vm.sendReaction(emoji) },
+                onOpenPoll = { showPoll = true },
+            )
+        }
+
+        if (showPoll) {
+            PollSheet(
+                lessonId = lessonId,
+                // Natijani o'qish room-token talab qiladi (JWT emas) — u
+                // faqat jonli sessiyada bo'ladi. Token yo'q bo'lsa panel
+                // baribir ochiladi: so'rovnoma yaratish JWT bilan ishlaydi.
+                roomToken = LessonSessionHolder.session?.roomToken?.token,
+                revision = state.pollRevision,
+                onDismiss = { showPoll = false },
             )
         }
     }
@@ -513,7 +595,14 @@ private fun RoomTopBar(state: RoomUiState, onLeave: () -> Unit) {
                 Surface(
                     color = MaterialTheme.colorScheme.error,
                     shape = RoundedCornerShape(percent = 50),
-                    modifier = Modifier.padding(end = 8.dp),
+                    // LIVE/REC indikatori — glow'ga ruxsat berilgan uch joydan biri.
+                    modifier = Modifier
+                        .padding(end = 8.dp)
+                        .neonGlow(
+                            color = MaterialTheme.colorScheme.error,
+                            shape = RoundedCornerShape(percent = 50),
+                            elevation = 8.dp,
+                        ),
                 ) {
                     Row(
                         Modifier.padding(horizontal = 10.dp, vertical = 4.dp),

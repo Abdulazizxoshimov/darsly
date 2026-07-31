@@ -17,6 +17,11 @@
     <!-- Android 13+ (API 33): bildirishnoma ko'rsatish uchun runtime ruxsat -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Efir-ramka: ekran ulashish/yozuv paytida BOSHQA ilovalar ustida ham
+         ko'rinadigan rangli hoshiya (ShareFrameOverlay). Foydalanuvchi
+         sozlamalardan ruxsat beradi; bermasa ramka shunchaki chiqmaydi. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
     <!-- Qo'l ko'tarilganda qisqa titrash. Ustoz ekran ulashib boshqa ilovada
          bo'lganda bu YAGONA e'tibor torttiruvchi signal: bildirishnoma kanali
          `IMPORTANCE_LOW` (ovozsiz), overlay esa MediaProjection'ga tushib
@@ -35,6 +40,12 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.DarslyMentor"
         tools:targetApi="35">
+
+        <!-- Sentry AVTO-init o'chirilgan: init qo'lda DarslyApp.initCrashReporting()
+             da (DSN bo'sh bo'lsa SDK umuman yoqilmaydi). Busiz kutubxonaning
+             SentryInitProvider'i Application'dan OLDIN ishga tushib, DSN'siz
+             (har qanday lokal/dev build) "DSN is required" bilan quladi. -->
+        <meta-data android:name="io.sentry.auto-init" android:value="false" />
 
         <activity
             android:name=".MainActivity"

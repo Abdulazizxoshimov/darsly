@@ -7,6 +7,7 @@ plugins {
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
+    alias(libs.plugins.hilt)
 }
 
 // Test login ma'lumotlari sirlar hisoblanadi — kodga yozilmaydi.
@@ -18,6 +19,23 @@ val localProps = Properties().apply {
     if (f.exists()) f.inputStream().use { load(it) }
 }
 fun localProp(key: String, default: String = "") = localProps.getProperty(key) ?: default
+
+// ── Muhit manzillari (M13) ───────────────────────────────────────────────────
+// Avval staging IP (`app.194.163.139.242.sslip.io`) reliz variantiga ham
+// QOTIRIB yozilgan edi — ya'ni real domenga o'tish uchun kodni tahrirlash
+// kerak bo'lardi va tasodifan staging'ga qarab turgan APK tarqalishi mumkin edi.
+//
+// Endi qiymat quyidagi tartibda olinadi:
+//   1) Gradle xossasi  -PdarslyApiUrl=https://...   (CI/reliz uchun)
+//   2) local.properties: darsly.apiUrl=https://...  (dasturchi mashinasi)
+//   3) default — staging (hozircha yagona ishlaydigan muhit)
+//
+// Real domen paydo bo'lganda default shu yerda BIR JOYDA o'zgaradi.
+val stagingBase = "https://app.194.163.139.242.sslip.io"
+fun envUrl(gradleKey: String, localKey: String): String =
+    (project.findProperty(gradleKey) as String?)
+        ?: localProps.getProperty(localKey)
+        ?: stagingBase
 
 // ── Reliz imzosi ─────────────────────────────────────────────────────────────
 // Kalit va parollar `mobile/keystore.properties` da (gitignore'da), kalitning
@@ -82,24 +100,45 @@ android {
         debug {
             isMinifyEnabled = false
             // Test serveri (CLAUDE.md · deploy/server — sslip.io + Caddy HTTPS)
-            buildConfigField("String", "API_BASE_URL", "\"https://app.194.163.139.242.sslip.io\"")
+            buildConfigField("String", "API_BASE_URL", "\"${envUrl("darslyApiUrl", "darsly.apiUrl")}\"")
             // WEB_BASE_URL — o'quvchiga yuboriladigan `/r/<slug>` havolasining bazasi.
             // Hozir API bilan bir xil host, lekin ATAYLAB alohida: API alohida
             // subdomenga (`api.*`) ko'chirilsa, join havolalari jimgina buzilmasin.
-            buildConfigField("String", "WEB_BASE_URL", "\"https://app.194.163.139.242.sslip.io\"")
+            buildConfigField("String", "WEB_BASE_URL", "\"${envUrl("darslyWebUrl", "darsly.webUrl")}\"")
             buildConfigField("String", "TEST_EMAIL", "\"${localProp("darsly.testEmail")}\"")
             buildConfigField("String", "TEST_PASSWORD", "\"${localProp("darsly.testPassword")}\"")
+            // Debug'da crash-hisobotlari default O'CHIQ: dasturchi mashinasidagi
+            // yiqilishlar production statistikasini ifloslantirmasin.
+            buildConfigField("String", "SENTRY_DSN", "\"${localProp("darsly.sentryDsn")}\"")
         }
         release {
             // Imzo kaliti bo'lsa — imzolanadi; bo'lmasa APK imzosiz chiqadi va
             // qurish baribir muvaffaqiyatli tugaydi (boshqa mashina / CI uchun).
             releaseSigning?.let { signingConfig = signingConfigs.getByName("release") }
-            isMinifyEnabled = false // TODO(R1): R8 + proguard qoidalari (LiveKit/Moshi uchun)
+            // R8 YOQILDI (M13). Qoidalar `proguard-rules.pro` da — LiveKit/WebRTC
+            // JNI klasslari va Moshi modellari reflectiya bilan topiladi, ular
+            // qisqartirilsa ilova ISHGA TUSHGANDA yiqilardi (kompilyatsiyada emas).
+            //
+            // `isShrinkResources` ham yoqilgan: ishlatilmagan resurslar APK'dan
+            // chiqadi — sekin internetda yuklab olish vaqti muhim.
+            //
+            // ⚠️ RELIZDA: `build/outputs/mapping/release/mapping.txt` ni SAQLANG.
+            // Usiz crash-hisobotlaridagi stack-trace o'qib bo'lmaydigan bo'ladi.
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            buildConfigField("String", "API_BASE_URL", "\"https://app.194.163.139.242.sslip.io\"")
-            buildConfigField("String", "WEB_BASE_URL", "\"https://app.194.163.139.242.sslip.io\"")
+            buildConfigField("String", "API_BASE_URL", "\"${envUrl("darslyApiUrl", "darsly.apiUrl")}\"")
+            buildConfigField("String", "WEB_BASE_URL", "\"${envUrl("darslyWebUrl", "darsly.webUrl")}\"")
             buildConfigField("String", "TEST_EMAIL", "\"\"")
             buildConfigField("String", "TEST_PASSWORD", "\"\"")
+            // Relizda DSN reliz jarayonidan keladi:
+            //   ./gradlew assembleRelease -PdarslySentryDsn=https://...@sentry.io/...
+            // Berilmasa SDK o'chiq qoladi (qarang: `DarslyApp.initCrashReporting`).
+            buildConfigField(
+                "String",
+                "SENTRY_DSN",
+                "\"${(project.findProperty("darslySentryDsn") as String?) ?: localProp("darsly.sentryDsn")}\"",
+            )
         }
     }
 
@@ -116,6 +155,17 @@ android {
         // JDK 17 — Android uchun eng sinovdan o'tgan toolchain.
         // Mahalliy muhitda topilmasa foojay-resolver (settings.gradle.kts) yuklab oladi.
         jvmToolchain(17)
+    }
+
+    // JAVA toolchain — Kotlin'niki bilan bir xil (17).
+    //
+    // Nega alohida kerak: `jvmToolchain(17)` FAQAT Kotlin taskilariga ta'sir
+    // qiladi. Hilt esa annotatsiya protsessori uchun `javac` ishlatadigan
+    // alohida task yaratadi (`hiltJavaCompileDebug`) va u tizim JDK'siga
+    // tushardi. Bu muhitda tizimda JRE 21 (javac'siz) o'rnatilgan —
+    // natijada `does not provide the required capabilities: [JAVA_COMPILER]`.
+    java {
+        toolchain { languageVersion = JavaLanguageVersion.of(17) }
     }
 
     // ── APK hajmi: ABI bo'yicha bo'lish ──────────────────────────────────────
@@ -206,6 +256,15 @@ dependencies {
     implementation(libs.livekit.android)
 
     // M1 — token EncryptedSharedPreferences'da (androidx.security:security-crypto 1.1.0).
+    // Crash-hisobotlari (M15). `sentry-android` NDK handler'ini ham olib keladi —
+    // ma'lum yiqilish (`libjingle_peerconnection_so.so` · SIGABRT) nativ qatlamda
+    // va uni faqat shu tutadi. DSN bo'sh bo'lsa SDK butunlay o'chiq qoladi.
+    // Hilt — bog'liqlik injeksiyasi (izohi `libs.versions.toml` da).
+    implementation(libs.hilt.android)
+    ksp(libs.hilt.compiler)
+    implementation(libs.hilt.navigation.compose)
+
+    implementation(libs.sentry.android)
     implementation(libs.androidx.security.crypto)
     implementation(libs.androidx.datastore.preferences)
 

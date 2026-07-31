@@ -1,8 +1,9 @@
 package uz.darsly.mentor.ui.schedule
 
-import android.app.Application
-import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import dagger.hilt.android.lifecycle.HiltViewModel
+import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -40,11 +41,10 @@ data class ScheduleUiState(
  * jadval **hech qachon bir-biriga zid** ma'lumot ko'rsatmaydi va offline'da
  * ikkalasi ham ishlaydi.
  */
-class ScheduleViewModel @JvmOverloads constructor(
-    app: Application,
-    // @JvmOverloads — `viewModel()` fabrikasi AYNAN `(Application)` konstruktorini qidiradi.
-    private val repo: LessonsRepository = LessonsRepository.create(app),
-) : AndroidViewModel(app) {
+@HiltViewModel
+class ScheduleViewModel @Inject constructor(
+    private val repo: LessonsRepository,
+) : ViewModel() {
 
     private val _state = MutableStateFlow(ScheduleUiState())
     val state: StateFlow<ScheduleUiState> = _state.asStateFlow()
@@ -54,13 +54,16 @@ class ScheduleViewModel @JvmOverloads constructor(
 
     fun start() {
         if (_state.value.loading || _state.value.refreshing) return
-        if (lessons.isEmpty()) {
-            repo.cached()?.let { cached ->
-                lessons = cached.lessons
-                regroup()
+        // Kesh o'qish diskka tegadi — korutinada (`LessonsViewModel` bilan bir xil sabab).
+        viewModelScope.launch {
+            if (lessons.isEmpty()) {
+                repo.cached()?.let { cached ->
+                    lessons = cached.lessons
+                    regroup()
+                }
             }
+            refresh(userInitiated = false)
         }
-        refresh(userInitiated = false)
     }
 
     fun refresh(userInitiated: Boolean = true) {
@@ -115,4 +118,7 @@ class ScheduleViewModel @JvmOverloads constructor(
     }
 
     fun noticeShown() = _state.update { it.copy(notice = null) }
+
+    /** Ekran hodisalari (masalan, dars rejalashtirildi) uchun qisqa xabar. */
+    fun showNotice(text: String) = _state.update { it.copy(notice = text) }
 }

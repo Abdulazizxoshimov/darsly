@@ -1,6 +1,9 @@
 package uz.darsly.mentor.util
 
 import uz.darsly.mentor.data.api.Recording
+import java.time.Instant
+import java.time.ZoneId
+import java.time.temporal.ChronoUnit
 
 /**
  * Yozuvlar ro'yxatining **sof** formatlash mantiqi (Android'siz, JVM testida).
@@ -17,11 +20,18 @@ object RecordingFormat {
     const val STATUS_READY = "ready"
     const val STATUS_FAILED = "failed"
 
+    /**
+     * Saqlash muddati (retention) tugagan: MinIO'dagi fayl O'CHIRILGAN, qator
+     * esa tarix uchun qolgan (PRODUCT.md №5). `expires_at` endi qaytmaydi.
+     */
+    const val STATUS_EXPIRED = "expired"
+
     fun statusLabel(status: String): String = when (status) {
         STATUS_RECORDING -> "Yozilmoqda"
         STATUS_PROCESSING -> "Tayyorlanmoqda"
         STATUS_READY -> "Tayyor"
         STATUS_FAILED -> "Xatolik"
+        STATUS_EXPIRED -> "O'chirilgan"
         else -> status
     }
 
@@ -36,14 +46,76 @@ object RecordingFormat {
         STATUS_RECORDING -> "Dars yozib olinmoqda"
         STATUS_PROCESSING -> "Fayl serverga yuklanmoqda — bir necha daqiqa vaqt olishi mumkin"
         STATUS_FAILED -> "Yozib olishda xatolik bo'ldi. Bu yozuvni yuklab bo'lmaydi"
+        STATUS_EXPIRED ->
+            "Saqlash muddati tugadi va fayl o'chirildi. Yozuvlar $RETENTION_DAYS kun saqlanadi"
         else -> null
     }
+
+    /**
+     * Saqlash muddati — matnda ko'rsatiladi.
+     *
+     * Server tomondan `RECORDING_RETENTION_DAYS` bilan boshqariladi va HAQIQIY
+     * muddat har yozuvning `expires_at` maydonida keladi ([retentionLabel]).
+     * Bu son faqat TUSHUNTIRISH matnida ishlatiladi — hisob-kitobga emas,
+     * aks holda server sozlamasi o'zgarganda ilova yolg'on aytardi.
+     */
+    const val RETENTION_DAYS = 30
 
     /** Faqat `ready` yozuvni yuklab olish mumkin (boshqasida havola bo'lmaydi). */
     fun canDownload(recording: Recording): Boolean = recording.status == STATUS_READY
 
     /** Faqat faol yozuvni to'xtatish mumkin. */
     fun canStop(recording: Recording): Boolean = recording.status == STATUS_RECORDING
+
+    /**
+     * «3 kundan keyin o'chadi» (PRODUCT.md №5).
+     *
+     * `null` — ko'rsatiladigan narsa yo'q: muddat berilmagan (`expired` yozuv
+     * yoki `RECORDING_RETENTION_DAYS=0`), yoki u ALLAQACHON o'tgan. Oxirgisi
+     * muhim: fon ishchisi hali ishlab ulgurmagan bo'lishi mumkin va
+     * «-1 kundan keyin o'chadi» ilova buzuq degan taassurot berardi.
+     *
+     * Hisob KUNLAR bo'yicha (soatlar emas): ustozga kerakli aniqlik shu, va
+     * "36 soatdan keyin" degan matn hech kimga foyda bermaydi.
+     */
+    fun retentionLabel(
+        expiresAtIso: String?,
+        zone: ZoneId = ZoneId.systemDefault(),
+        now: Instant = Instant.now(),
+    ): String? {
+        val expiresAt = LessonFormat.epochOrNull(expiresAtIso) ?: return null
+        val today = now.atZone(zone).toLocalDate()
+        val expiryDay = Instant.ofEpochMilli(expiresAt).atZone(zone).toLocalDate()
+        val days = ChronoUnit.DAYS.between(today, expiryDay)
+        return when {
+            days < 0 -> null
+            days == 0L -> "Bugun o'chadi"
+            days == 1L -> "Ertaga o'chadi"
+            else -> "$days kundan keyin o'chadi"
+        }
+    }
+
+    /**
+     * Muddat tugashiga oz qoldimi — matn OGOHLANTIRUVCHI rangda chiqsinmi.
+     *
+     * Chegara serverdagi bildirishnoma qoidasi bilan bir xil (3 kun qolganda
+     * mentorga `recording_expiring` keladi): ustoz xabarnomani ko'rib ilovaga
+     * kirsa, ro'yxatda ham AYNI o'sha yozuvlar ajralib turishi kerak.
+     */
+    fun isExpiringSoon(
+        expiresAtIso: String?,
+        zone: ZoneId = ZoneId.systemDefault(),
+        now: Instant = Instant.now(),
+    ): Boolean {
+        val expiresAt = LessonFormat.epochOrNull(expiresAtIso) ?: return false
+        val days = ChronoUnit.DAYS.between(
+            now.atZone(zone).toLocalDate(),
+            Instant.ofEpochMilli(expiresAt).atZone(zone).toLocalDate(),
+        )
+        return days in 0..EXPIRING_SOON_DAYS
+    }
+
+    private const val EXPIRING_SOON_DAYS = 3L
 
     /**
      * Bayt → "12,4 MB". Ikkilik prefikslar (1024) — fayl menejerlari shunday sanaydi.

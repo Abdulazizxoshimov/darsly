@@ -2,6 +2,8 @@ package uz.darsly.mentor.ui.notifications
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import dagger.hilt.android.lifecycle.HiltViewModel
+import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -11,7 +13,6 @@ import uz.darsly.mentor.data.api.ApiErrors
 import uz.darsly.mentor.data.api.Notification
 import uz.darsly.mentor.data.repo.NotificationsBadge
 import uz.darsly.mentor.data.repo.NotificationsRepository
-import uz.darsly.mentor.data.ws.Realtime
 import uz.darsly.mentor.data.ws.RealtimeClient
 import uz.darsly.mentor.data.ws.RealtimeEvent
 import uz.darsly.mentor.util.NotificationFormat
@@ -51,9 +52,11 @@ data class NotificationsUiState(
  * faqat ro'yxatni yangilash uchun — ekran yopilganda `viewModelScope` bilan
  * birga bekor qilinadi va soket ochiq qolaveradi (xona ekrani undan foydalanadi).
  */
-class NotificationsViewModel(
-    private val repo: NotificationsRepository = NotificationsRepository.create(),
-    realtime: RealtimeClient = Realtime.client,
+@HiltViewModel
+class NotificationsViewModel @Inject constructor(
+    private val repo: NotificationsRepository,
+    realtime: RealtimeClient,
+    private val badge: NotificationsBadge,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(NotificationsUiState())
@@ -69,7 +72,7 @@ class NotificationsViewModel(
         // taxminiy `increment()` ini to'g'rilaydi. Bitta yozuv joyi bo'lgani
         // uchun "belgiladim, nishon turibdi" holati bo'lishi mumkin emas.
         viewModelScope.launch {
-            _state.collect { if (it.loaded) NotificationsBadge.set(it.unread) }
+            _state.collect { if (it.loaded) badge.set(it.unread) }
         }
     }
 

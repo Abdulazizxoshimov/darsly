@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.CallEnd
 import androidx.compose.material.icons.filled.Cameraswitch
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.ScreenShare
 import androidx.compose.material.icons.filled.StopScreenShare
 import androidx.compose.material.icons.filled.Videocam
@@ -54,7 +55,7 @@ import androidx.compose.ui.unit.sp
  *  · Ekran ulashish yoniq — `primary` (brend binafshasi), ya'ni "hozir efirda"
  *  · Chiqish — doim qizil
  */
-private const val ITEM_COUNT = 7
+private const val ITEM_COUNT = 8
 
 @Composable
 fun ControlBar(
@@ -69,6 +70,7 @@ fun ControlBar(
     onLeave: () -> Unit,
     onOpenParticipants: () -> Unit,
     onOpenChat: () -> Unit,
+    onOpenMore: () -> Unit,
     participantCount: Int = 0,
     handsCount: Int = 0,
     unreadChat: Int = 0,
@@ -80,17 +82,21 @@ fun ControlBar(
     ) {
         // ⚠️ O'LCHAM EKRANGA MOSLASHADI.
         //
-        // Qurilma sinovida (2026-07-28) topildi: panelda 7 ta tugma bor va ular
-        // qat'iy 52dp bo'lganda TELEFONDA (portret) sig'masdi — oxirgi tugmaning
-        // yozuvi vertikal cho'zilib, o'zi ekran chetidan chiqib ketardi.
-        // Planshetda (landshaft) muammo ko'rinmasdi, ya'ni faqat kichik ekranda
-        // chiqadigan regressiya edi.
+        // Qurilma sinovida (2026-07-28) topildi: panelda tugmalar qat'iy 52dp
+        // bo'lganda TELEFONDA (portret) sig'masdi — oxirgi tugmaning yozuvi
+        // vertikal cho'zilib, o'zi ekran chetidan chiqib ketardi. Planshetda
+        // (landshaft) muammo ko'rinmasdi, ya'ni faqat kichik ekranda chiqadigan
+        // regressiya edi.
         //
         // Endi tugma o'lchami mavjud endan hisoblanadi: hamma narsa har qanday
         // ekranda sig'adi, keng ekranda esa avvalgidek qulay o'lchamda qoladi.
+        //
+        // Eng kichik o'lcham 34dp — 8-tugma («Ko'proq») qo'shilgach hisoblangan:
+        // 320dp li eng tor ekranda ham 8 × (34 + 2) + 16 = 304dp, ya'ni sig'adi.
+        // (Material'ning 48dp tegish maydoni `IconButton` ichida saqlanadi.)
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             val slot = (maxWidth - 16.dp) / ITEM_COUNT
-            val button = (slot - 6.dp).coerceIn(38.dp, 52.dp)
+            val button = (slot - 6.dp).coerceIn(34.dp, 52.dp)
             val compact = slot < 56.dp
 
             Row(
@@ -159,6 +165,16 @@ fun ControlBar(
                 enabled = enabled,
                 badge = unreadChat.takeIf { it > 0 },
                 onClick = onOpenChat,
+                size = button,
+                compact = compact,
+            )
+            // Reaksiya va so'rovnoma — «Ko'proq» ostida (qarang: MoreSheet).
+            ControlButton(
+                icon = Icons.Default.MoreHoriz,
+                label = "Ko'proq",
+                active = false,
+                enabled = enabled,
+                onClick = onOpenMore,
                 size = button,
                 compact = compact,
             )
@@ -244,7 +260,9 @@ private fun ControlButton(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.Center,
-            modifier = Modifier.padding(top = 4.dp).width(size + 6.dp),
+            // `size + 2` (avval `+ 6`): 8 ta tugmada qo'shimcha 4dp × 8 = 32dp
+            // eng tor ekranda oxirgi tugmani chetdan chiqarib yuborardi.
+            modifier = Modifier.padding(top = 4.dp).width(size + 2.dp),
         )
     }
 }

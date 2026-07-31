@@ -1,7 +1,7 @@
 package uz.darsly.mentor.data.repo
 
 import uz.darsly.mentor.data.api.DarslyApi
-import uz.darsly.mentor.data.api.Net
+import javax.inject.Inject
 import uz.darsly.mentor.data.api.Recording
 import uz.darsly.mentor.data.api.RecordingDownload
 import java.io.IOException
@@ -19,7 +19,7 @@ import java.io.IOException
  * `ready` yoki `failed`. Ya'ni to'xtatgandan keyin fayl **darhol tayyor emas** —
  * UI buni aytishi shart, aks holda ustoz "yuklab olish ishlamayapti" deb o'ylaydi.
  */
-class RecordingsRepository(private val api: DarslyApi) {
+class RecordingsRepository @Inject constructor(private val api: DarslyApi) {
 
     suspend fun list(lessonId: String): Result<List<Recording>> = runCatching {
         api.recordings(lessonId).data.orEmpty()
@@ -48,6 +48,5 @@ class RecordingsRepository(private val api: DarslyApi) {
         /** @see LessonsRepository.isOffline */
         fun isOffline(t: Throwable): Boolean = t is IOException
 
-        fun create(): RecordingsRepository = RecordingsRepository(Net.api)
     }
 }

@@ -3,6 +3,8 @@ package uz.darsly.mentor.data.store
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import org.junit.Test
 import uz.darsly.mentor.data.api.Lesson
 
@@ -23,12 +25,12 @@ class LessonsCacheTest {
     )
 
     @Test
-    fun `saqlangan royxat ilova qayta ochilganda oqiladi`() {
+    fun `saqlangan royxat ilova qayta ochilganda oqiladi`() = runBlocking {
         val prefs = FakeSharedPreferences()
-        PrefsLessonsCache(prefs).write(listOf(lesson("1"), lesson("2")), savedAtMillis = 1234L)
+        PrefsLessonsCache(prefs, io = Dispatchers.Unconfined).write(listOf(lesson("1"), lesson("2")), savedAtMillis = 1234L)
 
         // Yangi obyekt — "ilova qayta ishga tushdi" holati (xotira keshi yordam bermaydi).
-        val cached = PrefsLessonsCache(prefs.reopen()).read()
+        val cached = PrefsLessonsCache(prefs.reopen(), io = Dispatchers.Unconfined).read()
 
         assertEquals(listOf("1", "2"), cached!!.lessons.map { it.id })
         assertEquals("slug-1", cached.lessons[0].joinSlug)
@@ -37,15 +39,15 @@ class LessonsCacheTest {
     }
 
     @Test
-    fun `hech qachon saqlanmagan bolsa null`() {
+    fun `hech qachon saqlanmagan bolsa null`() = runBlocking {
         assertNull(PrefsLessonsCache(FakeSharedPreferences()).read())
     }
 
     @Test
-    fun `buzilgan JSON ilovani yiqitmaydi va kesh tozalanadi`() {
+    fun `buzilgan JSON ilovani yiqitmaydi va kesh tozalanadi`() = runBlocking {
         val prefs = FakeSharedPreferences()
         prefs.edit().putString("lessons_json", "{bu JSON emas").apply()
-        val cache = PrefsLessonsCache(prefs)
+        val cache = PrefsLessonsCache(prefs, io = Dispatchers.Unconfined)
 
         assertNull("buzilgan kesh null qaytarishi kerak", cache.read())
         // Ikkinchi o'qishda ham crash bo'lmasin va kalit o'chgan bo'lsin.
@@ -54,19 +56,19 @@ class LessonsCacheTest {
     }
 
     @Test
-    fun `clear keshni ochiradi`() {
+    fun `clear keshni ochiradi`() = runBlocking {
         val prefs = FakeSharedPreferences()
-        val cache = PrefsLessonsCache(prefs)
+        val cache = PrefsLessonsCache(prefs, io = Dispatchers.Unconfined)
         cache.write(listOf(lesson("1")), savedAtMillis = 1L)
         cache.clear()
         assertNull(cache.read())
     }
 
     @Test
-    fun `bosh royxat ham saqlanadi`() {
+    fun `bosh royxat ham saqlanadi`() = runBlocking {
         // Ustoz hamma darsni o'chirsa, kesh eski ro'yxatni "tirilib" ko'rsatmasligi kerak.
         val prefs = FakeSharedPreferences()
-        val cache = PrefsLessonsCache(prefs)
+        val cache = PrefsLessonsCache(prefs, io = Dispatchers.Unconfined)
         cache.write(listOf(lesson("1")), savedAtMillis = 1L)
         cache.write(emptyList(), savedAtMillis = 2L)
         assertTrue(cache.read()!!.lessons.isEmpty())

@@ -41,6 +41,17 @@ data class ApiError(
 }
 
 @JsonClass(generateAdapter = true)
+data class MuteAllReq(
+    /** null = bayroqqa tegilmaydi; false = «o'quvchilar o'zi ocholmasin» ham yoqiladi. */
+    @Json(name = "allow_self_unmute") val allowSelfUnmute: Boolean?,
+)
+
+@JsonClass(generateAdapter = true)
+data class RemoveParticipantReq(
+    /** "lesson" — faqat shu darsdan; "mentor" — doimiy qora ro'yxat. */
+    @Json(name = "scope") val scope: String,
+)
+
 data class LoginReq(
     @Json(name = "email") val email: String,
     @Json(name = "password") val password: String,
@@ -243,6 +254,15 @@ data class Recording(
     @Json(name = "started_at") val startedAt: String? = null,
     @Json(name = "ended_at") val endedAt: String? = null,
     @Json(name = "created_at") val createdAt: String? = null,
+    /**
+     * Yozuv qachon avtomatik o'chiriladi (retention — PRODUCT.md №5).
+     *
+     * Faqat `ready` yozuvda keladi (backend uni `ended_at + RECORDING_RETENTION_DAYS`
+     * dan HISOBLAYDI, DB'da saqlamaydi). `expired` bo'lgach maydon umuman
+     * qaytmaydi — shuning uchun uning yo'qligi "muddat yo'q" degani, "muddat
+     * o'tmagan" degani EMAS.
+     */
+    @Json(name = "expires_at") val expiresAt: String? = null,
 )
 
 /** `GET /api/v1/recordings/{id}/download` — vaqtinchalik presigned havola. */
@@ -329,6 +349,25 @@ data class ChatMessageDto(
     @Json(name = "body") val body: String = "",
     @Json(name = "to_identity") val toIdentity: String? = null,
     @Json(name = "created_at") val createdAt: String = "",
+    /** Ilova qilingan fayl (`null` — oddiy matnli xabar). */
+    @Json(name = "file") val file: ChatFileDto? = null,
+)
+
+/**
+ * Chat xabariga ilova qilingan fayl — `entity.ChatFile`.
+ *
+ * ⚠️ [url] **presigned va muddatli** (1 soat) havola: backend uni bazada
+ * saqlamaydi, HAR javobda qaytadan imzolaydi. Shu sabab uni keshlab qo'yish
+ * mumkin emas — bir soatdan keyin bosilgan havola 403 berardi va bu "fayl
+ * yo'qolgan"dek ko'rinardi. Obyekt kaliti (`Key`) esa umuman kelmaydi.
+ */
+@JsonClass(generateAdapter = true)
+data class ChatFileDto(
+    @Json(name = "name") val name: String = "",
+    @Json(name = "size") val size: Long = 0,
+    @Json(name = "mime") val mime: String = "",
+    @Json(name = "url") val url: String = "",
+    @Json(name = "expires_in_s") val expiresInS: Int = 0,
 )
 
 /** Xona chatiga xabar (room-token bilan — host ham shu yo'ldan yuradi). */
@@ -343,6 +382,61 @@ data class SendRoomChatReq(
 @JsonClass(generateAdapter = true)
 data class LowerHandReq(
     @Json(name = "identity") val identity: String,
+)
+
+/**
+ * Emoji reaksiya — `POST /rooms/{lessonID}/reaction` (room-token bilan).
+ *
+ * Server hech nima SAQLAMAYDI, faqat data-channel orqali tarqatadi. To'plam
+ * server tomonda ham qulflangan ([uz.darsly.mentor.ui.room.Reactions.ALLOWED]),
+ * ya'ni ro'yxatdan tashqari emoji 400 oladi.
+ */
+@JsonClass(generateAdapter = true)
+data class SendReactionReq(
+    @Json(name = "token") val token: String,
+    @Json(name = "emoji") val emoji: String,
+)
+
+/**
+ * So'rovnoma — `entity.Poll`.
+ *
+ * [resultsVisibility] YARATISHDA tanlanadi va o'zgarmas: `mentor_only` (default)
+ * natijani hech qachon o'quvchiga ko'rsatmaydi, `public` esa mentor «E'lon
+ * qilish» bosgandan keyin ko'rsatadi ([resultsPublishedAt] to'ladi).
+ */
+@JsonClass(generateAdapter = true)
+data class Poll(
+    @Json(name = "id") val id: String,
+    @Json(name = "lesson_id") val lessonId: String = "",
+    @Json(name = "question") val question: String = "",
+    @Json(name = "options") val options: List<String> = emptyList(),
+    @Json(name = "is_active") val isActive: Boolean = true,
+    @Json(name = "created_at") val createdAt: String? = null,
+    @Json(name = "closed_at") val closedAt: String? = null,
+    @Json(name = "results_visibility") val resultsVisibility: String = "mentor_only",
+    @Json(name = "results_published_at") val resultsPublishedAt: String? = null,
+)
+
+/** So'rovnoma natijasi — `entity.PollResults`. [counts] variantlar tartibida. */
+@JsonClass(generateAdapter = true)
+data class PollResults(
+    @Json(name = "poll") val poll: Poll? = null,
+    @Json(name = "counts") val counts: List<Int> = emptyList(),
+    @Json(name = "total") val total: Int = 0,
+)
+
+/**
+ * `POST /lessons/{id}/polls` — `entity.CreatePollReq`.
+ *
+ * Server chegaralari: savol 1..500, variantlar 2..10 ta (har biri 1..200).
+ * Ular klientda ham takrorlangan ([uz.darsly.mentor.ui.room.PollForm]) —
+ * ustoz xatoni serverga bormasdan, o'zbekcha ko'radi.
+ */
+@JsonClass(generateAdapter = true)
+data class CreatePollReq(
+    @Json(name = "question") val question: String,
+    @Json(name = "options") val options: List<String>,
+    @Json(name = "results_visibility") val resultsVisibility: String,
 )
 
 /** `GET /rooms/{lessonId}/state` javobi — ko'tarilgan qo'llar (navbat tartibida). */

@@ -1,15 +1,21 @@
 package uz.darsly.mentor.data.api
 
 import io.livekit.android.util.LKLog
+import javax.inject.Inject
+import javax.inject.Singleton
 
 /** Kirish/chiqish oqimi (M1 · M3). */
-object AuthRepository {
+@Singleton
+class AuthRepository @Inject constructor(
+    private val api: DarslyApi,
+    private val session: SessionManager,
+) {
 
     /** `POST /auth/login` → tokenlarni saqlaydi (shifrlangan preferens). */
     suspend fun login(email: String, password: String): TokenPair {
-        val pair = Net.api.login(LoginReq(email, password)).data
+        val pair = api.login(LoginReq(email, password)).data
             ?: throw IllegalStateException("Server bo'sh javob qaytardi")
-        Session.save(pair)
+        session.save(pair)
         return pair
     }
 
@@ -21,12 +27,12 @@ object AuthRepository {
      * sessiya baribir refresh TTL bilan o'ladi.
      */
     suspend fun logout() {
-        val refresh = Session.refreshToken
+        val refresh = session.refreshToken
         if (!refresh.isNullOrBlank()) {
-            runCatching { Net.api.logout(LogoutReq(refresh)) }
+            runCatching { api.logout(LogoutReq(refresh)) }
                 .onFailure { LKLog.w(it) { "logout serverda bajarilmadi — lokal tozalanadi" } }
         }
-        Session.forceLogout()
+        session.forceLogout()
     }
 
     /**
@@ -40,7 +46,7 @@ object AuthRepository {
      * xat yuborildi" deydi.
      */
     suspend fun forgotPassword(email: String): Result<Unit> =
-        runCatching { Net.api.forgotPassword(ForgotPasswordReq(email)) }
+        runCatching { api.forgotPassword(ForgotPasswordReq(email)) }
 
     /**
      * Emaildagi token bilan yangi parol o'rnatadi.
@@ -51,10 +57,10 @@ object AuthRepository {
      * keyingi so'rovda 401 ko'rardi.
      */
     suspend fun resetPassword(token: String, newPassword: String): Result<Unit> = runCatching {
-        Net.api.resetPassword(ResetPasswordReq(token, newPassword))
+        api.resetPassword(ResetPasswordReq(token, newPassword))
         // Serverdagi sessiyalar o'ldi — lokal nusxani ham tashlaymiz.
         // `isLoggedIn` tekshiruvi: chiqmagan holatda `forceLogout` navigatsiyani
         // login ekraniga majburlab, tiklash oqimini uzib qo'yardi.
-        if (Session.isLoggedIn) Session.forceLogout()
+        if (session.isLoggedIn) session.forceLogout()
     }
 }

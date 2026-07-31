@@ -19,11 +19,13 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -37,18 +39,22 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.hilt.navigation.compose.hiltViewModel
 import uz.darsly.mentor.data.api.Lesson
 import uz.darsly.mentor.ui.theme.DarslyTheme
 import uz.darsly.mentor.util.LessonFormat
 import uz.darsly.mentor.util.ScheduleFormat
 import java.time.LocalDate
+import uz.darsly.mentor.ui.theme.neonGlow
 
 /**
  * Jadval — darslar kunlar bo'yicha.
@@ -60,11 +66,12 @@ import java.time.LocalDate
 @Composable
 fun ScheduleScreen(
     onOpenLesson: (Lesson) -> Unit,
-    vm: ScheduleViewModel = viewModel(),
+    vm: ScheduleViewModel = hiltViewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     val today = remember { LocalDate.now() }
+    var scheduleOpen by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { vm.start() }
     LaunchedEffect(state.notice) {
@@ -77,6 +84,20 @@ fun ScheduleScreen(
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = { TopAppBar(title = { Text("Jadval") }) },
+        floatingActionButton = {
+            // Ekranning asosiy harakati — Darslar FAB'i bilan bir xil B uslubi.
+            ExtendedFloatingActionButton(
+                onClick = { scheduleOpen = true },
+                icon = { Icon(Icons.Default.Add, contentDescription = null) },
+                text = { Text("Dars rejalashtirish") },
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
+                modifier = Modifier.neonGlow(
+                    color = DarslyTheme.colors.neon,
+                    shape = MaterialTheme.shapes.large,
+                ),
+            )
+        },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             if (state.offline) OfflineBar()
@@ -133,6 +154,19 @@ fun ScheduleScreen(
                 }
             }
         }
+    }
+
+    if (scheduleOpen) {
+        ScheduleLessonDialog(
+            onDismiss = { scheduleOpen = false },
+            onScheduled = {
+                scheduleOpen = false
+                // Yangi dars ro'yxatda darhol ko'rinsin — serverdan qayta o'qiymiz
+                // (jadval kun bo'yicha guruhlangan, lokal qo'shishdan ko'ra ishonchli).
+                vm.refresh(userInitiated = false)
+                vm.showNotice("Dars rejalashtirildi")
+            },
+        )
     }
 }
 

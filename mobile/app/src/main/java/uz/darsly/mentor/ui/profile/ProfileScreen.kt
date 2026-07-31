@@ -48,7 +48,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.hilt.navigation.compose.hiltViewModel
 import uz.darsly.mentor.BuildConfig
 import uz.darsly.mentor.data.api.User
 import uz.darsly.mentor.util.LessonFormat
@@ -62,7 +62,7 @@ import java.time.ZoneId
  * eng ko'p qaraladigan ma'lumot yuqorida, eng xavfli amal (chiqish) pastda.
  */
 @Composable
-fun ProfileScreen(vm: ProfileViewModel = viewModel()) {
+fun ProfileScreen(vm: ProfileViewModel = hiltViewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     var passwordOpen by rememberSaveable { mutableStateOf(false) }
@@ -353,7 +353,7 @@ private fun SecurityCard(
 @Composable
 private fun AppVersion() {
     Text(
-        "Darsly Mentor · versiya ${BuildConfig.VERSION_NAME}",
+        "Jonly Mentor · versiya ${BuildConfig.VERSION_NAME}",
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
