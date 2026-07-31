@@ -25,7 +25,8 @@ func CreatePoll(h *handlers.Handler) gin.HandlerFunc {
 			hs.BadRequest(c, err.Error())
 			return
 		}
-		p, err := h.Poll.Create(c.Request.Context(), mentorID, c.Param("id"), req.Question, req.Options)
+		p, err := h.Poll.Create(c.Request.Context(), mentorID, c.Param("id"),
+			req.Question, req.Options, req.ResultsVisibility)
 		if err != nil {
 			hs.Error(c, err)
 			return
@@ -72,6 +73,28 @@ func ClosePoll(h *handlers.Handler) gin.HandlerFunc {
 	}
 }
 
+// PublishPollResults godoc
+// @Summary      So'rovnoma natijasini e'lon qilish (host)
+// @Description  Natija o'quvchilarga ochiladi va xonaga `poll_published` hodisasi
+// @Description  yuboriladi. So'rovnoma `mentor_only` rejimida yaratilgan bo'lsa — 400.
+// @Tags         poll
+// @Security     BearerAuth
+// @Param        id      path  string  true  "Lesson ID"
+// @Param        pollID  path  string  true  "Poll ID"
+// @Success      200  {object}  object{data=entity.PollResults}
+// @Router       /api/v1/lessons/{id}/polls/{pollID}/publish [post]
+func PublishPollResults(h *handlers.Handler) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		mentorID := c.GetString(middleware.CtxUserID)
+		res, err := h.Poll.Publish(c.Request.Context(), mentorID, c.Param("id"), c.Param("pollID"))
+		if err != nil {
+			hs.Error(c, err)
+			return
+		}
+		hs.Success(c, res)
+	}
+}
+
 // VotePoll godoc
 // @Summary  So'rovnomaga ovoz berish (ochiq — LiveKit room-token bilan)
 // @Tags     poll
@@ -105,7 +128,9 @@ func VotePoll(h *handlers.Handler) gin.HandlerFunc {
 }
 
 // PollResults godoc
-// @Summary  So'rovnoma natijalari — LiveKit room-token talab qilinadi
+// @Summary      So'rovnoma natijalari — LiveKit room-token talab qilinadi
+// @Description  O'quvchi natijani faqat `results_visibility=public` VA mentor
+// @Description  «E'lon qilish» bosgan bo'lsa oladi; aks holda 403. Mentor doim oladi.
 // @Tags     poll
 // @Param    id     path   string  true  "Poll ID"
 // @Param    token  query  string  true  "LiveKit room token"
@@ -129,7 +154,7 @@ func PollResults(h *handlers.Handler) gin.HandlerFunc {
 			hs.Unauthorized(c, "invalid room token")
 			return
 		}
-		res, err := h.Poll.Results(c.Request.Context(), c.Param("id"), room)
+		res, err := h.Poll.Results(c.Request.Context(), c.Param("id"), identity, room)
 		if err != nil {
 			hs.Error(c, err)
 			return

@@ -8,6 +8,10 @@ package entity
 // buzuq versiyani to'xtatishning yagona yo'li — server tomonidagi bu "kill switch".
 type AppConfig struct {
 	Android AppPlatformConfig `json:"android"`
+	// AllowOpenRegistration — ochiq ro'yxatdan o'tish yoqiqmi. Web login sahifasi
+	// shu bayroqqa qarab "Ro'yxatdan o'tish" bo'limini ko'rsatadi yoki yashiradi
+	// (server baribir o'zi ham tekshiradi — bu faqat UI uchun signal).
+	AllowOpenRegistration bool `json:"allow_open_registration"`
 }
 
 // AppPlatformConfig — bitta platforma uchun versiya siyosati.

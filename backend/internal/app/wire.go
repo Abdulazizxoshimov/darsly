@@ -30,6 +30,7 @@ func BuildHandler(uc *usecase.UseCases, hub *websocket.Hub, lk *livekit.Client, 
 		FrontendBaseURL:       cfg.App.FrontendBaseURL,
 		// Mobil versiya siyosati env'dan bir marta o'qiladi (DB'ga tegmaydi).
 		AppConfig: entity.AppConfig{
+			AllowOpenRegistration: cfg.App.AllowOpenRegistration,
 			Android: entity.AppPlatformConfig{
 				MinVersion:    cfg.Mobile.AndroidMinVersion,
 				LatestVersion: cfg.Mobile.AndroidLatestVersion,

@@ -40,13 +40,24 @@ func TestUserChangePassword(t *testing.T) {
 	clearRateLimits(t)
 	cl := &httpClient{t: t, base: srv.URL}
 
-	access, _ := mustRegister(t, cl, "Parolchi", "chpw@darsly.uz", "eskiparol12345")
+	access, refresh := mustRegister(t, cl, "Parolchi", "chpw@darsly.uz", "eskiparol12345")
 
 	// Joriy parol bilan → 204.
 	code, _ := cl.do(http.MethodPut, "/api/v1/users/me/password", access, map[string]string{
 		"current_password": "eskiparol12345", "new_password": "yangiparol12345",
 	})
 	require.Equal(t, http.StatusNoContent, code)
+
+	// ⭐ Parol almashtirilgach ESKI SESSIYA o'lishi kerak.
+	//
+	// Parolni almashtirishning eng keng tarqalgan sababi — "hisobim buzilgan
+	// bo'lishi mumkin". Eski refresh tirik qolsa o'g'ri 30 kun kira olardi va
+	// parol almashtirish aslida hech nimadan himoya qilmasdi.
+	code, _ = cl.post("/api/v1/auth/refresh", "", map[string]string{"refresh_token": refresh})
+	require.Equal(t, http.StatusUnauthorized, code, "eski refresh token bekor bo'lishi kerak")
+
+	code, _ = cl.get("/api/v1/auth/me", access)
+	require.Equal(t, http.StatusUnauthorized, code, "eski access token bekor bo'lishi kerak")
 
 	// Yangi parol bilan login ishlaydi.
 	code, _ = cl.post("/api/v1/auth/login", "", map[string]string{"email": "chpw@darsly.uz", "password": "yangiparol12345"})

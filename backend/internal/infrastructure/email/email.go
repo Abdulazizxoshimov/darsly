@@ -89,7 +89,7 @@ func (s *emailSender) SendRaw(ctx context.Context, to []string, subject, body st
 
 	displayName := s.cfg.Username
 	if strings.Contains(displayName, "@") || displayName == "" {
-		displayName = "Darsly"
+		displayName = "Jonly"
 	}
 	fromHeader := fmt.Sprintf("%s <%s>", displayName, s.cfg.From)
 
@@ -125,7 +125,7 @@ func loadTemplates() (*template.Template, error) {
 		`<p>Siz <strong>{{.ProjectName}}</strong> loyihasiga taklif qilindingiz.</p>` +
 		`<p><a href="{{.InviteURL}}" style="background:#0052cc;color:#fff;padding:10px 20px;border-radius:4px;text-decoration:none">Qabul qilish</a></p>` +
 		`<p style="color:#999;font-size:12px">Havola {{.ExpiresIn}} muddatgacha amal qiladi.</p>` +
-		`<p style="color:#999;font-size:12px;margin-top:40px">Darsly · noreply@darsly.uz</p></body></html>{{end}}`
+		`<p style="color:#999;font-size:12px;margin-top:40px">Jonly · noreply@jonly.uz</p></body></html>{{end}}`
 
 	const resetEmail = `{{define "password_reset"}}<!DOCTYPE html>` +
 		`<html><body style="font-family:Arial,sans-serif;max-width:600px;margin:auto;padding:20px">` +
@@ -133,14 +133,14 @@ func loadTemplates() (*template.Template, error) {
 		`<p>Parolingizni tiklash uchun quyidagi havolaga bosing:</p>` +
 		`<p><a href="{{.ResetURL}}" style="background:#0052cc;color:#fff;padding:10px 20px;border-radius:4px;text-decoration:none">Parolni tiklash</a></p>` +
 		`<p style="color:#999;font-size:12px">Agar siz so'rov yubormasangiz, bu xatni e'tiborsiz qoldiring.</p>` +
-		`<p style="color:#999;font-size:12px;margin-top:40px">Darsly · noreply@darsly.uz</p></body></html>{{end}}`
+		`<p style="color:#999;font-size:12px;margin-top:40px">Jonly · noreply@jonly.uz</p></body></html>{{end}}`
 
 	const notifyEmail = `{{define "notification"}}<!DOCTYPE html>` +
 		`<html><body style="font-family:Arial,sans-serif;max-width:600px;margin:auto;padding:20px">` +
 		`<h2>{{.Title}}</h2>` +
 		`<p>{{.Body | safeHTML}}</p>` +
 		`{{if .ActionURL}}<p><a href="{{.ActionURL}}" style="background:#0052cc;color:#fff;padding:10px 20px;border-radius:4px;text-decoration:none">Ko'rish</a></p>{{end}}` +
-		`<p style="color:#999;font-size:12px;margin-top:40px">Darsly · noreply@darsly.uz</p></body></html>{{end}}`
+		`<p style="color:#999;font-size:12px;margin-top:40px">Jonly · noreply@jonly.uz</p></body></html>{{end}}`
 
 	for _, t := range []string{inviteEmail, resetEmail, notifyEmail} {
 		if _, err := tmpl.Parse(t); err != nil {

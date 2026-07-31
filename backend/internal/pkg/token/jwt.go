@@ -24,6 +24,7 @@ type Maker interface {
 	Revoke(ctx context.Context, jti string) error
 	RevokeRefresh(ctx context.Context, refreshToken string) error
 	RevokeAllUserSessions(ctx context.Context, userID string) error
+	RevokeUserSessionsExcept(ctx context.Context, userID, keepSessionID string) error
 	StoreSession(ctx context.Context, sessionID, payload string, ttl time.Duration) error
 	RevokeSession(ctx context.Context, sessionID string) error
 }
@@ -38,6 +39,14 @@ const redisOutageGrace = 5 * time.Minute
 // DefaultRefreshGrace — refresh rotatsiyasining idempotentlik oynasi (grace).
 // Config'da JWT_REFRESH_GRACE berilmasa shu ishlatiladi.
 const DefaultRefreshGrace = 60 * time.Second
+
+// ErrSessionRevoked — token IMZOSI yaroqli, lekin sessiya Redis'da yo'q.
+//
+// Sabablari: boshqa qurilmada kirish (bitta faol sessiya siyosati), logout,
+// parol tiklash, yoki sessiya muddatining tugashi. Chaqiruvchi qatlamlar buni
+// "token buzuq/eskirgan" dan AJRATADI va `SESSION_REVOKED` kodini qaytaradi —
+// klient shunda «Boshqa qurilmada kirildi» deya aniq xabar bera oladi.
+var ErrSessionRevoked = errors.New("token: session revoked or not found")
 
 type JWTMaker struct {
 	signingKey  []byte
@@ -164,7 +173,7 @@ func (m *JWTMaker) ValidateAccess(ctx context.Context, tokenStr string) (*Claims
 		m.log.Error(ctx, "redis: session check failed — yangi token vaqtincha qabul qilindi",
 			logger.Error(err))
 	} else if exists == 0 {
-		return nil, errors.New("token: session revoked or not found")
+		return nil, ErrSessionRevoked
 	}
 
 	return mapToClaims(raw), nil
@@ -244,7 +253,7 @@ func (m *JWTMaker) Rotate(ctx context.Context, oldRefresh string) (string, strin
 		// Yetim refresh JTI'ni tozalaymiz (aks holda keyingi urinish "reuse" deb
 		// baholanib butun oilani bekor qilardi).
 		_ = m.redis.Del(ctx, m.refreshKey(jti)).Err()
-		return "", "", errors.New("token: session expired or revoked")
+		return "", "", ErrSessionRevoked
 	}
 
 	// Sign before touching Redis: if signing fails, Redis state stays consistent.
@@ -445,6 +454,26 @@ func (m *JWTMaker) RevokeRefresh(ctx context.Context, refreshToken string) error
 // their value, and refresh keys (prefix:refresh:<jti>) store the sessionID. We first
 // collect the user's session ids (deleting those session keys → access tokens die), then
 // delete every refresh jti whose stored sid belongs to the user (→ refresh rotation dies).
+//
+// # Masshtab
+//
+// Bu ikki SCAN — ya'ni narxi FOYDALANUVCHI sessiyalari soniga emas, umumiy
+// kalitlar soniga bog'liq. Amal kamdan-kam bajariladi (parol o'zgarishi/tiklash,
+// rol o'zgarishi), shuning uchun bu qabul qilinadi, lekin cheksiz emas: ~10⁶
+// faol kalitdan keyin sezilarli bo'la boshlaydi.
+//
+// Har kalit uchun ALOHIDA `GET`/`DEL` yuborish esa aynan shu yerda eng qimmat
+// qism edi: 10 ming kalit = 20 ming ketma-ket round-trip. Endi ular
+// PIPELINE bilan partiyalab yuboriladi — natija bir xil, round-trip'lar soni
+// esa ~100 barobar kam.
+//
+// Teskari indeks (userID → sid'lar) narxni O(foydalanuvchi sessiyalari) ga
+// tushirardi, lekin uni izchil ushlab turish `rotateScript` (atomik Lua
+// rotatsiya + reuse-detektor) ichiga kirishni talab qiladi. Bu — tizimning eng
+// nozik va eng yaxshi sinalgan qismi; MINOR tezlik masalasi uchun uni
+// o'zgartirish noto'g'ri savdo bo'lardi. Masshtab talab qilganda migratsiya
+// yo'li: sessiya kalitlariga hash-tag qo'shish bilan BIRGA bajarish
+// (`rotateScript` izohidagi cluster rejasi bilan bir xil deploy oynasida).
 func (m *JWTMaker) RevokeAllUserSessions(ctx context.Context, userID string) error {
 	if userID == "" {
 		return nil
@@ -452,14 +481,16 @@ func (m *JWTMaker) RevokeAllUserSessions(ctx context.Context, userID string) err
 
 	sessPrefix := m.redisPrefix + ":sess:"
 	userSids := map[string]struct{}{}
-	if err := m.scanKeys(ctx, sessPrefix+"*", func(key string) {
-		val, err := m.redis.Get(ctx, key).Result()
-		if err != nil {
-			return
+	if err := m.scanKeys(ctx, sessPrefix+"*", func(keys []string, vals []string) {
+		var toDel []string
+		for i, key := range keys {
+			if vals[i] == userID {
+				userSids[strings.TrimPrefix(key, sessPrefix)] = struct{}{}
+				toDel = append(toDel, key)
+			}
 		}
-		if val == userID {
-			userSids[strings.TrimPrefix(key, sessPrefix)] = struct{}{}
-			_ = m.redis.Del(ctx, key).Err()
+		if len(toDel) > 0 {
+			_ = m.redis.Del(ctx, toDel...).Err()
 		}
 	}); err != nil {
 		return fmt.Errorf("revoke user sessions (scan sessions): %w", err)
@@ -470,24 +501,30 @@ func (m *JWTMaker) RevokeAllUserSessions(ctx context.Context, userID string) err
 	}
 
 	gracePrefix := m.gracePrefix()
-	if err := m.scanKeys(ctx, m.redisPrefix+":refresh:*", func(key string) {
-		val, err := m.redis.Get(ctx, key).Result()
-		if err != nil {
-			return
-		}
-		// Oddiy refresh kaliti qiymati = sid; grace kaliti (refresh:used:<jti>) esa
-		// JSON saqlaydi — sid uning ichidan olinadi. Grace yozuvlari ham o'chirilishi
-		// SHART, aks holda bekor qilingan sessiya grace orqali tirilardi.
-		sid := val
-		if strings.HasPrefix(key, gracePrefix) {
-			var g gracePair
-			if json.Unmarshal([]byte(val), &g) != nil {
-				return
+	if err := m.scanKeys(ctx, m.redisPrefix+":refresh:*", func(keys []string, vals []string) {
+		var toDel []string
+		for i, key := range keys {
+			val := vals[i]
+			if val == "" {
+				continue
 			}
-			sid = g.SID
+			// Oddiy refresh kaliti qiymati = sid; grace kaliti (refresh:used:<jti>) esa
+			// JSON saqlaydi — sid uning ichidan olinadi. Grace yozuvlari ham o'chirilishi
+			// SHART, aks holda bekor qilingan sessiya grace orqali tirilardi.
+			sid := val
+			if strings.HasPrefix(key, gracePrefix) {
+				var g gracePair
+				if json.Unmarshal([]byte(val), &g) != nil {
+					continue
+				}
+				sid = g.SID
+			}
+			if _, ok := userSids[sid]; ok {
+				toDel = append(toDel, key)
+			}
 		}
-		if _, ok := userSids[sid]; ok {
-			_ = m.redis.Del(ctx, key).Err()
+		if len(toDel) > 0 {
+			_ = m.redis.Del(ctx, toDel...).Err()
 		}
 	}); err != nil {
 		return fmt.Errorf("revoke user sessions (scan refresh): %w", err)
@@ -496,16 +533,88 @@ func (m *JWTMaker) RevokeAllUserSessions(ctx context.Context, userID string) err
 	return nil
 }
 
-// scanKeys iterates all Redis keys matching pattern via SCAN, invoking fn for each.
-func (m *JWTMaker) scanKeys(ctx context.Context, pattern string, fn func(key string)) error {
+// RevokeUserSessionsExcept — foydalanuvchining `keepSessionID` dan BOSHQA barcha
+// sessiyalarini tugatadi. "Bitta akkaunt = bitta faol sessiya" siyosati
+// (PRODUCT.md, akkaunt ulashishga qarshi) aynan shu metod bilan bajariladi:
+// login muvaffaqiyatli bo'lganda eski qurilmalar chiqariladi.
+//
+// # Nega faqat SESSIYA kalitlari o'chiriladi (refresh JTI'lariga tegilmaydi)
+//
+// [JWTMaker.RevokeAllUserSessions] refresh JTI kalitlarini ham o'chiradi va
+// login yo'lida buni qilish ZARARLI bo'lardi: eski qurilma keyingi refresh'da
+// JTI'ni topolmaydi va bu holat `Rotate` da "refresh-token REUSE" (o'g'irlik)
+// deb baholanadi — natijada `RevokeAllUserSessions` ishga tushib, endigina
+// yaratilgan YANGI sessiyani ham o'ldirardi. Ya'ni foydalanuvchi har login
+// qilganda, eski qurilma bir marta refresh urinishi bilan yangi qurilmadan ham
+// chiqib ketardi.
+//
+// Faqat `sess:<sid>` o'chirilganda esa zanjir toza ishlaydi:
+//   - access token → `ValidateAccess` sessiyani topmaydi → [ErrSessionRevoked];
+//   - refresh token → `Rotate` JTI'ni topadi, sid mos keladi, lekin sessiya
+//     tekshiruvi yiqiladi → [ErrSessionRevoked] va yetim JTI o'sha yerda
+//     tozalanadi (reuse-detektor umuman qo'zg'almaydi);
+//   - grace yozuvi → `graceLookup` sessiya mavjudligini tekshiradi → ishlamaydi.
+//
+// keepSessionID bo'sh bo'lishi mumkin (u holda barcha sessiyalar tugatiladi).
+// Narxi [JWTMaker.RevokeAllUserSessions] bilan bir xil (SCAN) — lekin bitta,
+// ikkita emas: refresh kalitlari umuman skanerlanmaydi.
+func (m *JWTMaker) RevokeUserSessionsExcept(ctx context.Context, userID, keepSessionID string) error {
+	if userID == "" {
+		return nil
+	}
+	sessPrefix := m.redisPrefix + ":sess:"
+	if err := m.scanKeys(ctx, sessPrefix+"*", func(keys []string, vals []string) {
+		var toDel []string
+		for i, key := range keys {
+			if vals[i] != userID {
+				continue
+			}
+			if strings.TrimPrefix(key, sessPrefix) == keepSessionID {
+				continue
+			}
+			toDel = append(toDel, key)
+		}
+		if len(toDel) > 0 {
+			_ = m.redis.Del(ctx, toDel...).Err()
+		}
+	}); err != nil {
+		return fmt.Errorf("revoke other user sessions: %w", err)
+	}
+	return nil
+}
+
+// scanKeys SCAN bilan pattern'ga mos kalitlarni partiyalab aylanadi va har
+// partiya uchun `fn(keys, values)` chaqiradi.
+//
+// Qiymatlar bitta PIPELINE bilan olinadi: avval har kalit uchun alohida `GET`
+// yuborilardi, ya'ni tarmoq round-trip'i kalitlar soniga teng edi. Topilmagan
+// (ayni damda muddati tugagan) kalit uchun qiymat bo'sh satr bo'ladi —
+// chaqiruvchi buni o'tkazib yuborishi kerak.
+func (m *JWTMaker) scanKeys(ctx context.Context, pattern string, fn func(keys, values []string)) error {
 	var cursor uint64
 	for {
 		keys, next, err := m.redis.Scan(ctx, cursor, pattern, 100).Result()
 		if err != nil {
 			return err
 		}
-		for _, k := range keys {
-			fn(k)
+		if len(keys) > 0 {
+			pipe := m.redis.Pipeline()
+			cmds := make([]*redis.StringCmd, len(keys))
+			for i, k := range keys {
+				cmds[i] = pipe.Get(ctx, k)
+			}
+			// redis.Nil (kalit yo'q) kutilgan holat — pipeline xatosi sifatida
+			// qaytadi, lekin qolgan natijalar baribir o'qiladi.
+			if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+				return err
+			}
+			vals := make([]string, len(keys))
+			for i, cmd := range cmds {
+				if v, err := cmd.Result(); err == nil {
+					vals[i] = v
+				}
+			}
+			fn(keys, vals)
 		}
 		cursor = next
 		if cursor == 0 {

@@ -20,6 +20,15 @@ type RoomState struct {
 	// birinchi turadi). Tartib serverda hisoblanadi: klientlar mustaqil tartiblasa
 	// ustoz va o'quvchi turli navbat ko'rishi mumkin edi.
 	Hands []RaisedHand `json:"hands"`
+	// Recording — dars hozir yozib olinyaptimi.
+	//
+	// Nega bu YERDA: yozuv holati ilgari faqat `GET /lessons/:id/recordings`
+	// dan olinardi, u esa mentor huquqini talab qiladi — ya'ni O'QUVCHI o'zi
+	// yozib olinayotganini BILA OLMASDI. Bu shunchaki qulaylik emas, maxfiylik
+	// talabi: odam yozuvga tushayotganini ko'rishi kerak. Xona holati esa
+	// o'quvchida allaqachon bor (room-token bilan) va u shu endpointni
+	// muntazam so'raydi — qo'shimcha so'rov kerak emas.
+	Recording bool `json:"recording"`
 }
 
 // ── So'rov turlari ────────────────────────────────────────────────────────────

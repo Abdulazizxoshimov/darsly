@@ -7,7 +7,6 @@ import (
 
 	sq "github.com/Masterminds/squirrel"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/zoom/darsly/internal/entity"
 	"github.com/zoom/darsly/internal/infrastructure/repository"
@@ -21,12 +20,19 @@ var allowedUserSortCols = map[string]bool{
 }
 
 type userRepo struct {
-	db      *pgxpool.Pool
+	// db — `pg.Querier`: pool ham, tranzaksiya ham bo'lishi mumkin
+	// (`storage.WithTx` shu bilan ishlaydi).
+	db      pg.Querier
 	builder sq.StatementBuilderType
 }
 
 func NewUserRepo(p *pg.Postgres) repository.UserRepository {
 	return &userRepo{db: p.DB, builder: p.Builder}
+}
+
+// NewUserRepoTx — repozitoriyni TRANZAKSIYAGA bog'laydi (`storage.WithTx`).
+func NewUserRepoTx(q pg.Querier, b sq.StatementBuilderType) repository.UserRepository {
+	return &userRepo{db: q, builder: b}
 }
 
 const userCols = "id, email, password_hash, full_name, avatar_url, color, role, timezone, language, is_active, last_login_at, created_at, updated_at, deleted_at"
@@ -96,8 +102,8 @@ func (r *userRepo) List(ctx context.Context, filter *entity.UserFilter) ([]*enti
 	where := sq.And{sq.Eq{"deleted_at": nil}}
 	if filter.Search != "" {
 		where = append(where, sq.Or{
-			sq.ILike{"full_name": "%" + filter.Search + "%"},
-			sq.ILike{"email": "%" + filter.Search + "%"},
+			sq.ILike{"full_name": SearchPattern(filter.Search)},
+			sq.ILike{"email": SearchPattern(filter.Search)},
 		})
 	}
 	if filter.Role != "" {

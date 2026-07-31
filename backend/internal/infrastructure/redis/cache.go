@@ -17,7 +17,26 @@ func (c *redisCache) Ping(ctx context.Context) error {
 
 // ─── Basic key-value ──────────────────────────────────────────────────────────
 
+// Set — qiymatni saqlaydi. Struct/map/slice JSON'ga o'giriladi; SATR esa xom
+// holda yoziladi.
+//
+// # Nega satr uchun istisno
+//
+// Avval hamma narsa `json.Marshal` dan o'tardi, `Get` esa xom satr qaytarardi —
+// ya'ni `Set(k, "Ali")` + `Get(k)` juftligi `"Ali"` ni QO'SHTIRNOQ bilan
+// qaytarardi. Bu jimgina buzuqlik edi: `joinlink.mentorName` keshidan o'qilgan
+// ism foydalanuvchiga `"Ali"` ko'rinishida chiqardi (birinchi so'rovda to'g'ri,
+// kesh-hit'da noto'g'ri — shuning uchun sinovda ham osongina o'tkazib
+// yuborilardi).
+//
+// `testutil.FakeCache` boshidan shu — to'g'ri — xulqda edi, ya'ni testlar real
+// Redis'da mavjud xatoni ko'rmasdi. Endi ikkalasi bir xil.
+//
+// Struct'lar uchun shartnoma o'zgarmadi: ularni oldindan marshal qilmang.
 func (c *redisCache) Set(ctx context.Context, key string, value any, ttl time.Duration) error {
+	if s, ok := value.(string); ok {
+		return c.client.Set(ctx, key, s, ttl).Err()
+	}
 	b, err := json.Marshal(value)
 	if err != nil {
 		return err

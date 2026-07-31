@@ -90,6 +90,92 @@ func (r *recordingRepo) ListByLesson(ctx context.Context, lessonID string) ([]*e
 	return out, rows.Err()
 }
 
+// ── Retention (PRODUCT.md №5) ────────────────────────────────────────────────
+
+// retentionQuery — retention so'rovlarining umumiy o'zagi: hali tirik (`ready`)
+// yozuvlar, tugash vaqti bo'yicha eng eskisidan.
+//
+// `COALESCE(ended_at, created_at)`: `ended_at` nazariy jihatdan bo'sh bo'lishi
+// mumkin (webhook yo'qolgan, holat qo'lda qo'yilgan). U holda yozuv retention
+// hisobidan BUTUNLAY tushib qolardi va diskda abadiy qolardi — aynan
+// oldini olmoqchi bo'lgan holatimiz.
+func (r *recordingRepo) retentionQuery(endedBefore time.Time, limit uint64) sq.SelectBuilder {
+	if limit == 0 {
+		limit = 200
+	}
+	return r.builder.Select(recordingCols).From("recordings").
+		Where(sq.Eq{"status": entity.RecordingStatusReady}).
+		Where(sq.Expr("COALESCE(ended_at, created_at) <= ?", endedBefore)).
+		OrderBy("COALESCE(ended_at, created_at) ASC").
+		Limit(limit)
+}
+
+func (r *recordingRepo) scanRecordings(ctx context.Context, sql string, args []any, op string) ([]*entity.Recording, error) {
+	rows, err := r.db.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, fmt.Errorf("recordingRepo.%s: %w", op, err)
+	}
+	defer rows.Close()
+
+	var out []*entity.Recording
+	for rows.Next() {
+		rec, err := scanRecording(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, rec)
+	}
+	return out, rows.Err()
+}
+
+func (r *recordingRepo) ListExpired(ctx context.Context, endedBefore time.Time, limit uint64) ([]*entity.Recording, error) {
+	sql, args, err := r.retentionQuery(endedBefore, limit).ToSql()
+	if err != nil {
+		return nil, fmt.Errorf("recordingRepo.ListExpired: %w", err)
+	}
+	return r.scanRecordings(ctx, sql, args, "ListExpired")
+}
+
+func (r *recordingRepo) ListExpiringUnwarned(ctx context.Context, endedBefore time.Time, limit uint64) ([]*entity.Recording, error) {
+	sql, args, err := r.retentionQuery(endedBefore, limit).
+		Where(sq.Eq{"retention_warned_at": nil}).ToSql()
+	if err != nil {
+		return nil, fmt.Errorf("recordingRepo.ListExpiringUnwarned: %w", err)
+	}
+	return r.scanRecordings(ctx, sql, args, "ListExpiringUnwarned")
+}
+
+// ClaimExpire — yozuvni ATOMIK ravishda `expired` deb belgilaydi.
+//
+// Faylni MinIO'dan o'chirishdan OLDIN chaqiriladi: shunda ikki instans bir
+// vaqtda ishlaganda faqat bittasi o'chirish ishini bajaradi. Teskari tartib
+// (avval o'chirish, keyin belgilash) DB uzilganda "obyekt yo'q, lekin holat
+// `ready`" degan yolg'on qoldirardi — mentor yuklab olmoqchi bo'lib xato olardi.
+func (r *recordingRepo) ClaimExpire(ctx context.Context, id string, deletedAt time.Time) (bool, error) {
+	sql, args, _ := r.builder.
+		Update("recordings").
+		Set("status", entity.RecordingStatusExpired).
+		Set("deleted_at", deletedAt).
+		Where(sq.And{sq.Eq{"id": id}, sq.Eq{"status": entity.RecordingStatusReady}}).ToSql()
+	tag, err := r.db.Exec(ctx, sql, args...)
+	if err != nil {
+		return false, fmt.Errorf("recordingRepo.ClaimExpire: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+func (r *recordingRepo) ClaimRetentionWarning(ctx context.Context, id string) (bool, error) {
+	sql, args, _ := r.builder.
+		Update("recordings").
+		Set("retention_warned_at", sq.Expr("NOW()")).
+		Where(sq.And{sq.Eq{"id": id}, sq.Eq{"retention_warned_at": nil}}).ToSql()
+	tag, err := r.db.Exec(ctx, sql, args...)
+	if err != nil {
+		return false, fmt.Errorf("recordingRepo.ClaimRetentionWarning: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
 func (r *recordingRepo) UpdateStatus(ctx context.Context, id, status string) error {
 	sql, args, _ := r.builder.Update("recordings").Set("status", status).Where(sq.Eq{"id": id}).ToSql()
 	_, err := r.db.Exec(ctx, sql, args...)

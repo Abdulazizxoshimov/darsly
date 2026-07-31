@@ -20,6 +20,40 @@ type Config struct {
 	Loki     LokiConfig     `json:"loki"`
 	LiveKit  LiveKitConfig  `json:"livekit"`
 	Mobile   MobileConfig   `json:"mobile"`
+	Lesson   LessonConfig   `json:"lesson"`
+	// Recording — yozuvlarni saqlash siyosati (retention).
+	Recording RecordingConfig `json:"recording"`
+}
+
+// LessonConfig — dars hayoti (PRODUCT.md «Dars hayoti», №2).
+//
+// Ikkala qoida ham SERVER tomonda: mentorning ilovasi yopilishi, telefoni
+// o'chishi yoki internet uzilishi mumkin, ya'ni "Yakunlash" tugmasiga tayanib
+// bo'lmaydi. Batafsil izoh: `usecase/room/autoend.go`.
+type LessonConfig struct {
+	// MaxDuration — texnik limit: dars boshlanganidan shuncha vaqt o'tsa
+	// avtomatik yakunlanadi (LESSON_MAX_DURATION, default 4h). 0 → limitsiz.
+	MaxDuration time.Duration `json:"max_duration"`
+	// EmptyGrace — xona bo'shagach shuncha kutiladi, keyin dars yakunlanadi
+	// (LESSON_EMPTY_GRACE, default 20m). 0 → bu qoida o'chirilgan.
+	//
+	// ⚠️ LiveKit `empty_timeout` (xonaning O'ZI o'chishi) bilan aralashtirmang —
+	// bu DARS holatini boshqaradi.
+	EmptyGrace time.Duration `json:"empty_grace"`
+	// SweepInterval — avto-yakun tekshiruvi oralig'i (LESSON_SWEEP_INTERVAL, 1m).
+	SweepInterval time.Duration `json:"sweep_interval"`
+}
+
+// RecordingConfig — yozuvlarni saqlash muddati (PRODUCT.md №5).
+type RecordingConfig struct {
+	// Retention — yozuv shuncha vaqt saqlanadi, keyin MinIO'dan o'chiriladi
+	// (RECORDING_RETENTION_DAYS, default 30 kun). 0 → o'chirish o'chirilgan.
+	Retention time.Duration `json:"retention"`
+	// WarnBefore — o'chishdan shuncha vaqt oldin mentorga bildirishnoma
+	// (RECORDING_RETENTION_WARN_DAYS, default 3 kun). 0 → ogohlantirish yo'q.
+	WarnBefore time.Duration `json:"warn_before"`
+	// SweepInterval — retention tekshiruvi oralig'i (RECORDING_RETENTION_INTERVAL, 1h).
+	SweepInterval time.Duration `json:"sweep_interval"`
 }
 
 // MobileConfig — mobil klient versiya nazorati (`GET /api/v1/app-config`).
@@ -37,6 +71,15 @@ type MobileConfig struct {
 // LiveKitConfig — SFU media server (video-dars) sozlamalari.
 type LiveKitConfig struct {
 	Host          string        `json:"host"`            // masalan: ws://localhost:7880
+	// ClientURL — KLIENTLARGA qaytariladigan signaling manzili (Host'dan alohida!).
+	// Host — backend↔LiveKit API yo'li (ichki bo'lishi mumkin), ClientURL esa
+	// telefon/brauzer ulanadigan OCHIQ manzil. Qiymatlar:
+	//   ""     — Host'ning o'zi (ikkalasi bir xil bo'lgan oddiy holat);
+	//   URL    — production: wss://livekit.<domen>;
+	//   "auto" — dev: klient API'ga qaysi host orqali kelgan bo'lsa, LiveKit ham
+	//            o'sha hostda (sxema+port Host'dan olinadi). Tarmoq IP o'zgarsa
+	//            ham sozlamani qo'lda o'zgartirish kerak emas.
+	ClientURL string `json:"client_url"`
 	APIKey        string        `json:"api_key"`         // LiveKit API key
 	APISecret     string        `json:"api_secret"`      // LiveKit API secret
 	WebhookAPIKey string        `json:"webhook_api_key"` // Egress webhook imzosini tekshirish uchun
@@ -243,7 +286,15 @@ func Load() *Config {
 		JWT: JWTConfig{
 			Secret:       getEnv("JWT_SECRET", ""),
 			AccessTTL:    getEnvDuration("JWT_ACCESS_TTL", 15*time.Minute),
-			RefreshTTL:   getEnvDuration("JWT_REFRESH_TTL", 720*time.Hour),
+			// 14 kun (avval 30). Refresh token brauzerda `localStorage` da
+			// yashaydi — ya'ni XSS uni o'g'irlay oladi va o'g'irlangan token
+			// TTL tugagunicha ishlaydi. HttpOnly cookie'ga o'tish to'g'ri
+			// yechim bo'lardi, lekin ayni API'ni mobil ilova ham ishlatadi
+			// (u tokenni Android Keystore'da to'g'ri saqlaydi) va cookie
+			// oqimi u yerda mos kelmaydi. Shu sababli oyna qisqartirildi:
+			// 30 kun o'g'irlangan token uchun juda uzun, 14 kun esa haftada
+			// bir marta kiradigan ustozni ham qayta login qilishga majburlamaydi.
+			RefreshTTL:   getEnvDuration("JWT_REFRESH_TTL", 336*time.Hour),
 			RefreshGrace: getEnvDuration("JWT_REFRESH_GRACE", 60*time.Second),
 		},
 		Email: EmailConfig{
@@ -265,11 +316,24 @@ func Load() *Config {
 		},
 		LiveKit: LiveKitConfig{
 			Host:          getEnv("LIVEKIT_HOST", "ws://localhost:7880"),
+			ClientURL:     getEnv("LIVEKIT_CLIENT_WS_URL", ""),
 			APIKey:        getEnv("LIVEKIT_API_KEY", ""),
 			APISecret:     getEnv("LIVEKIT_API_SECRET", ""),
 			WebhookAPIKey: getEnv("LIVEKIT_WEBHOOK_API_KEY", ""),
 			TokenTTL:      getEnvDuration("LIVEKIT_TOKEN_TTL", 6*time.Hour),
 			EgressLayout:  getEnv("LIVEKIT_EGRESS_LAYOUT", "speaker"),
+		},
+		Lesson: LessonConfig{
+			MaxDuration:   getEnvDuration("LESSON_MAX_DURATION", 4*time.Hour),
+			EmptyGrace:    getEnvDuration("LESSON_EMPTY_GRACE", 20*time.Minute),
+			SweepInterval: getEnvDuration("LESSON_SWEEP_INTERVAL", time.Minute),
+		},
+		Recording: RecordingConfig{
+			// Kunlarda beriladi (RECORDING_RETENTION_DAYS=30) — operator uchun
+			// `720h` dan ancha tushunarli. Ichkarida time.Duration.
+			Retention:     time.Duration(getEnvInt("RECORDING_RETENTION_DAYS", 30)) * 24 * time.Hour,
+			WarnBefore:    time.Duration(getEnvInt("RECORDING_RETENTION_WARN_DAYS", 3)) * 24 * time.Hour,
+			SweepInterval: getEnvDuration("RECORDING_RETENTION_INTERVAL", time.Hour),
 		},
 		Mobile: MobileConfig{
 			AndroidMinVersion:    getEnv("APP_ANDROID_MIN_VERSION", "1.0.0"),

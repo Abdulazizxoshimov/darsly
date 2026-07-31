@@ -15,6 +15,7 @@ import (
 
 	"github.com/zoom/darsly/internal/entity"
 	"github.com/zoom/darsly/internal/infrastructure/livekit"
+	"github.com/zoom/darsly/internal/infrastructure/repository"
 	apperr "github.com/zoom/darsly/internal/pkg/errors"
 	"github.com/zoom/darsly/internal/pkg/token"
 )
@@ -36,6 +37,14 @@ type FakeLiveKit struct {
 	SentTo [][]string
 	// TokenRoom — VerifyToken qaytaradigan xona nomi.
 	TokenRoom string
+	// Removed — `RemoveParticipant` bilan uzilgan identity'lar (ban qo'llanishini
+	// tekshirish uchun: "chaqirildi" emas, "AYNAN KIM uzildi" muhim).
+	Removed []string
+	// Muted — `MuteParticipant` bilan mute qilingan identity'lar (ovoz siyosati
+	// testlari "AYNAN KIM mute bo'ldi"ni tekshiradi).
+	Muted []string
+	// EgressErr — nil bo'lmasa `StartRoomRecording` shu xatoni qaytaradi.
+	EgressErr error
 }
 
 func NewFakeLiveKit() *FakeLiveKit {
@@ -49,7 +58,7 @@ func (f *FakeLiveKit) inc(op string) {
 }
 
 func (f *FakeLiveKit) Enabled() bool { return f.IsEnabled }
-func (f *FakeLiveKit) WSURL() string { return "ws://fake-livekit" }
+func (f *FakeLiveKit) ClientWSURL(string) string { return "ws://fake-livekit" }
 func (f *FakeLiveKit) AccessToken(_, identity, _ string, isHost bool) (string, error) {
 	f.inc("AccessToken")
 	if isHost {
@@ -69,13 +78,33 @@ func (f *FakeLiveKit) ListParticipantViews(_ context.Context, _ string) ([]entit
 	f.inc("ListParticipantViews")
 	return f.Participants, nil
 }
-func (f *FakeLiveKit) MuteParticipant(_ context.Context, _, _ string, _ bool) error {
+func (f *FakeLiveKit) MuteParticipant(_ context.Context, _, identity string, _ bool) error {
 	f.inc("MuteParticipant")
+	f.mu.Lock()
+	f.Muted = append(f.Muted, identity)
+	f.mu.Unlock()
 	return nil
 }
-func (f *FakeLiveKit) RemoveParticipant(_ context.Context, _, _ string) error {
+
+// MutedList — mute qilingan identity'lar nusxasi (poyga'siz o'qish uchun).
+func (f *FakeLiveKit) MutedList() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.Muted...)
+}
+func (f *FakeLiveKit) RemoveParticipant(_ context.Context, _, identity string) error {
 	f.inc("RemoveParticipant")
+	f.mu.Lock()
+	f.Removed = append(f.Removed, identity)
+	f.mu.Unlock()
 	return nil
+}
+
+// RemovedList — uzilgan identity'lar nusxasi (poyga'siz o'qish uchun).
+func (f *FakeLiveKit) RemovedList() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.Removed...)
 }
 func (f *FakeLiveKit) SetParticipantPublish(_ context.Context, _, _ string, _ bool) error {
 	f.inc("SetParticipantPublish")
@@ -126,8 +155,16 @@ func (f *FakeLiveKit) SetTokenRoom(room string) {
 	f.TokenRoom = room
 	f.mu.Unlock()
 }
+// EgressErr o'rnatilgan bo'lsa `StartRoomRecording` shu xato bilan yiqiladi —
+// "egress boshlanmadi" yo'lini (kompensatsiya, qulf bo'shatish) sinash uchun.
 func (f *FakeLiveKit) StartRoomRecording(_ context.Context, _, _ string, _ livekit.S3Config) (string, error) {
 	f.inc("StartRoomRecording")
+	f.mu.Lock()
+	err := f.EgressErr
+	f.mu.Unlock()
+	if err != nil {
+		return "", err
+	}
 	return "egress-fake", nil
 }
 func (f *FakeLiveKit) StopRecording(_ context.Context, _ string) error {
@@ -338,11 +375,21 @@ type FakeTokenMaker struct {
 	Sessions     map[string]bool // sessionID → active
 	Revoked      []string        // refresh tokens passed to RevokeRefresh
 	RevokedUsers []string        // userIDs passed to RevokeAllUserSessions
-	counter      int
+	// SessionUser — sessionID → userID (StoreSession payload'idan). "Bitta akkaunt
+	// = bitta faol sessiya" testi uchun kerak: `RevokeUserSessionsExcept` qaysi
+	// sessiyalar shu foydalanuvchiniki ekanini shu xarita orqali biladi.
+	SessionUser map[string]string
+	// RevokedExceptUsers — `RevokeUserSessionsExcept` chaqirilgan userID'lar.
+	RevokedExceptUsers []string
+	// RotateErr — nil bo'lmasa `Rotate` shu xatoni qaytaradi. Refresh xatosining
+	// TURI usecase'da farqlanadi (`SESSION_REVOKED` va boshqalar), shuning uchun
+	// testda uni boshqarish kerak.
+	RotateErr error
+	counter   int
 }
 
 func NewFakeTokenMaker() *FakeTokenMaker {
-	return &FakeTokenMaker{Sessions: map[string]bool{}}
+	return &FakeTokenMaker{Sessions: map[string]bool{}, SessionUser: map[string]string{}}
 }
 
 func (m *FakeTokenMaker) Generate(_ context.Context, _, sessionID, _ string) (string, string, error) {
@@ -355,6 +402,12 @@ func (m *FakeTokenMaker) ValidateAccess(_ context.Context, _ string) (*token.Cla
 	return &token.Claims{}, nil
 }
 func (m *FakeTokenMaker) Rotate(_ context.Context, _ string) (string, string, error) {
+	m.mu.Lock()
+	err := m.RotateErr
+	m.mu.Unlock()
+	if err != nil {
+		return "", "", err
+	}
 	return "new-access", "new-refresh", nil
 }
 func (m *FakeTokenMaker) SessionFromRefresh(refreshToken string) (string, error) {
@@ -378,10 +431,25 @@ func (m *FakeTokenMaker) RevokeAllUserSessions(_ context.Context, userID string)
 	m.RevokedUsers = append(m.RevokedUsers, userID)
 	return nil
 }
-func (m *FakeTokenMaker) StoreSession(_ context.Context, sessionID, _ string, _ time.Duration) error {
+func (m *FakeTokenMaker) RevokeUserSessionsExcept(_ context.Context, userID, keepSessionID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.RevokedExceptUsers = append(m.RevokedExceptUsers, userID)
+	for sid, uid := range m.SessionUser {
+		if uid == userID && sid != keepSessionID {
+			delete(m.Sessions, sid)
+		}
+	}
+	return nil
+}
+func (m *FakeTokenMaker) StoreSession(_ context.Context, sessionID, payload string, _ time.Duration) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.Sessions[sessionID] = true
+	if m.SessionUser == nil {
+		m.SessionUser = map[string]string{}
+	}
+	m.SessionUser[sessionID] = payload
 	return nil
 }
 func (m *FakeTokenMaker) RevokeSession(_ context.Context, sessionID string) error {
@@ -411,6 +479,9 @@ func NewFakeCache() *FakeCache {
 	}
 }
 
+// Set — `redis.redisCache.Set` bilan AYNAN bir xil: satr xom, qolgani JSON.
+// Bu ikkisi ajralib qolsa test yashil bo'lib turib real Redis'dagi xatoni
+// yashiradi (aynan shu bir marta sodir bo'lgan — izohi `redis/cache.go` da).
 func (c *FakeCache) Set(_ context.Context, key string, value any, _ time.Duration) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -441,7 +512,19 @@ func (c *FakeCache) Del(_ context.Context, keys ...string) error {
 	}
 	return nil
 }
-func (c *FakeCache) SetNX(_ context.Context, _, _ string, _ time.Duration) (bool, error) {
+// SetNX — HAQIQIY "faqat mavjud bo'lmasa yoz" semantikasi.
+//
+// Avval bu doim `true` qaytarardi, ya'ni SetNX'ga tayanadigan har qanday qulf
+// testda "hech qachon band emas" holatida sinalardi — dublikat-egress qulfi
+// (`recording.startLockKey`) kabi poyga himoyalari yashil bo'lib turib
+// umuman qoplanmagan bo'lardi.
+func (c *FakeCache) SetNX(_ context.Context, key, value string, _ time.Duration) (bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, exists := c.kv[key]; exists {
+		return false, nil
+	}
+	c.kv[key] = value
 	return true, nil
 }
 func (c *FakeCache) Incr(_ context.Context, key string, _ time.Duration) (int64, error) {
@@ -543,7 +626,16 @@ func (m *FakeMinio) EnsureBucket(_ context.Context) error        { return nil }
 
 // ─── RoomUseCase ─────────────────────────────────────────────────────────────
 
-type FakeRoomUC struct{ ParticipantCalls int }
+type FakeRoomUC struct {
+	ParticipantCalls int
+	// EnforcedJoins — `EnforceJoin` chaqiruvlari: "room|identity|name".
+	EnforcedJoins []string
+	// AudioPolicies — `EnforceAudioPolicy` chaqiruvlari: "room|identity".
+	AudioPolicies []string
+	// EmptyNoted / OccupiedNoted — avto-yakun uchun bo'shlik signallari (xona nomlari).
+	EmptyNoted    []string
+	OccupiedNoted []string
+}
 
 func (r *FakeRoomUC) HostToken(_ context.Context, _, _ string) (*entity.RoomToken, error) {
 	return &entity.RoomToken{Token: "host-tok", Role: entity.RoomRoleHost}, nil
@@ -553,15 +645,32 @@ func (r *FakeRoomUC) ParticipantToken(_ context.Context, _ *entity.Lesson, ident
 	return &entity.RoomToken{Token: "part-tok", Identity: identity, Role: entity.RoomRoleParticipant}, nil
 }
 func (r *FakeRoomUC) EndLesson(_ context.Context, _, _ string) error { return nil }
+func (r *FakeRoomUC) EnforceJoin(_ context.Context, roomName, identity, name string) {
+	r.EnforcedJoins = append(r.EnforcedJoins, roomName+"|"+identity+"|"+name)
+}
+func (r *FakeRoomUC) EnforceAudioPolicy(_ context.Context, roomName, identity string) {
+	r.AudioPolicies = append(r.AudioPolicies, roomName+"|"+identity)
+}
 func (r *FakeRoomUC) ListParticipants(_ context.Context, _, _ string) ([]entity.RoomParticipant, error) {
 	return nil, nil
 }
 func (r *FakeRoomUC) MuteParticipant(_ context.Context, _, _, _ string, _ bool) error { return nil }
-func (r *FakeRoomUC) MuteAll(_ context.Context, _, _ string) error                    { return nil }
-func (r *FakeRoomUC) RemoveParticipant(_ context.Context, _, _, _ string) error       { return nil }
+func (r *FakeRoomUC) MuteAll(_ context.Context, _, _ string, _ *bool) error           { return nil }
+func (r *FakeRoomUC) RemoveParticipant(_ context.Context, _, _, _, _ string) error    { return nil }
 func (r *FakeRoomUC) SetSpeakPermission(_ context.Context, _, _, _ string, _ bool) error {
 	return nil
 }
+func (r *FakeRoomUC) ListBlocklist(_ context.Context, _ string) ([]*entity.BlocklistEntry, error) {
+	return nil, nil
+}
+func (r *FakeRoomUC) Unblock(_ context.Context, _, _ string) error { return nil }
+func (r *FakeRoomUC) NoteRoomEmpty(_ context.Context, roomName string) {
+	r.EmptyNoted = append(r.EmptyNoted, roomName)
+}
+func (r *FakeRoomUC) NoteRoomOccupied(_ context.Context, roomName string) {
+	r.OccupiedNoted = append(r.OccupiedNoted, roomName)
+}
+func (r *FakeRoomUC) SweepAutoEnd(_ context.Context, _, _ time.Duration) int { return 0 }
 
 // ─── LessonRepo ──────────────────────────────────────────────────────────────
 
@@ -644,6 +753,35 @@ func (r *FakeLessonRepo) SoftDelete(_ context.Context, id string) error {
 	}
 	return nil
 }
+
+// ListLive — jonli darslar (avto-yakun ishchisi/sweep testlari uchun).
+func (r *FakeLessonRepo) ListLive(_ context.Context) ([]*entity.Lesson, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []*entity.Lesson
+	for _, l := range r.byID {
+		if l.DeletedAt == nil && l.Status == entity.LessonStatusLive {
+			cp := *l
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
+// ClaimEnd — atomik yakunlash imitatsiyasi: faqat dars hamon `live` bo'lsa true.
+func (r *FakeLessonRepo) ClaimEnd(_ context.Context, id string, endedAt time.Time) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	l, ok := r.byID[id]
+	if !ok || l.DeletedAt != nil || l.Status != entity.LessonStatusLive {
+		return false, nil
+	}
+	l.Status = entity.LessonStatusEnded
+	ended := endedAt
+	l.EndedAt = &ended
+	return true, nil
+}
+
 func (r *FakeLessonRepo) ListUpcomingUnreminded(_ context.Context, from, to time.Time) ([]*entity.Lesson, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -665,6 +803,99 @@ func (r *FakeLessonRepo) ClaimReminder(_ context.Context, id string) (bool, erro
 	}
 	r.reminded[id] = true
 	return true, nil
+}
+
+// ─── BlocklistRepo ───────────────────────────────────────────────────────────
+
+// FakeBlocklistRepo — mentor darajasidagi doimiy qora ro'yxat (in-memory).
+// Ism mosligi haqiqiy repo bilan AYNAN bir xil: lower(trim(display_name)).
+type FakeBlocklistRepo struct {
+	mu      sync.Mutex
+	entries map[string]*entity.BlocklistEntry // by ID
+	// FailNext — nil bo'lmasa keyingi chaqiruv shu xato bilan yiqiladi
+	// (fail-open yo'lini sinash uchun).
+	FailNext error
+}
+
+func NewFakeBlocklistRepo() *FakeBlocklistRepo {
+	return &FakeBlocklistRepo{entries: map[string]*entity.BlocklistEntry{}}
+}
+
+func normalizeBlockName(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
+
+func (r *FakeBlocklistRepo) takeErr() error {
+	err := r.FailNext
+	r.FailNext = nil
+	return err
+}
+
+func (r *FakeBlocklistRepo) Add(_ context.Context, e *entity.BlocklistEntry) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.takeErr(); err != nil {
+		return err
+	}
+	// ON CONFLICT DO NOTHING taqlidi: bir mentor uchun bir ism bir marta.
+	if name := normalizeBlockName(e.DisplayName); name != "" {
+		for _, x := range r.entries {
+			if x.MentorID == e.MentorID && normalizeBlockName(x.DisplayName) == name {
+				return nil
+			}
+		}
+	}
+	cp := *e
+	cp.DisplayName = strings.TrimSpace(e.DisplayName)
+	cp.CreatedAt = time.Now()
+	r.entries[e.ID] = &cp
+	return nil
+}
+
+func (r *FakeBlocklistRepo) IsBlocked(_ context.Context, mentorID, displayName string) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.takeErr(); err != nil {
+		return false, err
+	}
+	name := normalizeBlockName(displayName)
+	if name == "" {
+		return false, nil
+	}
+	for _, e := range r.entries {
+		if e.MentorID == mentorID && normalizeBlockName(e.DisplayName) == name {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (r *FakeBlocklistRepo) ListByMentor(_ context.Context, mentorID string) ([]*entity.BlocklistEntry, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.takeErr(); err != nil {
+		return nil, err
+	}
+	var out []*entity.BlocklistEntry
+	for _, e := range r.entries {
+		if e.MentorID == mentorID {
+			cp := *e
+			out = append(out, &cp)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	return out, nil
+}
+
+func (r *FakeBlocklistRepo) Delete(_ context.Context, mentorID, id string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.takeErr(); err != nil {
+		return err
+	}
+	if e, ok := r.entries[id]; ok && e.MentorID == mentorID {
+		delete(r.entries, id)
+		return nil
+	}
+	return apperr.NotFound("blocklist entry")
 }
 
 // ─── WaitingRoomRepo ─────────────────────────────────────────────────────────
@@ -808,6 +1039,9 @@ type FakeRecordingRepo struct {
 	byID         map[string]*entity.Recording
 	transcode    map[string]string
 	originalSize map[string]int64
+	// warned — `retention_warned_at` kuzatuvi (entity'da maydon yo'q, xuddi
+	// FakeLessonRepo.reminded kabi).
+	warned map[string]bool
 }
 
 func NewFakeRecordingRepo() *FakeRecordingRepo {
@@ -815,7 +1049,68 @@ func NewFakeRecordingRepo() *FakeRecordingRepo {
 		byID:         map[string]*entity.Recording{},
 		transcode:    map[string]string{},
 		originalSize: map[string]int64{},
+		warned:       map[string]bool{},
 	}
+}
+
+// ─── Retention (PRODUCT.md №5) ───────────────────────────────────────────────
+
+// recordingEnd — retention hisobining tayanch vaqti (postgres'dagi
+// COALESCE(ended_at, created_at) bilan bir xil).
+func recordingEnd(rec *entity.Recording) time.Time {
+	if rec.EndedAt != nil {
+		return *rec.EndedAt
+	}
+	return rec.CreatedAt
+}
+
+func (r *FakeRecordingRepo) ListExpired(_ context.Context, endedBefore time.Time, _ uint64) ([]*entity.Recording, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []*entity.Recording
+	for _, rec := range r.byID {
+		if rec.Status == entity.RecordingStatusReady && !recordingEnd(rec).After(endedBefore) {
+			cp := *rec
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
+func (r *FakeRecordingRepo) ListExpiringUnwarned(_ context.Context, endedBefore time.Time, _ uint64) ([]*entity.Recording, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []*entity.Recording
+	for _, rec := range r.byID {
+		if rec.Status == entity.RecordingStatusReady && !r.warned[rec.ID] && !recordingEnd(rec).After(endedBefore) {
+			cp := *rec
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
+// ClaimExpire — atomik `ready → expired` imitatsiyasi. `deleted_at` entity'da
+// yo'q (faqat DB ustuni), shuning uchun fake'da holatning o'zi kifoya.
+func (r *FakeRecordingRepo) ClaimExpire(_ context.Context, id string, _ time.Time) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec, ok := r.byID[id]
+	if !ok || rec.Status != entity.RecordingStatusReady {
+		return false, nil
+	}
+	rec.Status = entity.RecordingStatusExpired
+	return true, nil
+}
+
+func (r *FakeRecordingRepo) ClaimRetentionWarning(_ context.Context, id string) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.warned[id] {
+		return false, nil
+	}
+	r.warned[id] = true
+	return true, nil
 }
 
 func (r *FakeRecordingRepo) Create(_ context.Context, rec *entity.Recording) error {
@@ -969,16 +1264,49 @@ func (r *FakeRecordingRepo) MarkFailed(_ context.Context, egressID string, ended
 type FakeChatRepo struct {
 	mu    sync.Mutex
 	items []*entity.ChatMessage
+	// deleted — moderatsiya bilan o'chirilgan xabar ID lari. Entity'da bunday
+	// maydon YO'Q (o'chirilgan xabar API'da umuman ko'rinmaydi), shuning uchun
+	// fake buni yonida tutadi — xuddi haqiqiy repo `deleted_at` ustunida
+	// tutgani kabi.
+	deleted map[string]string // messageID → deletedBy
 }
 
-func NewFakeChatRepo() *FakeChatRepo { return &FakeChatRepo{} }
+func NewFakeChatRepo() *FakeChatRepo { return &FakeChatRepo{deleted: map[string]string{}} }
 
 func (r *FakeChatRepo) Create(_ context.Context, m *entity.ChatMessage) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	cp := *m
+	if m.File != nil {
+		f := *m.File
+		cp.File = &f
+	}
 	r.items = append(r.items, &cp)
 	return nil
+}
+
+// DeletedBy — testlar uchun: xabarni kim o'chirgan ("" = o'chirilmagan).
+func (r *FakeChatRepo) DeletedBy(id string) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.deleted[id]
+}
+
+func (r *FakeChatRepo) SoftDelete(_ context.Context, lessonID, messageID, deletedBy string) (*entity.ChatMessage, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, gone := r.deleted[messageID]; gone {
+		return nil, apperr.NotFound("chat message")
+	}
+	for _, m := range r.items {
+		if m.ID != messageID || m.LessonID != lessonID {
+			continue
+		}
+		r.deleted[messageID] = deletedBy
+		cp := *m
+		return &cp, nil
+	}
+	return nil, apperr.NotFound("chat message")
 }
 func (r *FakeChatRepo) ListByLesson(_ context.Context, lessonID, viewerIdentity string, before *time.Time, limit int) ([]*entity.ChatMessage, error) {
 	r.mu.Lock()
@@ -991,6 +1319,10 @@ func (r *FakeChatRepo) ListByLesson(_ context.Context, lessonID, viewerIdentity 
 	for i := len(r.items) - 1; i >= 0; i-- {
 		m := r.items[i]
 		if m.LessonID != lessonID {
+			continue
+		}
+		// O'CHIRILGAN xabar hech kimga qaytmaydi (haqiqiy repo SQL'da shunday).
+		if _, gone := r.deleted[m.ID]; gone {
 			continue
 		}
 		// KO'RINUVCHANLIK — haqiqiy repo bilan bir xil. Fake buni qilmasa,
@@ -1063,6 +1395,23 @@ func (r *FakePollRepo) Close(_ context.Context, id string) error {
 	}
 	return nil
 }
+
+func (r *FakePollRepo) Publish(_ context.Context, id string) (*entity.Poll, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	p, ok := r.polls[id]
+	if !ok {
+		return nil, apperr.NotFound("poll")
+	}
+	// IDEMPOTENT — haqiqiy repo'dagi COALESCE bilan bir xil: takroriy e'lon
+	// vaqtni surib yubormaydi.
+	if p.ResultsPublishedAt == nil {
+		now := time.Now().UTC()
+		p.ResultsPublishedAt = &now
+	}
+	cp := *p
+	return &cp, nil
+}
 func (r *FakePollRepo) Vote(_ context.Context, pollID, identity string, optionIndex int) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -1082,4 +1431,81 @@ func (r *FakePollRepo) Counts(_ context.Context, pollID string, numOptions int) 
 		}
 	}
 	return counts, nil
+}
+
+// ─── FakeTxRunner ────────────────────────────────────────────────────────────
+
+// FakeTxRunner — `auth.TxRunner` ning test implementatsiyasi.
+//
+// Haqiqiy tranzaksiyani REAL rollback bilan taqlid qiladi: `fn` xato qaytarsa,
+// uning ichida yaratilgan yozuvlar bekor qilinadi. Bu muhim — agar fake
+// shunchaki `fn` ni chaqirib qo'ya qolsa, "rollback bo'ldi" degan test
+// hech nimani isbotlamasdi (yozuv baribir qolaverardi va test yolg'on-yashil
+// bo'lardi).
+//
+// Taqlid usuli: `fn` dan OLDIN ikkala fake'ning holatidan snapshot olinadi,
+// xatoda esa snapshot qaytariladi. Bu haqiqiy `ROLLBACK` bilan bir xil
+// kuzatiladigan natijani beradi.
+type FakeTxRunner struct {
+	users *FakeUserRepo
+	auths *FakeAuthRepo
+	// Commits/Rollbacks — test tranzaksiya haqiqatan ishlaganini tekshira olsin.
+	Commits   int
+	Rollbacks int
+}
+
+func NewFakeTxRunner(users *FakeUserRepo, auths *FakeAuthRepo) *FakeTxRunner {
+	return &FakeTxRunner{users: users, auths: auths}
+}
+
+func (f *FakeTxRunner) RunInTx(
+	ctx context.Context,
+	fn func(users repository.UserRepository, auth repository.AuthRepository) error,
+) error {
+	userSnap := f.users.snapshot()
+	tokenSnap := f.auths.snapshot()
+
+	if err := fn(f.users, f.auths); err != nil {
+		f.users.restore(userSnap)
+		f.auths.restore(tokenSnap)
+		f.Rollbacks++
+		return err
+	}
+	f.Commits++
+	return nil
+}
+
+// snapshot/restore — rollback taqlidi uchun holat nusxasi.
+func (r *FakeUserRepo) snapshot() map[string]*entity.User {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	cp := make(map[string]*entity.User, len(r.byID))
+	for k, v := range r.byID {
+		u := *v
+		cp[k] = &u
+	}
+	return cp
+}
+
+func (r *FakeUserRepo) restore(snap map[string]*entity.User) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.byID = snap
+}
+
+func (r *FakeAuthRepo) snapshot() map[string]*entity.RefreshToken {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	cp := make(map[string]*entity.RefreshToken, len(r.tokens))
+	for k, v := range r.tokens {
+		t := *v
+		cp[k] = &t
+	}
+	return cp
+}
+
+func (r *FakeAuthRepo) restore(snap map[string]*entity.RefreshToken) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.tokens = snap
 }

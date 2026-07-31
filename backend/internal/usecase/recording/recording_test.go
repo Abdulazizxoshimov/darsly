@@ -2,7 +2,10 @@ package recording_test
 
 import (
 	"context"
+	"errors"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -20,6 +23,9 @@ const (
 	testRecordingID = "22222222-2222-4222-8222-222222222222"
 )
 
+// testRetention — yozuv saqlash muddati (`expires_at` hisoblanadigan maydon).
+const testRetention = 30 * 24 * time.Hour
+
 func setup(t *testing.T) (recording.UseCase, *testutil.FakeRecordingRepo, *testutil.FakeLessonRepo, *testutil.FakeLiveKit) {
 	t.Helper()
 	rrepo := testutil.NewFakeRecordingRepo()
@@ -27,7 +33,7 @@ func setup(t *testing.T) (recording.UseCase, *testutil.FakeRecordingRepo, *testu
 	// Default: yozib olish YONIQ (dars yaratishda shunday keladi).
 	require.NoError(t, lrepo.Create(context.Background(), &entity.Lesson{ID: testLessonID, MentorID: "mentor1", Status: entity.LessonStatusLive, IsRecordingEnabled: true}))
 	lk := testutil.NewFakeLiveKit() // enabled mock — egress chaqiruvlarini assert qilamiz
-	uc := recording.New(rrepo, lrepo, lk, testutil.NewFakeMinio(), livekit.S3Config{}, testutil.NewLogger())
+	uc := recording.New(rrepo, lrepo, lk, testutil.NewFakeMinio(), livekit.S3Config{}, testutil.NewFakeCache(), testRetention, testutil.NewLogger())
 	return uc, rrepo, lrepo, lk
 }
 
@@ -252,4 +258,106 @@ func TestEnsureForRoom_IdempotentAcrossManyTracks(t *testing.T) {
 	require.Equal(t, 1, lk.Calls["StartRoomRecording"], "to'rt trek → BITTA yozuv")
 	recs, _ := rrepo.ListByLesson(context.Background(), testLessonID)
 	require.Len(t, recs, 1)
+}
+
+// M1 — dublikat egress poygasi (TOCTOU).
+//
+// Auditda topilgan holat: `EnsureRecording` avval "faol yozuv bormi" deb
+// tekshirar, keyin egress boshlar edi — ikkisi orasida qulf yo'q edi. Ustoz
+// kamera va mikrofonni deyarli bir vaqtda yoqsa LiveKit IKKI `track_published`
+// webhook'ini yuboradi, ikkalasi ham "yozuv yo'q" deb ko'radi va IKKI parallel
+// egress boshlanadi: 2× CPU/disk va bitta darsdan ikkita fayl.
+func TestEnsureRecording_NoDuplicateEgressUnderRace(t *testing.T) {
+	uc, rrepo, _, lk := setup(t)
+	ctx := context.Background()
+
+	// Barcha gorutinalar bir vaqtda kirsin — poyga oynasi eng keng bo'lsin.
+	const n = 8
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for range n {
+		go func() {
+			defer wg.Done()
+			<-start
+			_ = uc.EnsureRecording(ctx, testLessonID)
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	require.Equal(t, 1, lk.Calls["StartRoomRecording"],
+		"bitta dars uchun FAQAT bitta egress boshlanishi kerak")
+
+	recs, err := rrepo.ListByLesson(ctx, testLessonID)
+	require.NoError(t, err)
+	require.Len(t, recs, 1, "bitta darsdan ikkita yozuv qatori chiqmasin")
+}
+
+// Qulf yozuvni ABADIY bloklab qo'ymasligi kerak: egress boshlanmasa (LiveKit
+// xatosi) keyingi `track_published` urinishi o'tishi shart, aks holda bitta
+// vaqtinchalik xato butun darsni yozuvsiz qoldirardi.
+func TestEnsureRecording_LockReleasedOnFailure(t *testing.T) {
+	uc, rrepo, _, lk := setup(t)
+	ctx := context.Background()
+
+	lk.EgressErr = errors.New("livekit yetib bo'lmadi")
+	require.Error(t, uc.EnsureRecording(ctx, testLessonID))
+
+	// LiveKit tiklandi — keyingi webhook yozuvni boshlashi kerak. Qulf
+	// bo'shatilmasa bu urinish TTL tugagunicha jimgina rad etilardi va dars
+	// butunlay yozuvsiz qolardi.
+	lk.EgressErr = nil
+	require.NoError(t, uc.EnsureRecording(ctx, testLessonID))
+
+	require.Equal(t, 2, lk.Calls["StartRoomRecording"], "qayta urinish LiveKit'ga yetib borishi kerak")
+	recs, err := rrepo.ListByLesson(ctx, testLessonID)
+	require.NoError(t, err)
+	require.Len(t, recs, 1, "muvaffaqiyatsiz urinishdan yetim qator qolmasin")
+	require.Equal(t, entity.RecordingStatusRecording, recs[0].Status)
+}
+
+// ─── Retention (PRODUCT.md №5) ───────────────────────────────────────────────
+
+// Yozuvlar ro'yxatida `expires_at` qaytishi kerak — klient «X kundan keyin
+// o'chadi» deb ko'rsatadi. Faqat `ready` yozuvlarda: hali yozilayotgan yoki
+// yiqilgan yozuvda o'chadigan narsa yo'q.
+func TestListByLesson_SetsExpiresAt(t *testing.T) {
+	ctx := context.Background()
+	uc, rrepo, _, _ := setup(t)
+	ended := time.Now().UTC().Add(-2 * 24 * time.Hour)
+	require.NoError(t, rrepo.Create(ctx, &entity.Recording{
+		ID: testRecordingID, LessonID: testLessonID, EgressID: "EG-ready",
+		Status: entity.RecordingStatusReady, EndedAt: &ended, CreatedAt: ended,
+	}))
+	require.NoError(t, rrepo.Create(ctx, &entity.Recording{
+		ID: "33333333-3333-4333-8333-333333333333", LessonID: testLessonID, EgressID: "EG-live",
+		Status: entity.RecordingStatusRecording, CreatedAt: time.Now().UTC(),
+	}))
+
+	recs, err := uc.ListByLesson(ctx, "mentor1", testLessonID)
+	require.NoError(t, err)
+	require.Len(t, recs, 2)
+
+	for _, rec := range recs {
+		switch rec.Status {
+		case entity.RecordingStatusReady:
+			require.NotNil(t, rec.ExpiresAt, "tayyor yozuvda expires_at bo'lishi kerak")
+			require.WithinDuration(t, ended.Add(testRetention), *rec.ExpiresAt, time.Second)
+		default:
+			require.Nil(t, rec.ExpiresAt, "tayyor bo'lmagan yozuvda expires_at bo'lmasligi kerak")
+		}
+	}
+}
+
+// Muddati o'tgan yozuv uchun yuklab olish havolasi berilmaydi va sabab ANIQ
+// aytiladi (fayl MinIO'da yo'q — "hali tayyor emas" degan yolg'on xabar emas).
+func TestDownloadURL_ExpiredRecording(t *testing.T) {
+	uc, rrepo, _, _ := setup(t)
+	seedRecording(t, rrepo, entity.RecordingStatusExpired)
+
+	_, err := uc.DownloadURL(context.Background(), "mentor1", testRecordingID)
+	require.Error(t, err)
+	require.True(t, apperr.IsBadRequest(err))
+	require.Contains(t, err.Error(), "expired")
 }

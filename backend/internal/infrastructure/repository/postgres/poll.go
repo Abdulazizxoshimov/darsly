@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	sq "github.com/Masterminds/squirrel"
 	"github.com/jackc/pgx/v5"
@@ -24,11 +25,26 @@ func NewPollRepo(p *pg.Postgres) repository.PollRepository {
 	return &pollRepo{db: p.DB, builder: p.Builder}
 }
 
+// pollColumns — o'qish ustunlari (Select/Scan/RETURNING bitta manbadan).
+var pollColumns = []string{
+	"id", "lesson_id", "question", "options", "is_active", "created_at", "closed_at",
+	"results_visibility", "results_published_at",
+}
+
+func scanPoll(row pgx.Row) (*entity.Poll, error) {
+	p := &entity.Poll{}
+	if err := row.Scan(&p.ID, &p.LessonID, &p.Question, &p.Options, &p.IsActive,
+		&p.CreatedAt, &p.ClosedAt, &p.ResultsVisibility, &p.ResultsPublishedAt); err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
 func (r *pollRepo) Create(ctx context.Context, p *entity.Poll) error {
 	sql, args, err := r.builder.
 		Insert("polls").
-		Columns("id", "lesson_id", "question", "options", "is_active", "created_at").
-		Values(p.ID, p.LessonID, p.Question, p.Options, p.IsActive, p.CreatedAt).
+		Columns("id", "lesson_id", "question", "options", "is_active", "created_at", "results_visibility").
+		Values(p.ID, p.LessonID, p.Question, p.Options, p.IsActive, p.CreatedAt, p.ResultsVisibility).
 		ToSql()
 	if err != nil {
 		return fmt.Errorf("pollRepo.Create: %w", err)
@@ -40,11 +56,8 @@ func (r *pollRepo) Create(ctx context.Context, p *entity.Poll) error {
 }
 
 func (r *pollRepo) GetByID(ctx context.Context, id string) (*entity.Poll, error) {
-	sql, args, _ := r.builder.
-		Select("id", "lesson_id", "question", "options", "is_active", "created_at", "closed_at").
-		From("polls").Where(sq.Eq{"id": id}).ToSql()
-	p := &entity.Poll{}
-	err := r.db.QueryRow(ctx, sql, args...).Scan(&p.ID, &p.LessonID, &p.Question, &p.Options, &p.IsActive, &p.CreatedAt, &p.ClosedAt)
+	sql, args, _ := r.builder.Select(pollColumns...).From("polls").Where(sq.Eq{"id": id}).ToSql()
+	p, err := scanPoll(r.db.QueryRow(ctx, sql, args...))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, apperr.NotFound("poll")
 	}
@@ -52,8 +65,7 @@ func (r *pollRepo) GetByID(ctx context.Context, id string) (*entity.Poll, error)
 }
 
 func (r *pollRepo) ListByLesson(ctx context.Context, lessonID string) ([]*entity.Poll, error) {
-	sql, args, _ := r.builder.
-		Select("id", "lesson_id", "question", "options", "is_active", "created_at", "closed_at").
+	sql, args, _ := r.builder.Select(pollColumns...).
 		From("polls").Where(sq.Eq{"lesson_id": lessonID}).OrderBy("created_at DESC").Limit(200).ToSql()
 	rows, err := r.db.Query(ctx, sql, args...)
 	if err != nil {
@@ -63,8 +75,8 @@ func (r *pollRepo) ListByLesson(ctx context.Context, lessonID string) ([]*entity
 
 	var out []*entity.Poll
 	for rows.Next() {
-		p := &entity.Poll{}
-		if err := rows.Scan(&p.ID, &p.LessonID, &p.Question, &p.Options, &p.IsActive, &p.CreatedAt, &p.ClosedAt); err != nil {
+		p, err := scanPoll(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -78,6 +90,26 @@ func (r *pollRepo) Close(ctx context.Context, id string) error {
 		Where(sq.Eq{"id": id}).ToSql()
 	_, err := r.db.Exec(ctx, sql, args...)
 	return err
+}
+
+func (r *pollRepo) Publish(ctx context.Context, pollID string) (*entity.Poll, error) {
+	sql, args, err := r.builder.Update("polls").
+		// COALESCE — idempotentlik (interfeys izohiga qara).
+		Set("results_published_at", sq.Expr("COALESCE(results_published_at, NOW())")).
+		Where(sq.Eq{"id": pollID}).
+		Suffix("RETURNING " + strings.Join(pollColumns, ", ")).
+		ToSql()
+	if err != nil {
+		return nil, fmt.Errorf("pollRepo.Publish: %w", err)
+	}
+	p, err := scanPoll(r.db.QueryRow(ctx, sql, args...))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apperr.NotFound("poll")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("pollRepo.Publish: %w", err)
+	}
+	return p, nil
 }
 
 func (r *pollRepo) Vote(ctx context.Context, pollID, voterIdentity string, optionIndex int) error {

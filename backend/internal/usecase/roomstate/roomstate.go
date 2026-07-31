@@ -20,13 +20,43 @@ import (
 // (server qulasa) kalit o'z-o'zidan yo'qoladi va Redis axlat yig'maydi.
 const handsTTL = 12 * time.Hour
 
-// Reaksiya uchun tezlik cheklovi: bitta ishtirokchi 2 soniyada 1 marta.
+// Reaksiya uchun tezlik cheklovi: bitta ishtirokchi 10 soniyada 5 marta.
+//
+// Avval 2 soniyada 1 ta edi va bu HAQIQIY foydalanishni buzardi: qarsak
+// (👏👏👏) tabiiy ravishda ketma-ket bosiladi va ikkinchi bosishdayoq 429
+// olardi — o'quvchi uchun "tugma ishlamadi" degani. O'rtacha tezlik bir xil
+// (10 s da 5 ta), lekin qisqa portlashga ruxsat beriladi.
+//
 // Klient tomonda ham cheklov bor (`roomLogic.rateLimiter`), lekin u faqat halol
 // klientni to'xtatadi — server tomondagisi esa haqiqiy himoya.
 const (
-	reactionWindow = 2 * time.Second
-	reactionMax    = 1
+	reactionWindow = 10 * time.Second
+	reactionMax    = 5
 )
+
+// allowedReactions — RUXSAT ETILGAN emoji to'plami.
+//
+// # Nega server ham tekshiradi
+//
+// Reaksiya klient tanlovidan keladi, lekin endpoint ochiq: `curl` bilan
+// `{"emoji":"<istalgan 16 bayt>"}` yuborib bo'lardi va u butun xona ekranida
+// suzib o'tardi — ya'ni moderatsiyasiz matn kanali. Uzunlik cheklovi (16 bayt)
+// buni to'smaydi: haqorat qisqa bo'ladi.
+//
+// To'plam klientlardagi ro'yxat bilan bir xil
+// (`frontend/src/livekit/Controls.jsx: REACTIONS`). Klientga ro'yxat
+// SERVERDAN berilmaydi (mahsulot qarori) — u konstanta, shuning uchun bu
+// yerdagi to'plam klientnikining ustidan qo'yiladigan qopqoq bo'lib qoladi:
+// yangi emoji qo'shilsa IKKALA joyga ham qo'shiladi.
+var allowedReactions = map[string]bool{
+	"👍":  true, // like
+	"👏":  true, // qarsak
+	"❤️": true, // yurak (U+2764 U+FE0F — variatsiya selektori bilan)
+	"😂":  true,
+	"😮":  true,
+	"🎉":  true,
+	"✋":  true, // "savolim bor" belgisi (qo'l ko'tarishdan farqli — o'tkinchi)
+}
 
 // handEntry — Redis'da saqlanadigan yozuv. `At` — Unix millisekund: klient
 // data-channel'dan keladigan `at` maydoni bilan bir xil birlikda bo'lsin.
@@ -39,11 +69,19 @@ type useCase struct {
 	lessonRepo repository.LessonRepository
 	livekit    LiveKit
 	cache      redis.Cache
-	log        logger.Logger
+	// recorder — ixtiyoriy (nil bo'lishi mumkin): yozuv indikatori uchun.
+	recorder Recorder
+	log      logger.Logger
 }
 
-func New(lessonRepo repository.LessonRepository, lk LiveKit, cache redis.Cache, log logger.Logger) UseCase {
-	return &useCase{lessonRepo: lessonRepo, livekit: lk, cache: cache, log: log}
+func New(
+	lessonRepo repository.LessonRepository,
+	lk LiveKit,
+	cache redis.Cache,
+	recorder Recorder,
+	log logger.Logger,
+) UseCase {
+	return &useCase{lessonRepo: lessonRepo, livekit: lk, cache: cache, recorder: recorder, log: log}
 }
 
 func handsKey(lessonID string) string     { return "room:hands:" + lessonID }
@@ -77,11 +115,11 @@ func handMsg(identity, name string, raised bool, at int64) map[string]any {
 }
 
 func (uc *useCase) SetHand(ctx context.Context, lessonID, identity, name string, raised bool) error {
-	if err := shared.ValidateID(lessonID, "lesson"); err != nil {
+	// Dars jonli va ishtirokchi chiqarilmagan bo'lishi shart (`shared.GuardRoomAction`).
+	// Busiz chiqarilgan buzg'unchi eski tokeni bilan qo'l ko'tarib ustozning
+	// navbat ro'yxatini to'ldirib tashlay olardi.
+	if err := shared.GuardRoomAction(ctx, uc.lessonRepo, uc.cache, lessonID, identity); err != nil {
 		return err
-	}
-	if identity == "" {
-		return apperr.BadRequest("identity is required")
 	}
 	if name == "" {
 		name = identity
@@ -141,11 +179,14 @@ func (uc *useCase) State(ctx context.Context, lessonID string) (*entity.RoomStat
 	if err := shared.ValidateID(lessonID, "lesson"); err != nil {
 		return nil, err
 	}
+	// Yozuv indikatori — ishtirokchi o'zi yozilayotganini KO'RISHI kerak.
+	rec := uc.recorder != nil && uc.recorder.IsRecording(ctx, lessonID)
+
 	raw, err := uc.cache.HGetAll(ctx, handsKey(lessonID))
 	if err != nil {
 		// Kalit yo'q — bu XATO EMAS, shunchaki hech kim qo'l ko'tarmagan.
 		// (redisCache.HGetAll bo'sh hash uchun ham xato qaytaradi.)
-		return &entity.RoomState{Hands: []entity.RaisedHand{}}, nil
+		return &entity.RoomState{Hands: []entity.RaisedHand{}, Recording: rec}, nil
 	}
 
 	hands := make([]entity.RaisedHand, 0, len(raw))
@@ -168,15 +209,18 @@ func (uc *useCase) State(ctx context.Context, lessonID string) (*entity.RoomStat
 		}
 		return hands[i].RaisedAt.Before(hands[j].RaisedAt)
 	})
-	return &entity.RoomState{Hands: hands}, nil
+	return &entity.RoomState{Hands: hands, Recording: rec}, nil
 }
 
 func (uc *useCase) Reaction(ctx context.Context, lessonID, identity, name, emoji string) error {
-	if err := shared.ValidateID(lessonID, "lesson"); err != nil {
+	// Chiqarilgan ishtirokchi emoji bilan ham xonani buza olmasin (`SetHand` bilan izchil).
+	if err := shared.GuardRoomAction(ctx, uc.lessonRepo, uc.cache, lessonID, identity); err != nil {
 		return err
 	}
-	if identity == "" {
-		return apperr.BadRequest("identity is required")
+	// Ruxsat etilgan to'plam (`allowedReactions` izohiga qara) — bu tekshiruvsiz
+	// reaksiya kanali moderatsiyasiz matn kanaliga aylanardi.
+	if !allowedReactions[emoji] {
+		return apperr.BadRequest("unsupported reaction")
 	}
 	// Server tomondagi tezlik cheklovi. Redis yiqilsa (xato) — reaksiyani
 	// BLOKLAMAYMIZ: emoji darsning kritik funksiyasi emas, lekin uni to'xtatib

@@ -475,3 +475,70 @@ func TestRotate_ParallelRace_NoGrace_NoForking(t *testing.T) {
 	live := countLiveRefreshJTI(t, cli)
 	require.LessOrEqual(t, live, 1, "sessiya forking bo'lmasligi kerak (tirik JTI: %d)", live)
 }
+
+// ─── Bitta akkaunt = bitta faol sessiya (PRODUCT.md №1) ──────────────────────
+
+// Yangi login eskisini tugatadi: eski qurilmaning access ham, refresh ham
+// ishlamaydi va sabab AYNAN `ErrSessionRevoked` bo'ladi (klient «Boshqa
+// qurilmada kirildi» deb ko'rsatishi uchun). Yangi sessiya esa tirik qoladi.
+func TestRevokeUserSessionsExcept(t *testing.T) {
+	m, _ := newMaker(t)
+	ctx := context.Background()
+
+	oldAccess, oldRefresh, err := m.Generate(ctx, "mentor", "sid-old", "mentor")
+	require.NoError(t, err)
+	require.NoError(t, m.StoreSession(ctx, "sid-old", "mentor", 720*time.Hour))
+
+	// Boshqa foydalanuvchi — tegilmasligi kerak.
+	otherAccess, _, err := m.Generate(ctx, "bystander", "sid-other", "student")
+	require.NoError(t, err)
+	require.NoError(t, m.StoreSession(ctx, "sid-other", "bystander", 720*time.Hour))
+
+	// Ikkinchi qurilmada login: avval eskilarini tugatamiz, keyin yangisini yasaymiz
+	// (auth.Login dagi AYNI tartib).
+	require.NoError(t, m.RevokeUserSessionsExcept(ctx, "mentor", "sid-new"))
+	newAccess, newRefresh, err := m.Generate(ctx, "mentor", "sid-new", "mentor")
+	require.NoError(t, err)
+	require.NoError(t, m.StoreSession(ctx, "sid-new", "mentor", 720*time.Hour))
+
+	_, err = m.ValidateAccess(ctx, oldAccess)
+	require.ErrorIs(t, err, token.ErrSessionRevoked, "eski access SESSION_REVOKED berishi kerak")
+
+	_, _, err = m.Rotate(ctx, oldRefresh)
+	require.ErrorIs(t, err, token.ErrSessionRevoked, "eski refresh SESSION_REVOKED berishi kerak")
+
+	// ⭐ ENG MUHIM: eski qurilmaning refresh urinishi YANGI sessiyani o'ldirmasligi
+	// kerak. Refresh JTI'lari o'chirilganda bu urinish "reuse" (o'g'irlik) deb
+	// baholanib, butun sessiya-oilasi — shu jumladan endigina yasalgan yangi
+	// sessiya — bekor qilinardi.
+	_, err = m.ValidateAccess(ctx, newAccess)
+	require.NoError(t, err, "yangi sessiya tirik qolishi kerak")
+	_, _, err = m.Rotate(ctx, newRefresh)
+	require.NoError(t, err, "yangi sessiyada refresh rotatsiyasi ishlashi kerak")
+
+	// Begona foydalanuvchi buzilmagan.
+	_, err = m.ValidateAccess(ctx, otherAccess)
+	require.NoError(t, err, "boshqa foydalanuvchi sessiyasi buzilmasligi kerak")
+}
+
+// Grace oynasi bilan ziddiyat bo'lmasligi: sessiya tugatilgach grace yozuvi ham
+// ishlamaydi (aks holda bekor qilingan qurilma grace orqali tirilardi).
+func TestRevokeUserSessionsExcept_GraceDoesNotResurrect(t *testing.T) {
+	m, _ := newMaker(t)
+	ctx := context.Background()
+
+	_, refresh, err := m.Generate(ctx, "mentor2", "sid-a", "mentor")
+	require.NoError(t, err)
+	require.NoError(t, m.StoreSession(ctx, "sid-a", "mentor2", 720*time.Hour))
+
+	// Bir marta rotatsiya — grace yozuvi paydo bo'ladi.
+	_, _, err = m.Rotate(ctx, refresh)
+	require.NoError(t, err)
+
+	// Boshqa qurilmada login.
+	require.NoError(t, m.RevokeUserSessionsExcept(ctx, "mentor2", "sid-b"))
+
+	// Grace oynasidagi eski refresh ham endi ishlamaydi.
+	_, _, err = m.Rotate(ctx, refresh)
+	require.Error(t, err, "sessiya tugatilgach grace ham ishlamasligi kerak")
+}

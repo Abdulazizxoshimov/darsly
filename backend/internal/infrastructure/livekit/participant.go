@@ -30,8 +30,10 @@ func (c *Client) SendDataTo(ctx context.Context, room string, data []byte, ident
 	return err
 }
 
-// studentPublishSources — studentga "so'zga ruxsat" berilganda ochiladigan manbalar.
-// FAQAT kamera va mikrofon: SCREEN_SHARE ataylab YO'Q (webinar modeli — ekranni
+// studentPublishSources — studentga ochiq publish manbalari (token grant'ida ham,
+// `SetParticipantPublish` da ham AYNI shu ro'yxat ishlatiladi — ikkalasi ajralsa
+// biri jimgina "hammasi ochiq" bo'lib qolardi).
+// FAQAT kamera va mikrofon: SCREEN_SHARE ataylab YO'Q (Zoom modelida ham ekranni
 // faqat ustoz ulashadi; aks holda student darsni buzish vektoriga ega bo'ladi).
 // Diqqat: LiveKit'da bo'sh CanPublishSources ro'yxati "BARCHA manbalar" degani —
 // shuning uchun ro'yxat aniq berilishi SHART.

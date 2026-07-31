@@ -65,6 +65,17 @@ type UseCase interface {
 	// ustoz yozuvlar ro'yxatida "nima bo'lyapti" degan savolsiz qoladi.
 	StopActiveForLesson(ctx context.Context, lessonID string) error
 
+	// IsRecording — shu dars hozir yozib olinyaptimi.
+	//
+	// Ishtirokchiga (o'quvchiga) ko'rsatish uchun: yozuv holati mentor huquqli
+	// `ListByLesson` ortida edi, ya'ni o'quvchi o'zi yozilayotganini bila
+	// olmasdi. Bu maxfiylik talabi, qulaylik emas. Xato bo'lsa `false` —
+	// "yozilmayapti" deb YOLG'ON ko'rsatgandan ko'ra indikatorni umuman
+	// ko'rsatmagan yaxshi... aksincha: DB uzilganda ham yozuv davom etayotgan
+	// bo'lishi mumkin, shuning uchun `activeFor` ning ehtiyotkor xulqi
+	// (xato → "faol" deb hisoblash) shu yerda ham saqlanadi.
+	IsRecording(ctx context.Context, lessonID string) bool
+
 	// StartRecording — mentor yozib olishni boshlaydi (LiveKit Egress → MinIO).
 	//
 	// Avtomatik boshlash joriy etilgandan keyin bu yo'l odatda kerak bo'lmaydi,

@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -47,10 +46,10 @@ func newTestServerLiveKit(t *testing.T) (*httptest.Server, *pgpkg.Postgres) {
 	}
 
 	tokenMaker := token.NewJWTMaker([]byte("e2e-secret-at-least-32-characters-000"), 15*time.Minute, 720*time.Hour, token.DefaultRefreshGrace, cache.Client(), "e2etest", log)
-	enforcer, err := casbin.NewEnforcer(
-		filepath.Join(rootDir(), "internal/pkg/casbin/model.conf"),
-		filepath.Join(rootDir(), "internal/pkg/casbin/policy.csv"),
-	)
+	// Siyosat binarga joylashtirilgan — testda yo'l qurish shart emas
+	// (avval `rootDir()` bilan qidirilardi, bu esa nisbiy-yo'l muammosining
+	// aynan o'zi edi).
+	enforcer, err := casbin.NewEnforcer()
 	require.NoError(t, err)
 
 	hub := websocket.NewHub(log)
@@ -199,4 +198,35 @@ func TestJoinLocked(t *testing.T) {
 	// Qulflangan darsga kirishga urinish → 403.
 	code, _ = cl.post("/api/v1/joinlink/"+slug, "", map[string]string{"guest_name": "Aziz"})
 	require.Equal(t, http.StatusForbidden, code, "qulflangan dars → 403")
+}
+
+// №3 — yakunlangan dars havolasi: preview 200 (ma'lumot), join esa token
+// bermaydi — next_step="lesson_ended" (xato emas, holat).
+func TestJoinEndedLesson(t *testing.T) {
+	srv, pg := newTestServer(t)
+	clearRateLimits(t)
+	cl := &httpClient{t: t, base: srv.URL}
+
+	_, _ = mustRegister(t, cl, "Dilnoza", "je@darsly.uz", "parol12345")
+	promoteMentor(t, pg, "je@darsly.uz")
+	tok := loginToken(t, cl, "je@darsly.uz", "parol12345")
+	id, slug := createLesson(t, cl, tok, map[string]any{"title": "Tugagan dars", "is_waiting_room_enabled": true})
+
+	// Darsni yakunlaymiz (status PATCH orqali — LiveKit'siz yo'l).
+	code, _ := cl.do(http.MethodPatch, "/api/v1/lessons/"+id, tok, map[string]any{"status": "ended"})
+	require.Equal(t, http.StatusOK, code)
+
+	// Preview — 200, status ichida (avval 400 edi).
+	code, body := cl.get("/api/v1/joinlink/"+slug, "")
+	require.Equal(t, http.StatusOK, code, "tugagan dars preview'i ochiq qoladi: %s", body)
+	require.Equal(t, "ended", gjson(body, "data", "status"))
+	require.Equal(t, "Tugagan dars", gjson(body, "data", "title"))
+
+	// Join — 200 + lesson_ended, token YO'Q (waiting_room so'rovi ham yaratilmaydi).
+	code, body = cl.post("/api/v1/joinlink/"+slug, "", map[string]string{"guest_name": "Kechikkan"})
+	require.Equal(t, http.StatusOK, code, "body: %s", body)
+	require.Equal(t, "lesson_ended", gjson(body, "data", "next_step"))
+	require.Empty(t, gjson(body, "data", "room", "token"), "tugagan darsga token berilmasin")
+	require.Empty(t, gjson(body, "data", "request_id"), "kutish so'rovi ham yaratilmasin")
+	require.Equal(t, "ended", gjson(body, "data", "lesson", "status"))
 }

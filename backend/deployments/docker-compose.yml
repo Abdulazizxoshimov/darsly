@@ -1,3 +1,13 @@
+# ⚠️ ESKIRGAN (M17) — bu stack ISHLATILMAYDI.
+#
+# Kanonik deployment: `deploy/server/` (qarang: `deploy/README.md`).
+# Bu fayl domenli (*.darsly.uz), ikkiga bo'lingan muqobil variant uchun
+# saqlanadi. Unga qo'shilgan tuzatish kanonik stackka O'TMAYDI va teskarisi —
+# aynan shu drift auditda muammo sifatida belgilangan.
+#
+# DIQQAT: shu katalogdagi `Dockerfile` esa FAOL ishlatiladi (kanonik stack uni
+# build uchun oladi) — unga tegmang.
+
 # Darsly — backend PRODUCTION stack (app + infra + observability).
 #
 # Reverse-proxy (80/443, TLS) bu stackda EMAS: yagona edge — services/livekit

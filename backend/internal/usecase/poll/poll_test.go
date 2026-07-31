@@ -17,16 +17,24 @@ const testLessonID = "11111111-1111-4111-8111-111111111111"
 
 func setup(t *testing.T) poll.UseCase {
 	t.Helper()
+	uc, _ := setupLK(t)
+	return uc
+}
+
+// setupLK — e'lon qilish testlari uchun LiveKit fake'iga ham kirish beradi.
+func setupLK(t *testing.T) (poll.UseCase, *testutil.FakeLiveKit) {
+	t.Helper()
 	lrepo := testutil.NewFakeLessonRepo()
 	require.NoError(t, lrepo.Create(context.Background(), &entity.Lesson{ID: testLessonID, MentorID: "mentor1", Status: entity.LessonStatusLive}))
-	return poll.New(testutil.NewFakePollRepo(), lrepo, testutil.NewLogger())
+	lk := testutil.NewFakeLiveKit()
+	return poll.New(testutil.NewFakePollRepo(), lrepo, lk, testutil.NewFakeCache(), testutil.NewLogger()), lk
 }
 
 func TestPoll_Flow(t *testing.T) {
 	uc := setup(t)
 	ctx := context.Background()
 
-	p, err := uc.Create(ctx, "mentor1", testLessonID, "Tushunarli bo'ldimi?", []string{"Ha", "Yo'q", "Qisman"})
+	p, err := uc.Create(ctx, "mentor1", testLessonID, "Tushunarli bo'ldimi?", []string{"Ha", "Yo'q", "Qisman"}, "")
 	require.NoError(t, err)
 	require.True(t, p.IsActive)
 	require.Len(t, p.Options, 3)
@@ -37,7 +45,7 @@ func TestPoll_Flow(t *testing.T) {
 	require.NoError(t, uc.Vote(ctx, p.ID, "guest_c", "lesson_"+testLessonID, 2))
 	require.NoError(t, uc.Vote(ctx, p.ID, "guest_a", "lesson_"+testLessonID, 1)) // guest_a fikrini o'zgartirdi
 
-	res, err := uc.Results(ctx, p.ID, "lesson_"+testLessonID)
+	res, err := uc.Results(ctx, p.ID, "mentor1", "lesson_"+testLessonID)
 	require.NoError(t, err)
 	require.Equal(t, 3, res.Total, "3 ta noyob ovoz")
 	require.Equal(t, []int{1, 1, 1}, res.Counts, "guest_a→1, guest_b→0, guest_c→2")
@@ -46,7 +54,7 @@ func TestPoll_Flow(t *testing.T) {
 func TestPoll_Vote_InvalidOptionAndClosed(t *testing.T) {
 	uc := setup(t)
 	ctx := context.Background()
-	p, _ := uc.Create(ctx, "mentor1", testLessonID, "Q", []string{"A", "B"})
+	p, _ := uc.Create(ctx, "mentor1", testLessonID, "Q", []string{"A", "B"}, "")
 
 	require.Error(t, uc.Vote(ctx, p.ID, "g", "lesson_"+testLessonID, 5), "diapazondan tashqari variant rad etiladi")
 
@@ -58,7 +66,7 @@ func TestPoll_Vote_InvalidOptionAndClosed(t *testing.T) {
 func TestPoll_Vote_CrossLessonRejected(t *testing.T) {
 	uc := setup(t)
 	ctx := context.Background()
-	p, err := uc.Create(ctx, "mentor1", testLessonID, "Q", []string{"A", "B"})
+	p, err := uc.Create(ctx, "mentor1", testLessonID, "Q", []string{"A", "B"}, "")
 	require.NoError(t, err)
 
 	// Begona darsning room-tokeni (yoki o'z darsi host tokeni) bilan ovoz — rad etiladi.
@@ -71,7 +79,7 @@ func TestPoll_Vote_CrossLessonRejected(t *testing.T) {
 
 func TestPoll_Ownership(t *testing.T) {
 	uc := setup(t)
-	_, err := uc.Create(context.Background(), "intruder", testLessonID, "Q", []string{"A", "B"})
+	_, err := uc.Create(context.Background(), "intruder", testLessonID, "Q", []string{"A", "B"}, "")
 	require.True(t, apperr.IsForbidden(err))
 }
 
@@ -80,14 +88,14 @@ func TestPoll_Ownership(t *testing.T) {
 func TestPoll_Results_CrossLessonRejected(t *testing.T) {
 	uc := setup(t)
 	ctx := context.Background()
-	p, err := uc.Create(ctx, "mentor1", testLessonID, "Q", []string{"A", "B"})
+	p, err := uc.Create(ctx, "mentor1", testLessonID, "Q", []string{"A", "B"}, "")
 	require.NoError(t, err)
 
-	_, err = uc.Results(ctx, p.ID, "lesson_OTHER")
+	_, err = uc.Results(ctx, p.ID, "mentor1", "lesson_OTHER")
 	require.True(t, apperr.IsForbidden(err), "begona dars tokeni bilan natija ko'rib bo'lmaydi")
 
 	// Host yo'li (tokensiz) — egalik allaqachon tekshirilgan.
-	_, err = uc.Results(ctx, p.ID, "")
+	_, err = uc.Results(ctx, p.ID, "", "")
 	require.NoError(t, err)
 }
 
@@ -97,7 +105,7 @@ func TestPoll_InvalidIDRejectedBeforeDB(t *testing.T) {
 	uc := setup(t)
 	ctx := context.Background()
 
-	_, err := uc.Results(ctx, "abc", "")
+	_, err := uc.Results(ctx, "abc", "", "")
 	require.Error(t, err)
 	require.False(t, apperr.As(err).HTTPStatus == 500, "500 emas, validatsiya xatosi bo'lishi kerak")
 

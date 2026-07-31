@@ -31,6 +31,7 @@ func NewLessonRepo(p *pg.Postgres) repository.LessonRepository {
 
 const lessonCols = "id, mentor_id, title, description, scheduled_at, duration_min, recurrence_rule, " +
 	"join_slug, passcode_hash, is_locked, is_recording_enabled, is_waiting_room_enabled, " +
+	"mute_on_entry, allow_self_unmute, " +
 	"status, started_at, ended_at, created_at, updated_at, deleted_at"
 
 func scanLesson(row pgx.Row) (*entity.Lesson, error) {
@@ -38,6 +39,7 @@ func scanLesson(row pgx.Row) (*entity.Lesson, error) {
 	err := row.Scan(
 		&l.ID, &l.MentorID, &l.Title, &l.Description, &l.ScheduledAt, &l.DurationMin, &l.RecurrenceRule,
 		&l.JoinSlug, &l.PasscodeHash, &l.IsLocked, &l.IsRecordingEnabled, &l.IsWaitingRoomEnabled,
+		&l.MuteOnEntry, &l.AllowSelfUnmute,
 		&l.Status, &l.StartedAt, &l.EndedAt, &l.CreatedAt, &l.UpdatedAt, &l.DeletedAt,
 	)
 	if err != nil {
@@ -52,9 +54,11 @@ func (r *lessonRepo) Create(ctx context.Context, l *entity.Lesson) error {
 		Insert("lessons").
 		Columns("id", "mentor_id", "title", "description", "scheduled_at", "duration_min", "recurrence_rule",
 			"join_slug", "passcode_hash", "is_locked", "is_recording_enabled", "is_waiting_room_enabled",
+			"mute_on_entry", "allow_self_unmute",
 			"status", "created_at", "updated_at").
 		Values(l.ID, l.MentorID, l.Title, l.Description, l.ScheduledAt, l.DurationMin, l.RecurrenceRule,
 			l.JoinSlug, l.PasscodeHash, l.IsLocked, l.IsRecordingEnabled, l.IsWaitingRoomEnabled,
+			l.MuteOnEntry, l.AllowSelfUnmute,
 			l.Status, l.CreatedAt, l.UpdatedAt).
 		ToSql()
 	if err != nil {
@@ -113,7 +117,7 @@ func (r *lessonRepo) SlugExists(ctx context.Context, slug string) (bool, error) 
 func (r *lessonRepo) ListByMentor(ctx context.Context, mentorID string, filter *entity.LessonFilter) ([]*entity.Lesson, int, error) {
 	where := sq.And{sq.Eq{"mentor_id": mentorID}, sq.Eq{"deleted_at": nil}}
 	if filter.Search != "" {
-		where = append(where, sq.ILike{"title": "%" + filter.Search + "%"})
+		where = append(where, sq.ILike{"title": SearchPattern(filter.Search)})
 	}
 	if filter.Status != "" {
 		where = append(where, sq.Eq{"status": filter.Status})
@@ -175,6 +179,8 @@ func (r *lessonRepo) Update(ctx context.Context, l *entity.Lesson) error {
 		Set("is_locked", l.IsLocked).
 		Set("is_recording_enabled", l.IsRecordingEnabled).
 		Set("is_waiting_room_enabled", l.IsWaitingRoomEnabled).
+		Set("mute_on_entry", l.MuteOnEntry).
+		Set("allow_self_unmute", l.AllowSelfUnmute).
 		Set("status", l.Status).
 		Set("started_at", l.StartedAt).
 		Set("ended_at", l.EndedAt).
@@ -222,6 +228,58 @@ func (r *lessonRepo) ClaimReminder(ctx context.Context, id string) (bool, error)
 	tag, err := r.db.Exec(ctx, sql, args...)
 	if err != nil {
 		return false, fmt.Errorf("lessonRepo.ClaimReminder: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// ListLive — hozir jonli darslar. Avto-yakun ishchisi (4 soatlik limit va bo'sh
+// xona grace'i) shu ro'yxat ustida ishlaydi; ro'yxat kichik bo'ladi (bir vaqtda
+// jonli darslar soni cheklangan), shuning uchun sahifalash kerak emas.
+func (r *lessonRepo) ListLive(ctx context.Context) ([]*entity.Lesson, error) {
+	sql, args, _ := r.builder.
+		Select(lessonCols).From("lessons").
+		Where(sq.And{
+			sq.Eq{"deleted_at": nil},
+			sq.Eq{"status": entity.LessonStatusLive},
+		}).
+		OrderBy("started_at ASC").ToSql()
+	rows, err := r.db.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, fmt.Errorf("lessonRepo.ListLive: %w", err)
+	}
+	defer rows.Close()
+
+	var out []*entity.Lesson
+	for rows.Next() {
+		l, err := scanLesson(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
+// ClaimEnd — darsni ATOMIK yakunlaydi (faqat hamon `live` bo'lsa).
+//
+// `WHERE status='live'` + RowsAffected — `ClaimReminder` bilan bir xil naqsh:
+// ikki instans (yoki ishchi va mentorning "Yakunlash" tugmasi) bir vaqtda
+// kelganda faqat bittasi g'olib bo'ladi va yozuvni to'xtatish / xonani
+// o'chirish bir marta bajariladi.
+func (r *lessonRepo) ClaimEnd(ctx context.Context, id string, endedAt time.Time) (bool, error) {
+	sql, args, _ := r.builder.
+		Update("lessons").
+		Set("status", entity.LessonStatusEnded).
+		Set("ended_at", endedAt).
+		Set("updated_at", sq.Expr("NOW()")).
+		Where(sq.And{
+			sq.Eq{"id": id},
+			sq.Eq{"status": entity.LessonStatusLive},
+			sq.Eq{"deleted_at": nil},
+		}).ToSql()
+	tag, err := r.db.Exec(ctx, sql, args...)
+	if err != nil {
+		return false, fmt.Errorf("lessonRepo.ClaimEnd: %w", err)
 	}
 	return tag.RowsAffected() == 1, nil
 }

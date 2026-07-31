@@ -19,6 +19,9 @@ const (
 	NotificationTypeLessonReminder = "lesson_reminder"
 	NotificationTypeWaitingRoom    = "waiting_room"
 	NotificationTypeSystem         = "system"
+	// NotificationTypeRecordingExpiring — yozuv saqlash muddati tugayapti
+	// (retention ogohlantirishi, PRODUCT.md №5). Mentor ulgurib yuklab olsin.
+	NotificationTypeRecordingExpiring = "recording_expiring"
 )
 
 type NotificationFilter struct {

@@ -49,6 +49,9 @@ func (uc *useCase) Create(ctx context.Context, mentorID string, req *entity.Crea
 		// Berilmagan bo'lsa YOQILADI — mahsulot qoidasi serverda bajariladi.
 		IsRecordingEnabled:   req.RecordingEnabled(),
 		IsWaitingRoomEnabled: req.IsWaitingRoomEnabled,
+		// Zoom default'lari: kirganda mute YONIQ, o'zi ochishga ruxsat BOR (nil=default).
+		MuteOnEntry:     req.MuteOnEntryEnabled(),
+		AllowSelfUnmute: req.SelfUnmuteAllowed(),
 		Status:               entity.LessonStatusScheduled,
 		CreatedAt:            now,
 		UpdatedAt:            now,
@@ -111,6 +114,12 @@ func (uc *useCase) Update(ctx context.Context, mentorID, id string, req *entity.
 	}
 	if req.IsWaitingRoomEnabled != nil {
 		l.IsWaitingRoomEnabled = *req.IsWaitingRoomEnabled
+	}
+	if req.MuteOnEntry != nil {
+		l.MuteOnEntry = *req.MuteOnEntry
+	}
+	if req.AllowSelfUnmute != nil {
+		l.AllowSelfUnmute = *req.AllowSelfUnmute
 	}
 	if req.Status != nil {
 		l.Status = *req.Status

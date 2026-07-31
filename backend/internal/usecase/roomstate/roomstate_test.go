@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/zoom/darsly/internal/entity"
+	apperr "github.com/zoom/darsly/internal/pkg/errors"
 	"github.com/zoom/darsly/internal/testutil"
 	"github.com/zoom/darsly/internal/usecase/roomstate"
 	"github.com/zoom/darsly/internal/usecase/shared"
@@ -26,7 +27,7 @@ func setup(t *testing.T) (roomstate.UseCase, *testutil.FakeLiveKit, *testutil.Fa
 	}))
 	lk := testutil.NewFakeLiveKit()
 	cache := testutil.NewFakeCache()
-	return roomstate.New(lrepo, lk, cache, testutil.NewLogger()), lk, cache
+	return roomstate.New(lrepo, lk, cache, nil, testutil.NewLogger()), lk, cache
 }
 
 // lastMsg — oxirgi tarqatilgan xabarni JSON map sifatida qaytaradi.
@@ -159,16 +160,38 @@ func TestReaction_TezlikChegarasi(t *testing.T) {
 	uc, lk, _ := setup(t)
 	ctx := context.Background()
 
-	require.NoError(t, uc.Reaction(ctx, lessonID, "u1", "Ali", "👍"))
+	// Portlash (qarsak) O'TISHI kerak — 10 s oynada 5 ta.
+	for i := 0; i < 5; i++ {
+		require.NoError(t, uc.Reaction(ctx, lessonID, "u1", "Ali", "👏"),
+			"ketma-ket qarsak bloklanmasligi kerak (%d-chi)", i+1)
+	}
 	before := len(lk.Sent)
 
-	// Ikkinchi reaksiya AYNI oynada — rad etiladi va tarqatilmaydi.
+	// 6-chi AYNI oynada — rad etiladi va tarqatilmaydi.
 	err := uc.Reaction(ctx, lessonID, "u1", "Ali", "👍")
 	require.Error(t, err)
 	require.Len(t, lk.Sent, before, "cheklangan reaksiya tarqatilmasligi kerak")
 
 	// Boshqa ishtirokchi cheklanmaydi (cheklov har identity uchun alohida).
 	require.NoError(t, uc.Reaction(ctx, lessonID, "u2", "Vali", "👏"))
+}
+
+// Reaksiya kanali moderatsiyasiz MATN kanaliga aylanmasligi kerak: endpoint
+// ochiq va `curl` bilan istalgan 16 baytlik satr yuborilardi.
+func TestReaction_FaqatRuxsatEtilganEmoji(t *testing.T) {
+	uc, lk, _ := setup(t)
+	ctx := context.Background()
+
+	for _, bad := range []string{"haqorat", "<img>", "💣", "", "👍👍"} {
+		err := uc.Reaction(ctx, lessonID, "u1", "Ali", bad)
+		require.Error(t, err, "ruxsatsiz reaksiya rad etilishi kerak: %q", bad)
+		require.True(t, apperr.IsBadRequest(err), "kutilgan 400, olindi: %v", err)
+	}
+	require.Empty(t, lk.Sent, "rad etilgan reaksiya tarqatilmasligi kerak")
+
+	// Nazorat: ruxsat etilgani o'tadi (test "hammasini bloklash" fixini
+	// yashil ko'rsatmasin).
+	require.NoError(t, uc.Reaction(ctx, lessonID, "u2", "Vali", "❤️"))
 }
 
 func TestReaction_XabarShakli(t *testing.T) {

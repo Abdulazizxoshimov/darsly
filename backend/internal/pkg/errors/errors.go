@@ -22,6 +22,19 @@ const (
 	// uchun domen qatlamidagi cheklov ham xuddi shu kodni qaytarishi kerak — aks
 	// holda foydalanuvchi bir xil hodisa uchun ikki xil matn ko'rardi.
 	CodeRateLimited Code = "RATE_LIMITED"
+	// CodeSessionRevoked — sessiya SERVER tomonidan tugatilgan (401).
+	//
+	// Nega `UNAUTHORIZED`/`TOKEN_INVALID` dan ajratilgan: mahsulot qoidasi
+	// "bitta akkaunt = bitta faol sessiya" (PRODUCT.md), ya'ni foydalanuvchi
+	// boshqa qurilmada kirsa eski qurilma chiqariladi. Klient buni oddiy
+	// "token eskirdi" dan farqlay olishi kerak — aks holda ustoz dars o'rtasida
+	// sababsiz login ekranini ko'rardi. Bu kod bilan klient «Boshqa qurilmada
+	// kirildi» deb aniq tushuntiradi.
+	//
+	// Diqqat: kod parol tiklash / logout / sessiya muddati tugashi holatlarida
+	// ham chiqadi (hammasida sessiya kaliti o'chgan). Bu ataylab: uchalasida ham
+	// to'g'ri harakat bir xil — qayta kirish.
+	CodeSessionRevoked Code = "SESSION_REVOKED"
 )
 
 // AppError is the standard domain error that carries an HTTP status, a machine
@@ -100,6 +113,15 @@ func BadRequest(msg string) *AppError {
 	}
 }
 
+// SessionRevoked — sessiya server tomonidan tugatilgan (401, [CodeSessionRevoked]).
+func SessionRevoked(msg string) *AppError {
+	return &AppError{
+		HTTPStatus: http.StatusUnauthorized,
+		Code:       CodeSessionRevoked,
+		Message:    msg,
+	}
+}
+
 // TooManyRequests — domen qatlamidagi tezlik cheklovi (429).
 func TooManyRequests(msg string) *AppError {
 	return &AppError{
@@ -155,4 +177,12 @@ func IsValidation(err error) bool {
 func IsForbidden(err error) bool {
 	ae := As(err)
 	return ae != nil && ae.Code == CodeForbidden
+}
+
+// IsBadRequest — 400 (`CodeBadRequest`). Testlarda "xato bo'ldi" emas, AYNAN
+// qaysi xato bo'lganini tekshirish uchun: `require.Error` yashil bo'lardi
+// hatto tekshiruv umuman boshqa sababdan (masalan NotFound) yiqilganda ham.
+func IsBadRequest(err error) bool {
+	ae := As(err)
+	return ae != nil && ae.Code == CodeBadRequest
 }

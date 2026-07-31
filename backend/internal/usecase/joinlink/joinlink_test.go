@@ -2,6 +2,7 @@ package joinlink_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -15,9 +16,19 @@ import (
 	"github.com/zoom/darsly/internal/usecase/waitingroom"
 )
 
+// testIP — testlarning "odatiy bitta klienti". Lockout endi slug+IP bo'yicha
+// ajratilgani uchun (M7) har chaqiruvda IP kerak.
+const testIP = "10.0.0.1"
+
 func ptr[T any](v T) *T { return &v }
 
 func setup(t *testing.T) (joinlink.UseCase, *testutil.FakeLessonRepo, *testutil.FakeUserRepo) {
+	uc, lrepo, urepo, _ := setupWithBlocklist(t)
+	return uc, lrepo, urepo
+}
+
+// setupWithBlocklist — setup + mentor qora ro'yxati fake'iga kirish (№4 testlari).
+func setupWithBlocklist(t *testing.T) (joinlink.UseCase, *testutil.FakeLessonRepo, *testutil.FakeUserRepo, *testutil.FakeBlocklistRepo) {
 	t.Helper()
 	lrepo := testutil.NewFakeLessonRepo()
 	urepo := testutil.NewFakeUserRepo()
@@ -25,9 +36,10 @@ func setup(t *testing.T) (joinlink.UseCase, *testutil.FakeLessonRepo, *testutil.
 	h := hasher.New(4)
 	roomUC := &testutil.FakeRoomUC{}
 	cache := testutil.NewFakeCache()
+	blk := testutil.NewFakeBlocklistRepo()
 	waitUC := waitingroom.New(testutil.NewFakeWaitingRepo(), lrepo, roomUC, ws.NewHub(testutil.NewLogger()), cache, testutil.NewLogger())
-	uc := joinlink.New(lrepo, urepo, h, cache, roomUC, waitUC, testutil.NewLogger())
-	return uc, lrepo, urepo
+	uc := joinlink.New(lrepo, urepo, h, cache, roomUC, waitUC, blk, testutil.NewLogger())
+	return uc, lrepo, urepo, blk
 }
 
 func seedLesson(t *testing.T, lrepo *testutil.FakeLessonRepo, l *entity.Lesson) {
@@ -59,7 +71,7 @@ func TestJoin_NoPasscode_DirectToken(t *testing.T) {
 	uc, lrepo, _ := setup(t)
 	seedLesson(t, lrepo, &entity.Lesson{ID: "l1", MentorID: "mentor1", JoinSlug: "s1", IsWaitingRoomEnabled: false})
 
-	resp, err := uc.Join(context.Background(), "s1", &entity.JoinLessonReq{GuestName: ptr("Aziz")})
+	resp, err := uc.Join(context.Background(), "s1", testIP, &entity.JoinLessonReq{GuestName: ptr("Aziz")})
 	require.NoError(t, err)
 	require.Equal(t, "join", resp.NextStep)
 	require.NotNil(t, resp.Room, "waiting-room OFF → to'g'ridan-to'g'ri token")
@@ -73,20 +85,20 @@ func TestJoin_Passcode(t *testing.T) {
 	seedLesson(t, lrepo, &entity.Lesson{ID: "l1", MentorID: "mentor1", JoinSlug: "s2", PasscodeHash: &hash})
 
 	// Parolsiz → 401
-	_, err := uc.Join(context.Background(), "s2", &entity.JoinLessonReq{})
+	_, err := uc.Join(context.Background(), "s2", testIP, &entity.JoinLessonReq{})
 	require.True(t, errorsIsUnauthorized(err), "parol talab qilinadi")
 
 	// Noto'g'ri parol → 401
-	_, err = uc.Join(context.Background(), "s2", &entity.JoinLessonReq{Passcode: ptr("0000")})
+	_, err = uc.Join(context.Background(), "s2", testIP, &entity.JoinLessonReq{Passcode: ptr("0000")})
 	require.True(t, errorsIsUnauthorized(err))
 
 	// To'g'ri parol → token
-	resp, err := uc.Join(context.Background(), "s2", &entity.JoinLessonReq{Passcode: ptr("1234")})
+	resp, err := uc.Join(context.Background(), "s2", testIP, &entity.JoinLessonReq{Passcode: ptr("1234")})
 	require.NoError(t, err)
 	require.NotNil(t, resp.Room)
 }
 
-// Ko'p marta noto'g'ri parol → slug qulflanadi, to'g'ri parol ham rad etiladi.
+// Ko'p marta noto'g'ri parol → SHU KLIENT qulflanadi, to'g'ri parol ham rad etiladi.
 func TestJoin_PasscodeBruteForceLockout(t *testing.T) {
 	uc, lrepo, _ := setup(t)
 	h := hasher.New(4)
@@ -94,20 +106,20 @@ func TestJoin_PasscodeBruteForceLockout(t *testing.T) {
 	seedLesson(t, lrepo, &entity.Lesson{ID: "l1", MentorID: "mentor1", JoinSlug: "bf", PasscodeHash: &hash})
 
 	for i := range 5 {
-		_, err := uc.Join(context.Background(), "bf", &entity.JoinLessonReq{Passcode: ptr("0000")})
+		_, err := uc.Join(context.Background(), "bf", testIP, &entity.JoinLessonReq{Passcode: ptr("0000")})
 		require.Error(t, err, "urinish %d noto'g'ri", i+1)
 	}
 
 	// Endi to'g'ri parol ham qulf tufayli rad etiladi.
-	_, err := uc.Join(context.Background(), "bf", &entity.JoinLessonReq{Passcode: ptr("1234")})
-	require.True(t, apperr.IsForbidden(err), "5 urinishdan keyin slug qulflanishi kerak")
+	_, err := uc.Join(context.Background(), "bf", testIP, &entity.JoinLessonReq{Passcode: ptr("1234")})
+	require.True(t, apperr.IsForbidden(err), "5 urinishdan keyin klient qulflanishi kerak")
 }
 
 func TestJoin_WaitingRoom(t *testing.T) {
 	uc, lrepo, _ := setup(t)
 	seedLesson(t, lrepo, &entity.Lesson{ID: "l1", MentorID: "mentor1", JoinSlug: "s3", IsWaitingRoomEnabled: true})
 
-	resp, err := uc.Join(context.Background(), "s3", &entity.JoinLessonReq{GuestName: ptr("Laylo")})
+	resp, err := uc.Join(context.Background(), "s3", testIP, &entity.JoinLessonReq{GuestName: ptr("Laylo")})
 	require.NoError(t, err)
 	require.Equal(t, "waiting_room", resp.NextStep)
 	require.NotEmpty(t, resp.RequestID, "kutish xonasi → request_id qaytadi")
@@ -117,18 +129,150 @@ func TestJoin_WaitingRoom(t *testing.T) {
 func TestJoin_Locked(t *testing.T) {
 	uc, lrepo, _ := setup(t)
 	seedLesson(t, lrepo, &entity.Lesson{ID: "l1", MentorID: "mentor1", JoinSlug: "s4", IsLocked: true})
-	_, err := uc.Join(context.Background(), "s4", &entity.JoinLessonReq{})
+	_, err := uc.Join(context.Background(), "s4", testIP, &entity.JoinLessonReq{})
 	require.True(t, apperr.IsForbidden(err), "qulflangan darsga kirib bo'lmaydi")
 }
 
-func TestJoin_Ended(t *testing.T) {
+// №3 — yakunlangan dars havolasi: JOIN token bermaydi, lekin xato ham emas —
+// klient preview ma'lumotini ko'rsatib "dars tugagan" deydi (next_step bilan).
+func TestJoin_Ended_ReturnsLessonEndedState(t *testing.T) {
 	uc, lrepo, _ := setup(t)
-	seedLesson(t, lrepo, &entity.Lesson{ID: "l1", MentorID: "mentor1", JoinSlug: "s5", Status: entity.LessonStatusEnded})
-	_, err := uc.Join(context.Background(), "s5", &entity.JoinLessonReq{})
-	require.Error(t, err, "tugagan darsga kirib bo'lmaydi")
+	seedLesson(t, lrepo, &entity.Lesson{ID: "l1", MentorID: "mentor1", Title: "Matem", JoinSlug: "s5", Status: entity.LessonStatusEnded})
+
+	resp, err := uc.Join(context.Background(), "s5", testIP, &entity.JoinLessonReq{GuestName: ptr("Aziz")})
+	require.NoError(t, err)
+	require.Equal(t, entity.JoinNextStepLessonEnded, resp.NextStep)
+	require.Nil(t, resp.Room, "tugagan darsga token BERILMAYDI")
+	require.Empty(t, resp.RequestID, "kutish so'rovi ham yaratilmaydi")
+	require.NotNil(t, resp.Lesson)
+	require.Equal(t, entity.LessonStatusEnded, resp.Lesson.Status, "klient aniq holatni status'dan oladi")
+}
+
+// Bekor qilingan dars ham xuddi shu holatni qaytaradi (status farqlaydi).
+func TestJoin_Cancelled_ReturnsLessonEndedState(t *testing.T) {
+	uc, lrepo, _ := setup(t)
+	seedLesson(t, lrepo, &entity.Lesson{ID: "l1", MentorID: "mentor1", JoinSlug: "s6", Status: entity.LessonStatusCancelled})
+
+	resp, err := uc.Join(context.Background(), "s6", testIP, &entity.JoinLessonReq{})
+	require.NoError(t, err)
+	require.Equal(t, entity.JoinNextStepLessonEnded, resp.NextStep)
+	require.Nil(t, resp.Room)
+	require.Equal(t, entity.LessonStatusCancelled, resp.Lesson.Status)
+}
+
+// Tugagan darsda hatto parol/qulf ham tekshirilmaydi — havola faqat ma'lumot:
+// parol so'rab o'quvchini ovora qilishning ma'nosi yo'q.
+func TestJoin_Ended_SkipsPasscodeAndLock(t *testing.T) {
+	uc, lrepo, _ := setup(t)
+	h := hasher.New(4)
+	hash, _ := h.Hash("1234")
+	seedLesson(t, lrepo, &entity.Lesson{
+		ID: "l1", MentorID: "mentor1", JoinSlug: "s7",
+		Status: entity.LessonStatusEnded, PasscodeHash: &hash, IsLocked: true,
+	})
+
+	resp, err := uc.Join(context.Background(), "s7", testIP, &entity.JoinLessonReq{})
+	require.NoError(t, err, "parolsiz ham lesson_ended qaytishi kerak")
+	require.Equal(t, entity.JoinNextStepLessonEnded, resp.NextStep)
+}
+
+// №3 — Preview tugagan dars uchun ham 200 qaytaradi (ma'lumot sahifasi).
+func TestPreview_EndedLessonStillVisible(t *testing.T) {
+	uc, lrepo, _ := setup(t)
+	seedLesson(t, lrepo, &entity.Lesson{ID: "l1", MentorID: "mentor1", Title: "Tarix", JoinSlug: "s8", Status: entity.LessonStatusEnded})
+
+	pub, err := uc.Preview(context.Background(), "s8")
+	require.NoError(t, err, "tugagan dars preview'i 200 bo'lishi kerak (avval 400 edi)")
+	require.Equal(t, "Tarix", pub.Title)
+	require.Equal(t, entity.LessonStatusEnded, pub.Status)
+}
+
+// ─── №4 — mentor qora ro'yxati join'da ──────────────────────────────────────
+
+// Doimiy bloklangan ism token ham, kutish-xonasi so'rovi ham ololmaydi.
+func TestJoin_MentorBlockedName(t *testing.T) {
+	uc, lrepo, _, blk := setupWithBlocklist(t)
+	seedLesson(t, lrepo, &entity.Lesson{ID: "l1", MentorID: "mentor1", JoinSlug: "b1"})
+	seedLesson(t, lrepo, &entity.Lesson{ID: "l2", MentorID: "mentor1", JoinSlug: "b2", IsWaitingRoomEnabled: true})
+	require.NoError(t, blk.Add(context.Background(), &entity.BlocklistEntry{
+		ID: "e1", MentorID: "mentor1", Identity: "guest_old", DisplayName: "Bezori Aka",
+	}))
+
+	// To'g'ridan-to'g'ri kirish — katta-kichik harf farqsiz bloklanadi.
+	_, err := uc.Join(context.Background(), "b1", testIP, &entity.JoinLessonReq{GuestName: ptr("bezori aka")})
+	require.True(t, apperr.IsForbidden(err), "bloklangan ism token olmasligi kerak")
+
+	// Kutish xonasi yo'li ham yopiq (so'rov yaratilmaydi).
+	_, err = uc.Join(context.Background(), "b2", testIP, &entity.JoinLessonReq{GuestName: ptr("Bezori Aka")})
+	require.True(t, apperr.IsForbidden(err), "kutish xonasi so'rovi ham yaratilmasligi kerak")
+
+	// Boshqa ism bilan halol o'quvchi kiradi (ban ismga bog'langan — ongli cheklov).
+	resp, err := uc.Join(context.Background(), "b1", testIP, &entity.JoinLessonReq{GuestName: ptr("Halol")})
+	require.NoError(t, err)
+	require.Equal(t, entity.JoinNextStepJoin, resp.NextStep)
+}
+
+// Blocklist o'qishda xato — fail-open: butun sinf darsdan to'silmaydi.
+func TestJoin_BlocklistFailOpen(t *testing.T) {
+	uc, lrepo, _, blk := setupWithBlocklist(t)
+	seedLesson(t, lrepo, &entity.Lesson{ID: "l1", MentorID: "mentor1", JoinSlug: "fo"})
+	blk.FailNext = context.DeadlineExceeded
+
+	resp, err := uc.Join(context.Background(), "fo", testIP, &entity.JoinLessonReq{GuestName: ptr("Aziz")})
+	require.NoError(t, err, "blocklist xatosi kirishni to'smasligi kerak (fail-open)")
+	require.NotNil(t, resp.Room)
 }
 
 func errorsIsUnauthorized(err error) bool {
 	ae := apperr.As(err)
 	return ae != nil && ae.HTTPStatus == 401
+}
+
+// ⭐ M7 — sinf-lockout DoS yopilgani.
+//
+// Auditda topilgan holat: lockout FAQAT slug bo'yicha edi, ya'ni bitta odam
+// (yoki bitta buzg'unchi) 5 marta noto'g'ri parol kiritsa BUTUN SINF 5 daqiqa
+// darsga kira olmasdi. Parolni noto'g'ri eslagan bitta o'quvchi ham 30 kishilik
+// darsni buzib qo'yardi.
+func TestJoin_LockoutIsPerClient_NotWholeClass(t *testing.T) {
+	uc, lrepo, _ := setup(t)
+	h := hasher.New(4)
+	hash, _ := h.Hash("1234")
+	seedLesson(t, lrepo, &entity.Lesson{ID: "l1", MentorID: "mentor1", JoinSlug: "cls", PasscodeHash: &hash})
+
+	// Buzg'unchi (yoki parolni unutgan o'quvchi) o'zini qulflaydi.
+	const attacker = "203.0.113.9"
+	for i := range 5 {
+		_, err := uc.Join(context.Background(), "cls", attacker, &entity.JoinLessonReq{Passcode: ptr("0000")})
+		require.Error(t, err, "urinish %d", i+1)
+	}
+	_, err := uc.Join(context.Background(), "cls", attacker, &entity.JoinLessonReq{Passcode: ptr("1234")})
+	require.True(t, apperr.IsForbidden(err), "aybdor qulflanishi kerak")
+
+	// ⭐ Sinfdoshlar esa TO'G'RI parol bilan bemalol kirishi kerak.
+	for _, ip := range []string{"10.0.0.2", "10.0.0.3", "192.168.1.7"} {
+		resp, err := uc.Join(context.Background(), "cls", ip, &entity.JoinLessonReq{Passcode: ptr("1234")})
+		require.NoError(t, err, "sinfdosh (%s) qulflanmasligi kerak", ip)
+		require.NotNil(t, resp.Room)
+	}
+}
+
+// Taqsimlangan hujum (har urinish yangi IP'dan) baribir to'xtatilishi kerak —
+// aks holda "IP bo'yicha ajratish" himoyani butunlay o'chirib qo'yardi.
+func TestJoin_DistributedBruteForceStillLocked(t *testing.T) {
+	uc, lrepo, _ := setup(t)
+	h := hasher.New(4)
+	hash, _ := h.Hash("1234")
+	seedLesson(t, lrepo, &entity.Lesson{ID: "l1", MentorID: "mentor1", JoinSlug: "dist", PasscodeHash: &hash})
+
+	// Har urinish BOSHQA IP'dan — klient darajasidagi qulf hech qachon ishlamaydi.
+	for i := range 50 {
+		ip := fmt.Sprintf("198.51.100.%d", i)
+		_, err := uc.Join(context.Background(), "dist", ip, &entity.JoinLessonReq{Passcode: ptr("0000")})
+		require.Error(t, err)
+	}
+
+	// Slug darajasidagi zaxira qulf ishga tushishi kerak.
+	_, err := uc.Join(context.Background(), "dist", "198.51.100.200", &entity.JoinLessonReq{Passcode: ptr("1234")})
+	require.True(t, apperr.IsForbidden(err), "taqsimlangan hujum slug darajasida to'xtatilishi kerak")
 }

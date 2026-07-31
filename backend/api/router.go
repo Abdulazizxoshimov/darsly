@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"os"
 	"strconv"
@@ -22,6 +23,10 @@ import (
 	"github.com/zoom/darsly/internal/pkg/metrics"
 	"github.com/zoom/darsly/internal/pkg/token"
 )
+
+// isProduction — muhit production'mi (`middleware.SecurityHeaders` va
+// `websocket` bilan bir xil belgi ishlatiladi: APP_ENV).
+func isProduction() bool { return os.Getenv("APP_ENV") == "production" }
 
 func envFloat(key string, def float64) float64 {
 	if v := os.Getenv(key); v != "" {
@@ -75,6 +80,7 @@ func NewRouter(h *handlers.Handler, tokenMaker token.Maker, enforcer *casbin.Enf
 		otelgin.Middleware("darsly-backend"), // OpenTelemetry span (OTEL endpoint bo'lmasa no-op)
 		middleware.Sentry(),
 		middleware.RequestID(),
+		middleware.RequestHost(), // livekit "auto" client-URL uchun (usecase kontekstiga)
 		middleware.Logger(log), // har so'rovni strukturaviy (request_id bilan) yozadi
 		middleware.Recover(log),
 		middleware.CORS(allowedOrigins...),
@@ -86,16 +92,58 @@ func NewRouter(h *handlers.Handler, tokenMaker token.Maker, enforcer *casbin.Enf
 
 	r.MaxMultipartMemory = 10 << 20 // 10 MB multipart
 
-	// JSON body hajmini 2 MB bilan cheklash
+	// So'rov tanasi hajmi.
+	//
+	// Default 2 MB (JSON). ISTISNO — chatda fayl ulashish (№15): u multipart
+	// va chegarasi usecase'da 20 MB (`chat.MaxChatFileBytes`). Bu yerdagi
+	// qopqoq undan biroz katta bo'lishi SHART: multipart chegaralari va
+	// qo'shimcha maydonlar ham tanaga kiradi, ya'ni aynan 20 MB qo'yilsa
+	// to'liq hajmli fayl "hech qachon o'tmaydigan" bo'lib qolardi.
+	//
+	// Cheklov baribir ikki qatlamli: bu yerda tarmoq qatlami (o'qishni
+	// to'xtatadi), usecase'da esa mahsulot qoidasi (aniq xato matni bilan).
 	r.Use(func(c *gin.Context) {
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 2<<20)
+		limit := int64(2 << 20)
+		if strings.HasSuffix(c.Request.URL.Path, v1.ChatUploadPathSuffix) {
+			limit = v1.ChatUploadBodyLimit
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
 		c.Next()
 	})
 
-	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	// Swagger — FAQAT production'dan tashqarida.
+	//
+	// Production'da u butun API sxemasini (barcha endpointlar, so'rov/javob
+	// shakllari, validatsiya qoidalari) autentifikatsiyasiz oshkor qiladi.
+	// Bu hujum yuzasini bepul xaritalashtirib beradi va hech qanday foyda
+	// keltirmaydi — sxema kerak bo'lsa dev muhitida ochiq.
+	if !isProduction() {
+		r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	}
+
 	r.GET("/health", v1.HealthCheck())
 	r.GET("/ready", v1.ReadyCheck(readyFn, log))
-	r.GET("/metrics", gin.WrapH(metrics.Handler()))
+
+	// Metrikalar — production'da token bilan.
+	//
+	// `/metrics` ichki ma'lumot oqadi: endpoint nomlari, so'rovlar hajmi,
+	// xatolar taqsimoti, Go runtime holati. Bu raqobat/razvedka ma'lumoti va
+	// mavjud endpointlar ro'yxatini ham beradi. Prometheus esa `Authorization`
+	// header'ini `bearer_token` bilan yubora oladi, ya'ni bu hech narsani
+	// buzmaydi.
+	//
+	// METRICS_TOKEN bo'sh bo'lsa production'da endpoint UMUMAN yoqilmaydi:
+	// "himoyasiz ochiq qolgani"dan "yo'q" holati xavfsizroq va nosozlik
+	// darhol ko'rinadi (jimgina oqib turmaydi).
+	switch {
+	case !isProduction():
+		r.GET("/metrics", gin.WrapH(metrics.Handler()))
+	case os.Getenv("METRICS_TOKEN") != "":
+		r.GET("/metrics", middleware.BearerToken(os.Getenv("METRICS_TOKEN")), gin.WrapH(metrics.Handler()))
+	default:
+		log.Warn(context.Background(),
+			"router: METRICS_TOKEN o'rnatilmagan — /metrics production'da o'chirildi")
+	}
 
 	auth := middleware.Auth(tokenMaker)
 	rbac := middleware.EnforceCasbin(enforcer, log)
@@ -159,8 +207,20 @@ func NewRouter(h *handlers.Handler, tokenMaker token.Maker, enforcer *casbin.Enf
 	// mumkin, lekin IP bo'yicha cheklangan (DoS himoyasi).
 	api.GET("/waitingroom/:id/status", middleware.RateLimit(20, 40), v1.WaitingRoomStatus(h))
 
-	// LiveKit webhook (ochiq, imzo bilan himoyalangan) — Egress status. Bitta manba (LiveKit).
-	api.POST("/webhooks/livekit", middleware.RateLimit(30, 60), v1.LiveKitWebhook(h))
+	// LiveKit webhook (ochiq, imzo bilan himoyalangan) — Egress + xona hodisalari.
+	//
+	// ⚠️ CHEGARA KATTA VA BU ATAYLAB. Avval 30/s (burst 60) edi va bu jonli
+	// muammo yasardi: LiveKit har ishtirokchi uchun bir necha hodisa yuboradi
+	// (`participant_joined`, `track_published`, `participant_left`), ya'ni 150
+	// kishilik dars boshlanishida bir necha yuz so'rov BIR NECHA SONIYADA keladi.
+	// 2026-07-31 dagi yuklama sinovida aynan shu ko'rindi: 10 ta webhook 429
+	// bilan RAD ETILDI. Oqibatlari jimgina va og'ir:
+	//   · `track_published` yo'qolsa — dars UMUMAN yozib olinmaydi;
+	//   · `participant_joined` yo'qolsa — ban qo'llanmaydi (chiqarilgan qaytadi);
+	//   · `participant_left` yo'qolsa — bo'sh xona avto-yakuni ishlamaydi.
+	// Manba BITTA va u imzo bilan tekshiriladi (`ParseWebhook`), shuning uchun
+	// chegara faqat DoS to'sig'i sifatida qoladi — mahsulot yo'lini bo'g'masin.
+	api.POST("/webhooks/livekit", middleware.RateLimit(200, 400), v1.LiveKitWebhook(h))
 
 	// ── Xona holati (ochiq — LiveKit room-token bilan autentifikatsiya) ──────────
 	// Guest'da JWT yo'q, lekin imzolangan room-token'i bor; handler token xonasining
@@ -180,6 +240,14 @@ func NewRouter(h *handlers.Handler, tokenMaker token.Maker, enforcer *casbin.Enf
 		// hech nima ko'rmasdi. Asosiy cheklov usecase ichida (5 soniyada 5 xabar).
 		rooms.POST("/:lessonID/chat", middleware.RateLimit(30, 60), v1.SendRoomChat(h))
 		rooms.GET("/:lessonID/chat", middleware.RateLimit(20, 40), v1.RoomChatHistory(h))
+		// Fayl ulashish (№15) — o'quvchi ham yubora oladi.
+		//
+		// IP bo'yicha cheklov chatdan qattiqroq (har yuklama 20 MB gacha),
+		// lekin BUTUNLAY qattiq emas: bitta sinf ko'pincha bitta NAT ortida
+		// bo'ladi va 2-3 o'quvchi bir vaqtda yuborsa hammasi bloklanardi.
+		// Haqiqiy himoya — usecase'dagi IDENTITY bo'yicha cheklov (`uploadMax`,
+		// daqiqasiga 5 ta), u NAT'dan ta'sirlanmaydi.
+		rooms.POST("/:lessonID/chat/upload", middleware.RateLimit(5, 15), v1.UploadRoomChatFile(h))
 	}
 
 	// WebSocket'lar — ulanish urinishlari IP bo'yicha cheklangan (DoS himoyasi).
@@ -223,9 +291,17 @@ func NewRouter(h *handlers.Handler, tokenMaker token.Maker, enforcer *casbin.Enf
 		// Chat (host — persist + LiveKit broadcast; guest chat frontend data-channel orqali)
 		lessons.GET("/:id/chat", v1.ChatHistory(h))
 		lessons.POST("/:id/chat", v1.SendChat(h))
+		// Fayl ulashish (№15). `/chat/upload` statik segment `/chat/:messageID`
+		// bilan TO'QNASHMAYDI: gin har HTTP metodi uchun alohida daraxt tutadi,
+		// bu esa POST, o'chirish esa DELETE.
+		lessons.POST("/:id/chat/upload", v1.UploadChatFile(h))
+		// Moderatsiya (№6) — xabarni o'chirish (faqat dars egasi).
+		lessons.DELETE("/:id/chat/:messageID", v1.DeleteChatMessage(h))
 		// So'rovnomalar (host)
 		lessons.GET("/:id/polls", v1.ListPolls(h))
 		lessons.POST("/:id/polls", v1.CreatePoll(h))
+		// Natijani e'lon qilish (№7)
+		lessons.POST("/:id/polls/:pollID/publish", v1.PublishPollResults(h))
 		// Yozib olish
 		lessons.POST("/:id/recording/start", v1.StartRecording(h))
 		lessons.GET("/:id/recordings", v1.ListRecordings(h))
@@ -243,6 +319,13 @@ func NewRouter(h *handlers.Handler, tokenMaker token.Maker, enforcer *casbin.Enf
 	{
 		recordings.POST("/:id/stop", v1.StopRecording(h))
 		recordings.GET("/:id/download", v1.DownloadRecording(h))
+	}
+
+	// Mentorning doimiy qora ro'yxati (kick scope=mentor yozuvlari)
+	blocklist := protected.Group("/blocklist")
+	{
+		blocklist.GET("", v1.ListBlocklist(h))
+		blocklist.DELETE("/:id", v1.Unblock(h))
 	}
 
 	// Kutish xonasi qarorlari (mentor)

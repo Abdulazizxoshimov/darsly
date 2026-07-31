@@ -6,6 +6,7 @@ import (
 	"github.com/zoom/darsly/api/handlers"
 	hs "github.com/zoom/darsly/api/http_status"
 	"github.com/zoom/darsly/api/middleware"
+	"github.com/zoom/darsly/internal/entity"
 )
 
 // GetRoomToken godoc
@@ -72,15 +73,19 @@ func MuteParticipant(h *handlers.Handler) gin.HandlerFunc {
 // RemoveParticipant godoc
 // @Summary      Ishtirokchini chiqarib yuborish / kick (host)
 // @Tags         room
+// @Accept       json
 // @Security     BearerAuth
 // @Param        id        path  string  true  "Lesson ID"
 // @Param        identity  path  string  true  "Participant identity"
+// @Param        body      body  entity.RemoveParticipantReq  false  "scope: lesson (default) | mentor (doimiy qora ro'yxat)"
 // @Success      204
 // @Router       /api/v1/lessons/{id}/participants/{identity}/remove [post]
 func RemoveParticipant(h *handlers.Handler) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		mentorID := c.GetString(middleware.CtxUserID)
-		if err := h.Room.RemoveParticipant(c.Request.Context(), mentorID, c.Param("id"), c.Param("identity")); err != nil {
+		var req entity.RemoveParticipantReq
+		_ = c.ShouldBindJSON(&req) // body ixtiyoriy: bo'sh = scope "lesson" (eski klientlar)
+		if err := h.Room.RemoveParticipant(c.Request.Context(), mentorID, c.Param("id"), c.Param("identity"), req.Scope); err != nil {
 			hs.Error(c, err)
 			return
 		}
@@ -89,16 +94,57 @@ func RemoveParticipant(h *handlers.Handler) gin.HandlerFunc {
 }
 
 // MuteAll godoc
-// @Summary      Hammani mute qilish (host)
+// @Summary      Hammani mute qilish (host) — ixtiyoriy allow_self_unmute bayrog'i bilan
 // @Tags         room
+// @Accept       json
 // @Security     BearerAuth
-// @Param        id  path  string  true  "Lesson ID"
+// @Param        id    path  string            true   "Lesson ID"
+// @Param        body  body  entity.MuteAllReq false  "allow_self_unmute berilsa dars bayrog'i ham yangilanadi"
 // @Success      204
 // @Router       /api/v1/lessons/{id}/mute-all [post]
 func MuteAll(h *handlers.Handler) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		mentorID := c.GetString(middleware.CtxUserID)
-		if err := h.Room.MuteAll(c.Request.Context(), mentorID, c.Param("id")); err != nil {
+		var req entity.MuteAllReq
+		_ = c.ShouldBindJSON(&req) // body ixtiyoriy (eski klientlar bo'sh yuboradi)
+		if err := h.Room.MuteAll(c.Request.Context(), mentorID, c.Param("id"), req.AllowSelfUnmute); err != nil {
+			hs.Error(c, err)
+			return
+		}
+		hs.NoContent(c)
+	}
+}
+
+// ListBlocklist godoc
+// @Summary  Mentorning doimiy qora ro'yxati (kick scope=mentor yozuvlari)
+// @Tags     room
+// @Produce  json
+// @Security BearerAuth
+// @Success  200  {object}  object{data=[]entity.BlocklistEntry}
+// @Router   /api/v1/blocklist [get]
+func ListBlocklist(h *handlers.Handler) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		mentorID := c.GetString(middleware.CtxUserID)
+		items, err := h.Room.ListBlocklist(c.Request.Context(), mentorID)
+		if err != nil {
+			hs.Error(c, err)
+			return
+		}
+		hs.Success(c, items)
+	}
+}
+
+// Unblock godoc
+// @Summary  Qora ro'yxat yozuvini o'chirish (unban)
+// @Tags     room
+// @Security BearerAuth
+// @Param    id  path  string  true  "Blocklist entry ID"
+// @Success  204
+// @Router   /api/v1/blocklist/{id} [delete]
+func Unblock(h *handlers.Handler) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		mentorID := c.GetString(middleware.CtxUserID)
+		if err := h.Room.Unblock(c.Request.Context(), mentorID, c.Param("id")); err != nil {
 			hs.Error(c, err)
 			return
 		}

@@ -10,6 +10,7 @@ import (
 	"github.com/zoom/darsly/internal/entity"
 	"github.com/zoom/darsly/internal/infrastructure/livekit"
 	"github.com/zoom/darsly/internal/infrastructure/minio"
+	"github.com/zoom/darsly/internal/infrastructure/redis"
 	"github.com/zoom/darsly/internal/infrastructure/repository"
 	"github.com/zoom/darsly/internal/pkg/audit"
 	apperr "github.com/zoom/darsly/internal/pkg/errors"
@@ -26,12 +27,55 @@ type useCase struct {
 	livekit    LiveKit
 	minio      minio.Client
 	s3         livekit.S3Config
-	log        logger.Logger
+	// cache — dublikat egress qulfi uchun (`startLockKey`).
+	cache redis.Cache
+	// retention — yozuv qancha saqlanadi (RECORDING_RETENTION_DAYS). 0 → cheksiz
+	// (o'chirish o'chirilgan); bu holda `expires_at` ham qaytarilmaydi.
+	retention time.Duration
+	log       logger.Logger
 }
 
-func New(repo repository.RecordingRepository, lessonRepo repository.LessonRepository, lk LiveKit, mc minio.Client, s3 livekit.S3Config, log logger.Logger) UseCase {
-	return &useCase{repo: repo, lessonRepo: lessonRepo, livekit: lk, minio: mc, s3: s3, log: log}
+func New(
+	repo repository.RecordingRepository,
+	lessonRepo repository.LessonRepository,
+	lk LiveKit,
+	mc minio.Client,
+	s3 livekit.S3Config,
+	cache redis.Cache,
+	retention time.Duration,
+	log logger.Logger,
+) UseCase {
+	return &useCase{repo: repo, lessonRepo: lessonRepo, livekit: lk, minio: mc, s3: s3, cache: cache, retention: retention, log: log}
 }
+
+// withExpiry — `ready` yozuvga hisoblangan `expires_at` ni qo'yadi.
+//
+// Klient («X kundan keyin o'chadi») shu maydonga tayanadi. Hisoblanadigan
+// bo'lishining sababi `entity.Recording.ExpiresAt` izohida.
+func (uc *useCase) withExpiry(rec *entity.Recording) *entity.Recording {
+	if rec == nil || uc.retention <= 0 || rec.Status != entity.RecordingStatusReady {
+		return rec
+	}
+	base := rec.EndedAt
+	if base == nil {
+		// Tugash vaqti noma'lum — retention hisobi repo'dagi bilan bir xil
+		// (`COALESCE(ended_at, created_at)`), aks holda UI va ishchi turli
+		// sanalarni ko'rsatardi.
+		base = &rec.CreatedAt
+	}
+	exp := base.Add(uc.retention)
+	rec.ExpiresAt = &exp
+	return rec
+}
+
+// startLockKey — bitta dars uchun bir vaqtda faqat bitta egress boshlanishini
+// ta'minlovchi qulf.
+func startLockKey(lessonID string) string { return "rec:lock:" + lessonID }
+
+// startLockTTL — qulf muddati. Egress boshlash `lkCtx` bilan cheklangan
+// (~25s), shuning uchun undan biroz uzun. Qisqa bo'lsa qulf ish tugamasdan
+// bo'shab poyga qaytadi; uzun bo'lsa nosozlikdan keyin yozuv kechikadi.
+const startLockTTL = 45 * time.Second
 
 // activeFor — shu dars uchun hozir yozilayotgan yozuvni qaytaradi (bo'lmasa nil).
 func (uc *useCase) activeFor(ctx context.Context, lessonID string) *entity.Recording {
@@ -83,13 +127,50 @@ func (uc *useCase) EnsureRecording(ctx context.Context, lessonID string) error {
 		return nil
 	}
 
+	// ⭐ DUBLIKAT EGRESS QULFI (TOCTOU).
+	//
+	// Yuqoridagi `activeFor` tekshiruvi va quyidagi `startEgress` orasida oyna
+	// bor. Ustoz kamera va mikrofonni deyarli bir vaqtda yoqsa LiveKit IKKI
+	// `track_published` webhook'ini yuboradi; ikkalasi ham "faol yozuv yo'q"
+	// deb ko'radi va IKKI parallel egress boshlanadi — 2× CPU/disk va bitta
+	// darsdan ikkita fayl. 4 yadroli serverda bu sezilarli.
+	//
+	// Qulf `SetNX` (atomik) bilan: faqat birinchi chaqiruv o'tadi.
+	if uc.cache != nil {
+		ok, err := uc.cache.SetNX(ctx, startLockKey(lessonID), "1", startLockTTL)
+		if err != nil {
+			// Redis yetib bo'lmadi — yozuvni BLOKLAMAYMIZ. Dublikat egress
+			// noqulaylik, yozuvning umuman yo'qligi esa ma'lumot yo'qotish.
+			uc.log.Warn(ctx, "recording.Ensure: qulfni olib bo'lmadi — qulfsiz davom etamiz",
+				logger.String("lesson_id", lessonID), logger.SafeString("err", err.Error()))
+		} else if !ok {
+			uc.log.Info(ctx, "recording.Ensure: boshqa chaqiruv allaqachon boshlamoqda",
+				logger.String("lesson_id", lessonID))
+			return nil
+		}
+	}
+
 	rec, err := uc.startEgress(ctx, lessonID)
 	if err != nil {
+		// Qulfni darhol bo'shatamiz: aks holda keyingi `track_published`
+		// urinishi TTL tugagunicha bekorga rad etilib, yozuv butunlay
+		// boshlanmay qolishi mumkin edi.
+		if uc.cache != nil {
+			_ = uc.cache.Del(ctx, startLockKey(lessonID))
+		}
 		return err
 	}
+	// Muvaffaqiyatda qulf ATAYLAB bo'shatilmaydi: endi DB'da `recording`
+	// holatidagi qator bor va keyingi chaqiruvlarni `activeFor` to'xtatadi.
+	// Qulf TTL bilan o'zi yo'qoladi.
 	uc.log.Info(ctx, "recording.Ensure: avtomatik boshlandi",
 		logger.String("lesson_id", lessonID), logger.String("recording_id", rec.ID))
 	return nil
+}
+
+// IsRecording — izohni [UseCase.IsRecording] da qara.
+func (uc *useCase) IsRecording(ctx context.Context, lessonID string) bool {
+	return uc.activeFor(ctx, lessonID) != nil
 }
 
 // EnsureForRoom — LiveKit webhook'idan kelgan xona nomi bo'yicha yozuvni boshlaydi.
@@ -239,7 +320,14 @@ func (uc *useCase) ListByLesson(ctx context.Context, mentorID, lessonID string) 
 	if _, err := shared.OwnedLesson(ctx, uc.lessonRepo, mentorID, lessonID); err != nil {
 		return nil, err
 	}
-	return uc.repo.ListByLesson(ctx, lessonID)
+	recs, err := uc.repo.ListByLesson(ctx, lessonID)
+	if err != nil {
+		return nil, err
+	}
+	for _, rec := range recs {
+		uc.withExpiry(rec)
+	}
+	return recs, nil
 }
 
 func (uc *useCase) DownloadURL(ctx context.Context, mentorID, recordingID string) (*entity.RecordingDownload, error) {
@@ -252,6 +340,11 @@ func (uc *useCase) DownloadURL(ctx context.Context, mentorID, recordingID string
 	}
 	if _, err := shared.OwnedLesson(ctx, uc.lessonRepo, mentorID, rec.LessonID); err != nil {
 		return nil, err
+	}
+	// Muddati o'tgan yozuvning fayli MinIO'da yo'q — presigned havola 404
+	// beradigan "ishlaydigan" URL qaytarish o'rniga sababni aniq aytamiz.
+	if rec.Status == entity.RecordingStatusExpired {
+		return nil, apperr.BadRequest("recording has expired and was deleted")
 	}
 	if rec.Status != entity.RecordingStatusReady {
 		return nil, apperr.BadRequest("recording is not ready yet")

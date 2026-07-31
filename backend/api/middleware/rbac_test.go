@@ -9,14 +9,20 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 
+	pcasbin "github.com/zoom/darsly/internal/pkg/casbin"
 	"github.com/zoom/darsly/internal/pkg/logger"
 )
 
 // realEnforcer — haqiqiy model.conf + policy.csv bilan (mock emas), shunda RBAC
 // qoidalarining o'zi sinovdan o'tadi.
+//
+// DIQQAT: bu `internal/pkg/casbin` (joylashtirilgan siyosat), upstream
+// `casbin/v2` EMAS. Upstream'ning `NewEnforcer()` si variadik — argumentsiz
+// chaqirilsa modelsiz, siyosatsiz enforcer qaytaradi va hamma tekshiruv
+// ma'nosiz bo'lib qoladi (test yashil turib RBAC'ni umuman sinamaydi).
 func realEnforcer(t *testing.T) *casbin.Enforcer {
 	t.Helper()
-	e, err := casbin.NewEnforcer("../../internal/pkg/casbin/model.conf", "../../internal/pkg/casbin/policy.csv")
+	e, err := pcasbin.NewEnforcer()
 	require.NoError(t, err)
 	return e
 }

@@ -21,4 +21,12 @@ type LessonRepository interface {
 	// ClaimReminder atomik ravishda darsni "eslatildi" deb belgilaydi. Faqat hali
 	// belgilanmagan bo'lsa true qaytadi — ko'p instansda dublikat eslatma oldini oladi.
 	ClaimReminder(ctx context.Context, id string) (bool, error)
+
+	// ListLive — hozir `live` holatidagi darslar (avto-yakun ishchisi uchun).
+	ListLive(ctx context.Context) ([]*entity.Lesson, error)
+	// ClaimEnd atomik ravishda darsni yakunlaydi: faqat dars hamon `live` bo'lsa
+	// true qaytadi. `ClaimReminder` bilan bir xil naqsh — avto-yakun ko'p
+	// instansda ham DUBLIKAT bo'lmasligi kerak, aks holda bitta dars uchun
+	// yozuvni to'xtatish/xonani o'chirish ikki marta bajarilardi.
+	ClaimEnd(ctx context.Context, id string, endedAt time.Time) (bool, error)
 }

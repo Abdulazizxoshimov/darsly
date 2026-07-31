@@ -5,8 +5,25 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// Querier — repozitoriylar ishlatadigan minimal SQL yuzasi.
+//
+// `*pgxpool.Pool` ham, `pgx.Tx` ham buni QONDIRADI. Shu sabab bitta
+// repozitoriy implementatsiyasi ham oddiy (pool) yo'lda, ham tranzaksiya
+// ichida ishlay oladi — kodni ikki nusxaga bo'lish shart emas.
+//
+// Busiz repozitoriylar `*pgxpool.Pool` ni qattiq ushlab turardi va
+// [WithTx] ni ular bilan birga ishlatib bo'lmasdi: aynan shu sabab
+// ko'p-yozuvli oqimlar tranzaksiya o'rniga KOMPENSATSIYA bilan
+// qoplanardi (yozuv uzilsa, oldingisini qo'lda o'chirish).
+type Querier interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
 
 // WithTx runs fn inside a single PostgreSQL transaction. It commits on success
 // and rolls back on any non-nil return value or panic.

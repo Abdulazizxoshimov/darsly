@@ -44,7 +44,9 @@ func JoinLink(h *handlers.Handler) gin.HandlerFunc {
 		slug := c.Param("slug")
 		var req entity.JoinLessonReq
 		_ = c.ShouldBindJSON(&req) // body ixtiyoriy (parolsiz dars bo'lishi mumkin)
-		resp, err := h.JoinLink.Join(c.Request.Context(), slug, &req)
+		// `c.ClientIP()` — lockout'ni klient bo'yicha ajratish uchun (M7). Reverse-proxy
+		// ortida to'g'ri ishlashi Gin'ning TrustedProxies sozlamasiga bog'liq.
+		resp, err := h.JoinLink.Join(c.Request.Context(), slug, c.ClientIP(), &req)
 		if err != nil {
 			hs.Error(c, err)
 			return

@@ -14,6 +14,14 @@ type Recording struct {
 	StartedAt   time.Time  `json:"started_at"`
 	EndedAt     *time.Time `json:"ended_at,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
+	// ExpiresAt — yozuv qachon avtomatik o'chiriladi (retention, PRODUCT.md №5).
+	//
+	// HISOBLANADIGAN maydon, DB'da saqlanmaydi: `ended_at + RECORDING_RETENTION_DAYS`.
+	// Nega ustun emas — muddat sozlama (env) bilan boshqariladi va uni
+	// o'zgartirganda MAVJUD yozuvlar ham yangi qoidaga bo'ysunishi kerak;
+	// ustunga yozib qo'yilsa eski qatorlar eski muddat bilan qotib qolardi.
+	// Faqat `ready` yozuvlarda to'ldiriladi (qolganlarida o'chiriladigan narsa yo'q).
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 }
 
 // Yozuv statuslari
@@ -22,6 +30,9 @@ const (
 	RecordingStatusProcessing = "processing" // to'xtatildi, yuklanmoqda
 	RecordingStatusReady      = "ready"      // MinIO'da tayyor
 	RecordingStatusFailed     = "failed"
+	// RecordingStatusExpired — saqlash muddati (retention) tugagan: MinIO'dagi
+	// fayl o'chirilgan, qator esa tarix uchun qoldirilgan.
+	RecordingStatusExpired = "expired"
 )
 
 // Qayta kodlash (CRF) holatlari — `recordings.transcode_status`.

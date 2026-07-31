@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"io"
 	"time"
 
 	"github.com/zoom/darsly/internal/entity"
@@ -15,19 +16,42 @@ type LiveKit interface {
 	SendDataTo(ctx context.Context, room string, data []byte, identities []string) error
 }
 
+// Storage — chat fayllari uchun obyekt saqlagich (DIP: `minio.Client` qondiradi).
+//
+// Faqat kerakli ikki amal: yuklash va vaqtinchalik havola. O'chirish YO'Q —
+// moderatsiya xabarni yashiradi, faylni esa qoldiradi (moderatsiya izi bilan
+// izchil; darsdan keyingi tozalash alohida retention ishi).
+type Storage interface {
+	Upload(ctx context.Context, objectName, contentType string, reader io.Reader, size int64) (string, error)
+	PresignedURL(ctx context.Context, objectName string, expires time.Duration) (string, error)
+}
+
+// FileUpload — yuklanayotgan fayl (HTTP qatlamidan keladi).
+//
+// `Reader` OQIM: 20 MB'lik fayl xotiraga to'liq olinmaydi. Nomi va hajmi
+// klientdan keladi va IKKALASI ham tekshiriladi (`validateFile`).
+type FileUpload struct {
+	Name   string
+	Size   int64
+	Reader io.Reader
+}
+
 // UseCase — dars ichidagi chat.
 //
 // Ikki kirish yo'li bor va bu ATAYLAB:
-//   - `Send`/`History` — HOST yo'li (JWT + egalik). Ustoz dars tugagach ham
+//   - `Send`/`History`/`Upload` — HOST yo'li (JWT + egalik). Ustoz dars tugagach ham
 //     tarixni o'qiy oladi, ya'ni xonaga ulangan bo'lishi shart emas.
-//   - `SendFromRoom`/`HistoryForRoom` — XONA yo'li (LiveKit room-token). Guest'da
-//     JWT yo'q; room-token esa faqat dars davomida yaroqli — to'g'ri cheklov.
+//   - `SendFromRoom`/`HistoryForRoom`/`UploadFromRoom` — XONA yo'li (LiveKit
+//     room-token). Guest'da JWT yo'q; room-token esa faqat dars davomida
+//     yaroqli — to'g'ri cheklov.
 type UseCase interface {
 	// Send — host xabar yuboradi: saqlaydi va tarqatadi. to bo'sh bo'lsa — hammaga.
 	Send(ctx context.Context, mentorID, lessonID, body, to string) (*entity.ChatMessage, error)
 	// History — dars chat tarixi (host), eng yangidan eskiga. before!=nil → kursor
 	// (undan eski xabarlar). Sahifa hajmi limit (default/max 50).
 	History(ctx context.Context, mentorID, lessonID string, before *time.Time, limit int) ([]*entity.ChatMessage, error)
+	// Upload — host fayl ulashadi (chat xabari sifatida saqlanadi + tarqatiladi).
+	Upload(ctx context.Context, mentorID, lessonID string, f FileUpload, body, to string) (*entity.ChatMessage, error)
 
 	// SendFromRoom — xonadagi ISHTIROKCHI xabar yuboradi (room-token bilan
 	// autentifikatsiya qilingan identity). Tezlik cheklovi shu yerda.
@@ -35,4 +59,13 @@ type UseCase interface {
 	// HistoryForRoom — xonadagi ishtirokchi uchun tarix: ommaviy xabarlar +
 	// faqat O'ZI ishtirok etgan shaxsiy yozishmalar.
 	HistoryForRoom(ctx context.Context, lessonID, identity string, before *time.Time, limit int) ([]*entity.ChatMessage, error)
+	// UploadFromRoom — xonadagi ishtirokchi fayl ulashadi (hajm/tur/tezlik cheklovi bilan).
+	UploadFromRoom(ctx context.Context, lessonID, identity, name string, f FileUpload, body, to string) (*entity.ChatMessage, error)
+
+	// Delete — MODERATSIYA (№6): dars egasi xabarni tarixdan olib tashlaydi va
+	// xonadagi klientlarga `chat_deleted` hodisasini yuboradi.
+	//
+	// Faqat dars egasi (mentor) — o'quvchi o'z xabarini ham o'chira olmaydi:
+	// "yozib qo'yib, izini o'chirish" moderatsiyaga qarshi ishlardi.
+	Delete(ctx context.Context, mentorID, lessonID, messageID string) error
 }

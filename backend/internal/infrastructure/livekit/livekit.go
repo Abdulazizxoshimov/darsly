@@ -4,6 +4,8 @@
 package livekit
 
 import (
+	"net"
+	"net/url"
 	"strings"
 	"time"
 
@@ -15,7 +17,8 @@ import (
 type Client struct {
 	apiKey    string
 	apiSecret string
-	wsURL     string // ws://... — klient (brauzer) shu manzilga ulanadi
+	wsURL     string
+	clientURL string // ws://... — klient (brauzer) shu manzilga ulanadi
 	room      *lksdk.RoomServiceClient
 	egress    *lksdk.EgressClient
 	tokenTTL  time.Duration // kirish tokeni amal qilish muddati (join/reconnect gate)
@@ -37,6 +40,7 @@ func New(cfg config.LiveKitConfig) *Client {
 		apiKey:    cfg.APIKey,
 		apiSecret: cfg.APISecret,
 		wsURL:     cfg.Host,
+		clientURL: cfg.ClientURL,
 		room:      lksdk.NewRoomServiceClient(httpURL, cfg.APIKey, cfg.APISecret),
 		egress:    lksdk.NewEgressClient(httpURL, cfg.APIKey, cfg.APISecret),
 		tokenTTL:  ttl,
@@ -50,6 +54,42 @@ func (c *Client) Enabled() bool { return c.enabled }
 
 // WSURL — brauzer klienti ulanadigan signaling manzili (ws://host).
 func (c *Client) WSURL() string { return c.wsURL }
+
+// ClientWSURL — KLIENTGA (telefon/brauzer) beriladigan signaling manzili.
+//
+// [LiveKitConfig.ClientURL] rejimlari:
+//   - ""     → [WSURL] (backend va klient bir xil manzil ishlatadi);
+//   - URL    → o'sha URL o'zgarishsiz (production: wss://livekit.<domen>);
+//   - "auto" → sxema+port [WSURL] dan, host esa klientning API so'rovidagi
+//     hostdan. Telefon http://10.x.x.x:8087 desa ws://10.x.x.x:7880 oladi,
+//     brauzer localhost desa ws://localhost:7880 — dev'da tarmoq IP o'zgarsa
+//     ham hech narsa sozlanmaydi. requestHost bo'sh bo'lsa xavfsiz fallback
+//     [WSURL] (masalan, HTTP kontekstisiz chaqiruvlar).
+func (c *Client) ClientWSURL(requestHost string) string {
+	switch c.clientURL {
+	case "":
+		return c.wsURL
+	case "auto":
+		host := requestHost
+		if h, _, err := net.SplitHostPort(requestHost); err == nil {
+			host = h
+		}
+		if host == "" {
+			return c.wsURL
+		}
+		u, err := url.Parse(c.wsURL)
+		if err != nil {
+			return c.wsURL
+		}
+		port := u.Port()
+		if port == "" {
+			return u.Scheme + "://" + host
+		}
+		return u.Scheme + "://" + net.JoinHostPort(host, port)
+	default:
+		return c.clientURL
+	}
+}
 
 // toHTTP RoomService API chaqiruvlari uchun ws→http, wss→https ga o'giradi.
 func toHTTP(u string) string {

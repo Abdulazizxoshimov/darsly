@@ -39,6 +39,9 @@ func (s *stubMaker) SessionFromRefresh(string) (string, error)              { re
 func (s *stubMaker) Revoke(context.Context, string) error                   { return nil }
 func (s *stubMaker) RevokeRefresh(context.Context, string) error            { return nil }
 func (s *stubMaker) RevokeAllUserSessions(context.Context, string) error    { return nil }
+func (s *stubMaker) RevokeUserSessionsExcept(context.Context, string, string) error {
+	return nil
+}
 func (s *stubMaker) StoreSession(context.Context, string, string, time.Duration) error {
 	return nil
 }
@@ -77,6 +80,9 @@ func TestAuthMiddleware_ErrorShape(t *testing.T) {
 		{"Bearer prefiksi yo'q", &stubMaker{}, "Token abc", http.StatusUnauthorized, "UNAUTHORIZED"},
 		{"token muddati tugagan", &stubMaker{err: jwt.ErrTokenExpired}, "Bearer abc", http.StatusUnauthorized, "TOKEN_EXPIRED"},
 		{"token yaroqsiz", &stubMaker{err: errors.New("bad signature")}, "Bearer abc", http.StatusUnauthorized, "TOKEN_INVALID"},
+		// "Bitta akkaunt = bitta faol sessiya": eski qurilma AYNIQSA shu kodni
+		// olishi kerak, aks holda klient «Boshqa qurilmada kirildi» deya olmaydi.
+		{"sessiya tugatilgan", &stubMaker{err: token.ErrSessionRevoked}, "Bearer abc", http.StatusUnauthorized, "SESSION_REVOKED"},
 	}
 
 	for _, tc := range cases {

@@ -9,6 +9,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	hs "github.com/zoom/darsly/api/http_status"
+	apperr "github.com/zoom/darsly/internal/pkg/errors"
 	"github.com/zoom/darsly/internal/pkg/logger"
 	"github.com/zoom/darsly/internal/pkg/token"
 )
@@ -37,9 +38,17 @@ func Auth(maker token.Maker) gin.HandlerFunc {
 
 		claims, err := maker.ValidateAccess(c.Request.Context(), tokenStr)
 		if err != nil {
-			if errors.Is(err, jwt.ErrTokenExpired) {
+			switch {
+			case errors.Is(err, jwt.ErrTokenExpired):
 				hs.AbortError(c, http.StatusUnauthorized, "TOKEN_EXPIRED", "token expired")
-			} else {
+			case errors.Is(err, token.ErrSessionRevoked):
+				// Sessiya server tomonidan tugatilgan — eng ko'p uchraydigan sabab
+				// "bitta akkaunt = bitta faol sessiya" siyosati (boshqa qurilmada
+				// kirish). Klient shu kodga qarab «Boshqa qurilmada kirildi» deb
+				// tushuntiradi; `TOKEN_INVALID` bunday farqni bermasdi.
+				hs.AbortError(c, http.StatusUnauthorized, string(apperr.CodeSessionRevoked),
+					"session ended: signed in on another device")
+			default:
 				hs.AbortError(c, http.StatusUnauthorized, "TOKEN_INVALID", "invalid token")
 			}
 			return

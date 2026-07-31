@@ -4,7 +4,22 @@ import (
 	"context"
 
 	"github.com/zoom/darsly/internal/entity"
+	"github.com/zoom/darsly/internal/infrastructure/repository"
 )
+
+// TxRunner — ko'p-yozuvli oqimni bitta tranzaksiyada bajaradi.
+//
+// `*storage.Storage` buni qondiradi (`RunInTx`). Usecase `storage` paketini
+// ham, `pgx` ni ham BILMAYDI — u faqat "bu ikki yozuv birgalikda bajarilsin
+// yoki umuman bajarilmasin" deydi.
+//
+// Nega kerak: ro'yxatdan o'tish `users` va `refresh_tokens` ga IKKI marta
+// yozadi. Avval ikkinchi yozuv uzilsa birinchisi qo'lda o'chirilardi
+// (kompensatsiya) — bu kompensatsiyaning o'zi uzilishi mumkin bo'lgan zaif
+// joy edi. Tranzaksiyada rollback'ni DB kafolatlaydi.
+type TxRunner interface {
+	RunInTx(ctx context.Context, fn func(users repository.UserRepository, auth repository.AuthRepository) error) error
+}
 
 type UseCase interface {
 	Register(ctx context.Context, req *entity.RegisterReq, ip, userAgent string) (*entity.TokenPair, error)

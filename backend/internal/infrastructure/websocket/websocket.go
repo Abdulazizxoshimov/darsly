@@ -347,7 +347,18 @@ func (c *client) writePump(ctx context.Context) {
 	}
 }
 
+// maxIncomingMessage — klientdan qabul qilinadigan eng katta kadr.
+//
+// Klient FAQAT kichik boshqaruv xabarlarini yuboradi (`subscribe`/`unsubscribe`
+// + xona nomi) — bir necha yuz bayt. Cheklov bo'lmasa `ReadMessage` kadrni
+// to'liq XOTIRAGA yig'adi, kutish xonasi endpointi esa OCHIQ (JWT'siz):
+// bitta klient yuz megabaytlik kadr e'lon qilib serverni xotira bo'yicha
+// yiqita olardi. Cheklovdan oshgan kadr ulanishni yopadi — bu to'g'ri javob,
+// chunki halol klient bunday kadr yubormaydi.
+const maxIncomingMessage = 4 * 1024
+
 func (c *client) readPump(ctx context.Context) {
+	c.conn.SetReadLimit(maxIncomingMessage)
 	_ = c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 	c.conn.SetPongHandler(func(string) error {
 		_ = c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))

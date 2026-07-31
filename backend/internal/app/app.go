@@ -196,7 +196,7 @@ func Run(cfg *config.Config) error {
 		log,
 	)
 
-	enforcer, err := casbin.NewEnforcer("internal/pkg/casbin/model.conf", "internal/pkg/casbin/policy.csv")
+	enforcer, err := casbin.NewEnforcer()
 	if err != nil {
 		log.Warn(ctx, "casbin enforcer not loaded, RBAC disabled")
 		enforcer = nil
@@ -229,6 +229,8 @@ func Run(cfg *config.Config) error {
 		RecordingS3:     recordingS3,
 		RefreshTTL:      cfg.JWT.RefreshTTL,
 		FrontendBaseURL: cfg.App.FrontendBaseURL,
+		// Yozuvlar ro'yxatida `expires_at` shu muddatdan hisoblanadi (PRODUCT.md №5).
+		RecordingRetention: cfg.Recording.Retention,
 	})
 
 	h := BuildHandler(uc, hub, lkClient, cfg)
@@ -250,6 +252,29 @@ func Run(cfg *config.Config) error {
 	reminder := worker.NewReminderWorker(store.Lesson, uc.Notification, log)
 	workersWG.Add(1)
 	go func() { defer workersWG.Done(); reminder.Run(workerCtx, reminderInterval, reminderLead) }()
+
+	// Dars avto-yakuni (PRODUCT.md №2): 4 soatlik texnik limit va bo'shagan
+	// xona grace'i. Qoidalar `room.SweepAutoEnd` da; bu yerda faqat tick.
+	autoEnd := worker.NewAutoEndWorker(uc.Room, log)
+	workersWG.Add(1)
+	go func() {
+		defer workersWG.Done()
+		autoEnd.Run(workerCtx, cfg.Lesson.SweepInterval, cfg.Lesson.MaxDuration, cfg.Lesson.EmptyGrace)
+	}()
+
+	// Yozuvlar retention'i (PRODUCT.md №5): 30 kundan keyin MinIO'dan
+	// o'chirish + o'chishdan 3 kun oldin mentorga ogohlantirish.
+	retentionCfg := worker.RetentionConfig{
+		Retention:  cfg.Recording.Retention,
+		WarnBefore: cfg.Recording.WarnBefore,
+		Interval:   cfg.Recording.SweepInterval,
+		BatchLimit: worker.DefaultRetentionConfig().BatchLimit,
+	}
+	workersWG.Add(1)
+	go func() {
+		defer workersWG.Done()
+		worker.NewRetentionWorker(store.Recording, store.Lesson, minioClient, uc.Notification, retentionCfg, log).Run(workerCtx)
+	}()
 
 	// Async email worker (RabbitMQ navbatidan SMTP orqali yuboradi).
 	if mq != nil {

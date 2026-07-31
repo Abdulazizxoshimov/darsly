@@ -14,6 +14,7 @@ import (
 	"github.com/zoom/darsly/internal/infrastructure/email"
 	apperr "github.com/zoom/darsly/internal/pkg/errors"
 	"github.com/zoom/darsly/internal/pkg/hasher"
+	"github.com/zoom/darsly/internal/pkg/token"
 	"github.com/zoom/darsly/internal/testutil"
 	"github.com/zoom/darsly/internal/usecase/auth"
 )
@@ -23,8 +24,20 @@ func sha256hex(s string) string {
 	return fmt.Sprintf("%x", sum)
 }
 
+// newAuthUC — TRANZAKSIYASIZ (kompensatsiya yo'li). Bu yo'l hali ham
+// qo'llab-quvvatlanadi (`TxRunner` nil), shuning uchun sinalishi kerak.
 func newAuthUC(users *testutil.FakeUserRepo, auths *testutil.FakeAuthRepo, tokens *testutil.FakeTokenMaker) auth.UseCase {
-	return auth.New(users, auths, tokens, hasher.New(4), time.Hour, 720*time.Hour, email.NewNopSender(), "http://frontend", testutil.NewLogger())
+	return newAuthUCTx(users, auths, tokens, nil)
+}
+
+func newAuthUCTx(
+	users *testutil.FakeUserRepo,
+	auths *testutil.FakeAuthRepo,
+	tokens *testutil.FakeTokenMaker,
+	tx auth.TxRunner,
+) auth.UseCase {
+	return auth.New(users, auths, tokens, hasher.New(4), time.Hour, 720*time.Hour,
+		email.NewNopSender(), "http://frontend", tx, testutil.NewLogger())
 }
 
 func TestRegister_Success(t *testing.T) {
@@ -63,6 +76,8 @@ func TestRegister_DuplicateEmail(t *testing.T) {
 }
 
 // Register yarim yo'lda uzilsa (refresh token yozib bo'lmasa) yaratilgan user tozalanishi kerak.
+//
+// Bu — TRANZAKSIYASIZ yo'l (`TxRunner` nil): kompensatsiya bilan.
 func TestRegister_OrphanCleanup(t *testing.T) {
 	users, auths, tokens := testutil.NewFakeUserRepo(), testutil.NewFakeAuthRepo(), testutil.NewFakeTokenMaker()
 	auths.FailNextCreateToken = true
@@ -157,4 +172,124 @@ func TestResetPassword(t *testing.T) {
 
 	// Noto'g'ri token → xato.
 	require.Error(t, uc.ResetPassword(context.Background(), &entity.ResetPasswordReq{Token: "wrong", NewPassword: "x123456789"}))
+}
+
+// ⭐ Tranzaksiya yo'li: ikkinchi yozuv uzilsa BIRINCHISI HAM bajarilmagan
+// bo'lishi kerak — kompensatsiyasiz, chunki rollback'ni DB qiladi.
+//
+// Nega kompensatsiyadan ustun: kompensatsiyaning O'ZI uzilishi mumkin (DB shu
+// payt yiqilgan bo'lsa) va u holda yetim user qolib, email abadiy band bo'lardi.
+func TestRegister_TxRollback_NoOrphanNoCompensation(t *testing.T) {
+	users, auths, tokens := testutil.NewFakeUserRepo(), testutil.NewFakeAuthRepo(), testutil.NewFakeTokenMaker()
+	auths.FailNextCreateToken = true
+	uc := newAuthUCTx(users, auths, tokens, testutil.NewFakeTxRunner(users, auths))
+
+	_, err := uc.Register(context.Background(), &entity.RegisterReq{
+		FullName: "Tx", Email: "tx@darsly.uz", Password: "parol12345",
+	}, "", "")
+	require.Error(t, err)
+
+	// Rollback user'ni ham qaytarib oldi.
+	_, err = users.GetByEmail(context.Background(), "tx@darsly.uz")
+	require.Error(t, err, "rollback'dan keyin user qolmasligi kerak")
+
+	// Va bu KOMPENSATSIYA bilan emas — `DeleteHard` umuman chaqirilmagan.
+	require.Zero(t, users.Calls["DeleteHard"],
+		"tranzaksiya yo'lida qo'lda tozalash kerak emas (rollback yetarli)")
+}
+
+// Muvaffaqiyatli holatda tranzaksiya commit bo'lishi va ikkala yozuv ham
+// saqlanishi kerak — rollback faqat XATOda bo'lsin.
+func TestRegister_TxCommit(t *testing.T) {
+	users, auths, tokens := testutil.NewFakeUserRepo(), testutil.NewFakeAuthRepo(), testutil.NewFakeTokenMaker()
+	uc := newAuthUCTx(users, auths, tokens, testutil.NewFakeTxRunner(users, auths))
+
+	pair, err := uc.Register(context.Background(), &entity.RegisterReq{
+		FullName: "Commit", Email: "commit@darsly.uz", Password: "parol12345",
+	}, "", "")
+	require.NoError(t, err)
+	require.NotEmpty(t, pair.AccessToken)
+
+	u, err := users.GetByEmail(context.Background(), "commit@darsly.uz")
+	require.NoError(t, err, "commit'dan keyin user saqlanishi kerak")
+	require.Equal(t, "Commit", u.FullName)
+	require.Zero(t, users.Calls["DeleteHard"])
+}
+
+// ─── Bitta akkaunt = bitta faol sessiya (PRODUCT.md №1) ──────────────────────
+
+// Ikkinchi login birinchisining sessiyasini tugatadi: eski qurilma keyingi
+// so'rovda 401 oladi (akkaunt ulashishga qarshi mahsulot qoidasi).
+func TestLogin_RevokesPreviousSessions(t *testing.T) {
+	ctx := context.Background()
+	users, auths, tokens := testutil.NewFakeUserRepo(), testutil.NewFakeAuthRepo(), testutil.NewFakeTokenMaker()
+	uc := newAuthUC(users, auths, tokens)
+	_, err := uc.Register(ctx, &entity.RegisterReq{FullName: "A", Email: "one@darsly.uz", Password: "parol12345"}, "", "")
+	require.NoError(t, err)
+	u, err := users.GetByEmail(ctx, "one@darsly.uz")
+	require.NoError(t, err)
+
+	// 1-qurilma. Registratsiya sessiyasi ham shu yerda tugatiladi — qoida
+	// istisnosiz: HAR muvaffaqiyatli login oldingi hammasini almashtiradi.
+	_, err = uc.Login(ctx, &entity.LoginReq{Email: "one@darsly.uz", Password: "parol12345"}, "", "")
+	require.NoError(t, err)
+	require.Len(t, tokens.Sessions, 1, "registratsiya sessiyasi login bilan almashishi kerak")
+
+	// 2-qurilma: shu paytda eski sessiyalar tugatilishi kerak.
+	_, err = uc.Login(ctx, &entity.LoginReq{Email: "one@darsly.uz", Password: "parol12345"}, "", "")
+	require.NoError(t, err)
+	require.Len(t, tokens.Sessions, 1, "faqat oxirgi login sessiyasi qolishi kerak")
+	require.Contains(t, tokens.RevokedExceptUsers, u.ID)
+	require.GreaterOrEqual(t, auths.Calls["RevokeAllUserTokens"], 1,
+		"DB'dagi eski refresh qatorlari ham bekor qilinishi kerak")
+}
+
+// Noto'g'ri parol bilan urinish MAVJUD sessiyani buzmasligi kerak — aks holda
+// begona odam parolni bir necha marta noto'g'ri kiritib ustozni dars o'rtasida
+// tizimdan chiqarib yuborardi.
+func TestLogin_FailedAttemptKeepsSession(t *testing.T) {
+	ctx := context.Background()
+	users, auths, tokens := testutil.NewFakeUserRepo(), testutil.NewFakeAuthRepo(), testutil.NewFakeTokenMaker()
+	uc := newAuthUC(users, auths, tokens)
+	_, err := uc.Register(ctx, &entity.RegisterReq{FullName: "A", Email: "two@darsly.uz", Password: "parol12345"}, "", "")
+	require.NoError(t, err)
+	_, err = uc.Login(ctx, &entity.LoginReq{Email: "two@darsly.uz", Password: "parol12345"}, "", "")
+	require.NoError(t, err)
+	before := len(tokens.Sessions)
+	revokesBefore := len(tokens.RevokedExceptUsers)
+
+	_, err = uc.Login(ctx, &entity.LoginReq{Email: "two@darsly.uz", Password: "wrong-one"}, "", "")
+	require.Error(t, err)
+	require.Len(t, tokens.Sessions, before, "muvaffaqiyatsiz login sessiyalarni tugatmasligi kerak")
+	require.Len(t, tokens.RevokedExceptUsers, revokesBefore,
+		"parol tekshiruvidan o'tmagan urinish tugatishni umuman ishga tushirmasligi kerak")
+}
+
+// Sessiya tugatilgan bo'lsa refresh `SESSION_REVOKED` kodini qaytaradi —
+// klient «Boshqa qurilmada kirildi» deb ko'rsatishi uchun.
+func TestRefresh_SessionRevokedCode(t *testing.T) {
+	users, auths, tokens := testutil.NewFakeUserRepo(), testutil.NewFakeAuthRepo(), testutil.NewFakeTokenMaker()
+	tokens.RotateErr = token.ErrSessionRevoked
+	uc := newAuthUC(users, auths, tokens)
+
+	_, err := uc.Refresh(context.Background(), &entity.RefreshReq{RefreshToken: "stale"})
+	require.Error(t, err)
+	ae := apperr.As(err)
+	require.NotNil(t, ae)
+	require.Equal(t, apperr.CodeSessionRevoked, ae.Code)
+	require.Equal(t, 401, ae.HTTPStatus)
+}
+
+// Boshqa sabablardan yiqilgan refresh eski `UNAUTHORIZED` kodida qoladi
+// (klientlar uni allaqachon taniydi).
+func TestRefresh_GenericInvalidStaysUnauthorized(t *testing.T) {
+	users, auths, tokens := testutil.NewFakeUserRepo(), testutil.NewFakeAuthRepo(), testutil.NewFakeTokenMaker()
+	tokens.RotateErr = errors.New("token: invalid")
+	uc := newAuthUC(users, auths, tokens)
+
+	_, err := uc.Refresh(context.Background(), &entity.RefreshReq{RefreshToken: "broken"})
+	require.Error(t, err)
+	ae := apperr.As(err)
+	require.NotNil(t, ae)
+	require.Equal(t, apperr.CodeUnauthorized, ae.Code)
 }

@@ -8,8 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
-	"runtime"
 	"testing"
 	"time"
 
@@ -18,6 +16,7 @@ import (
 	api "github.com/zoom/darsly/api"
 	"github.com/zoom/darsly/internal/app"
 	"github.com/zoom/darsly/internal/infrastructure/email"
+	"github.com/zoom/darsly/internal/infrastructure/livekit"
 	"github.com/zoom/darsly/internal/infrastructure/minio"
 	"github.com/zoom/darsly/internal/infrastructure/redis"
 	"github.com/zoom/darsly/internal/infrastructure/websocket"
@@ -31,13 +30,18 @@ import (
 	"github.com/zoom/darsly/internal/usecase"
 )
 
-func rootDir() string {
-	_, file, _, _ := runtime.Caller(0) // .../internal/apitests/e2e_test.go
-	return filepath.Join(filepath.Dir(file), "..", "..")
-}
-
 // newTestServer butun wired stack'ni (real PG+Redis, nop minio/livekit/email) ko'taradi.
 func newTestServer(t *testing.T) (*httptest.Server, *pgpkg.Postgres) {
+	t.Helper()
+	return newTestServerWithLiveKit(t, newTestLiveKit())
+}
+
+// newTestServerWithLiveKit — [newTestServer], lekin LiveKit klienti tashqaridan.
+//
+// Webhook imzo testiga kerak: u tarmoqqa chiqmaydi (`ParseWebhook` faqat
+// kalit+sirni ishlatadi), lekin klient MA'LUM kalit bilan sozlangan bo'lishi
+// shart — aks holda imzoni test tomonda yasab bo'lmaydi.
+func newTestServerWithLiveKit(t *testing.T, lk *livekit.Client) (*httptest.Server, *pgpkg.Postgres) {
 	t.Helper()
 	pg := testutil.SetupTestDB(t)
 	log := testutil.NewLogger()
@@ -53,14 +57,13 @@ func newTestServer(t *testing.T) (*httptest.Server, *pgpkg.Postgres) {
 	}
 
 	tokenMaker := token.NewJWTMaker([]byte("e2e-secret-at-least-32-characters-000"), 15*time.Minute, 720*time.Hour, token.DefaultRefreshGrace, cache.Client(), "e2etest", log)
-	enforcer, err := casbin.NewEnforcer(
-		filepath.Join(rootDir(), "internal/pkg/casbin/model.conf"),
-		filepath.Join(rootDir(), "internal/pkg/casbin/policy.csv"),
-	)
+	// Siyosat binarga joylashtirilgan — testda yo'l qurish shart emas
+	// (avval `rootDir()` bilan qidirilardi, bu esa nisbiy-yo'l muammosining
+	// aynan o'zi edi).
+	enforcer, err := casbin.NewEnforcer()
 	require.NoError(t, err)
 
 	hub := websocket.NewHub(log)
-	lk := newTestLiveKit()
 	uc := usecase.New(usecase.Deps{
 		Store: storage.New(pg), TokenMaker: tokenMaker, Hasher: hasher.New(4),
 		Minio: minio.NewNop(), Cache: cache, Log: log, Hub: hub,

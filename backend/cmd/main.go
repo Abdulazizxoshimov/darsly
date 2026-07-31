@@ -1,6 +1,6 @@
-// @title           Darsly API
+// @title           Jonly API
 // @version         1.0
-// @description     Darsly — video-dars platformasi backend API.
+// @description     Jonly — jonli video-dars platformasi backend API.
 // @host            localhost:8080
 // @BasePath        /
 // @securityDefinitions.apikey BearerAuth

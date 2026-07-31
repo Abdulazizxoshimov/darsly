@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"time"
 
@@ -26,7 +27,9 @@ type useCase struct {
 	refreshTTL  time.Duration
 	email       emailpkg.Sender
 	frontendURL string
-	log         logger.Logger
+	// tx — ko'p-yozuvli oqim uchun (ixtiyoriy; nil bo'lsa kompensatsiya yo'li).
+	tx  TxRunner
+	log logger.Logger
 }
 
 func New(
@@ -38,6 +41,7 @@ func New(
 	refreshTTL time.Duration,
 	emailSender emailpkg.Sender,
 	frontendURL string,
+	tx TxRunner,
 	log logger.Logger,
 ) UseCase {
 	return &useCase{
@@ -49,6 +53,7 @@ func New(
 		refreshTTL:  refreshTTL,
 		email:       emailSender,
 		frontendURL: frontendURL,
+		tx:          tx,
 		log:         log,
 	}
 }
@@ -73,22 +78,17 @@ func (uc *useCase) Register(ctx context.Context, req *entity.RegisterReq, ip, us
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
-	if err := uc.userRepo.Create(ctx, u); err != nil {
-		return nil, err
-	}
-
-	// Keyingi qadamlardan biri uzilsa — yaratilgan user'ni tozalaymiz (email band qolmasin).
-	cleanup := func(step string, cause error) (*entity.TokenPair, error) {
-		if delErr := uc.userRepo.DeleteHard(ctx, u.ID); delErr != nil {
-			uc.log.Error(ctx, "auth.Register: orphan user cleanup failed", logger.String("user_id", u.ID), logger.SafeString("err", delErr.Error()))
-		}
-		return nil, fmt.Errorf("auth.Register %s: %w", step, cause)
-	}
-
+	// TARTIB MUHIM: tokenlar DB yozuvidan OLDIN generatsiya qilinadi.
+	//
+	// Ular `u.ID` va `sessionID` dan boshqa hech narsaga bog'liq emas (ikkalasi
+	// ham shu yerda yasaladi), ya'ni user qatori hali bo'lmasa ham ishlaydi.
+	// Buning sababi: `Generate` — REDIS chaqiruvi, va uni tranzaksiya ichida
+	// bajarish mumkin emas edi (ochiq tranzaksiya tashqi servis javobini kutib
+	// turishi poolni band qiladi). Endi ketma-ketlik: Redis → tranzaksiya → Redis.
 	sessionID := uuid.NewString()
 	access, refresh, err := uc.tokens.Generate(ctx, u.ID, sessionID, u.Role)
 	if err != nil {
-		return cleanup("generate tokens", err)
+		return nil, fmt.Errorf("auth.Register generate tokens: %w", err)
 	}
 
 	rt := &entity.RefreshToken{
@@ -104,15 +104,61 @@ func (uc *useCase) Register(ctx context.Context, req *entity.RegisterReq, ip, us
 	if userAgent != "" {
 		rt.UserAgent = &userAgent
 	}
-	if err := uc.authRepo.CreateRefreshToken(ctx, rt); err != nil {
-		return cleanup("store token", err)
+	// ⭐ IKKI YOZUV — BITTA TRANZAKSIYA.
+	//
+	// Avval `users` alohida yozilar, keyin `refresh_tokens` yozilar va ikkinchisi
+	// uzilsa birinchisi qo'lda `DeleteHard` bilan o'chirilardi. Bu naqshning
+	// zaif joyi: kompensatsiyaning O'ZI uzilishi mumkin (DB shu payt yiqilgan
+	// bo'lsa) — natijada yetim user qoladi va email abadiy band bo'lib turadi,
+	// foydalanuvchi esa qayta ro'yxatdan o'ta olmaydi.
+	//
+	// Tranzaksiyada bu sinf muammosi yo'q: rollback'ni DB kafolatlaydi.
+	if uc.tx != nil {
+		err = uc.tx.RunInTx(ctx, func(users repository.UserRepository, auth repository.AuthRepository) error {
+			if err := users.Create(ctx, u); err != nil {
+				return err
+			}
+			return auth.CreateRefreshToken(ctx, rt)
+		})
+	} else {
+		// Tranzaksiya beruvchi ulanmagan (masalan birlik testi) — eski
+		// kompensatsiya yo'li. Xulq bir xil, kafolat kuchsizroq.
+		err = uc.createUserAndTokenCompensating(ctx, u, rt)
 	}
+	if err != nil {
+		return nil, fmt.Errorf("auth.Register persist: %w", err)
+	}
+
+	// Sessiya Redis'da — tranzaksiyadan KEYIN (tashqi servis tranzaksiya ichida
+	// bo'lmasligi kerak). Bu uzilsa DB'da yozuv qoladi, lekin u zararsiz:
+	// foydalanuvchi mavjud va qayta login qilib yangi sessiya ochadi. Yetim
+	// user'dan farqli, bu holat foydalanuvchini BLOKLAMAYDI.
 	if err := uc.tokens.StoreSession(ctx, sessionID, u.ID, uc.refreshTTL); err != nil {
-		return cleanup("store session", err)
+		uc.log.Error(ctx, "auth.Register: sessiya saqlanmadi — qayta login kerak bo'ladi",
+			logger.String("user_id", u.ID), logger.SafeString("err", err.Error()))
+		return nil, fmt.Errorf("auth.Register store session: %w", err)
 	}
 
 	uc.log.Info(ctx, "auth.Register: success", logger.String("user_id", u.ID))
 	return &entity.TokenPair{AccessToken: access, RefreshToken: refresh}, nil
+}
+
+// createUserAndTokenCompensating — tranzaksiyasiz zaxira yo'li (`TxRunner` nil).
+// Ikkinchi yozuv uzilsa birinchisini tozalaydi.
+func (uc *useCase) createUserAndTokenCompensating(
+	ctx context.Context, u *entity.User, rt *entity.RefreshToken,
+) error {
+	if err := uc.userRepo.Create(ctx, u); err != nil {
+		return err
+	}
+	if err := uc.authRepo.CreateRefreshToken(ctx, rt); err != nil {
+		if delErr := uc.userRepo.DeleteHard(ctx, u.ID); delErr != nil {
+			uc.log.Error(ctx, "auth.Register: orphan user cleanup failed",
+				logger.String("user_id", u.ID), logger.SafeString("err", delErr.Error()))
+		}
+		return err
+	}
+	return nil
 }
 
 func (uc *useCase) Login(ctx context.Context, req *entity.LoginReq, ip, userAgent string) (*entity.TokenPair, error) {
@@ -134,6 +180,32 @@ func (uc *useCase) Login(ctx context.Context, req *entity.LoginReq, ip, userAgen
 	}
 
 	sessionID := uuid.NewString()
+
+	// ⭐ BITTA AKKAUNT = BITTA FAOL SESSIYA (PRODUCT.md, akkaunt ulashishga qarshi).
+	//
+	// Yangi login eskilarini tugatadi: eski qurilma keyingi so'rovda 401 +
+	// `SESSION_REVOKED` oladi va login ekraniga qaytadi.
+	//
+	// TARTIB MUHIM — tozalash tokenlar YARATILISHIDAN OLDIN. Teskarisi bo'lsa
+	// (avval yarat, keyin tozala) parallel ikki login bir-birining yangi
+	// sessiyasini o'chirib, ikkalasi ham chiqib ketardi. Bu tartibda esa
+	// natija aniq: OXIRGI login g'olib.
+	//
+	// Refresh JTI'lariga ATAYLAB tegilmaydi — sababi
+	// `token.JWTMaker.RevokeUserSessionsExcept` izohida (reuse-detektor yangi
+	// sessiyani o'ldirib yubormasligi uchun).
+	if err := uc.tokens.RevokeUserSessionsExcept(ctx, user.ID, sessionID); err != nil {
+		// Tozalash uzilsa login'ni BLOKLAMAYMIZ: foydalanuvchini o'z akkauntidan
+		// to'sish zarari, eski sessiyaning bir muddat tirik qolishidan katta.
+		uc.log.Warn(ctx, "auth.Login: eski sessiyalarni tugatib bo'lmadi",
+			logger.String("user_id", user.ID), logger.SafeString("err", err.Error()))
+	}
+	// DB'dagi eski refresh qatorlari ham bekor qilinadi (audit/tarix izchilligi).
+	if err := uc.authRepo.RevokeAllUserTokens(ctx, user.ID); err != nil {
+		uc.log.Warn(ctx, "auth.Login: eski DB refresh qatorlarini bekor qilib bo'lmadi",
+			logger.String("user_id", user.ID), logger.SafeString("err", err.Error()))
+	}
+
 	access, refresh, err := uc.tokens.Generate(ctx, user.ID, sessionID, user.Role)
 	if err != nil {
 		uc.log.Error(ctx, "auth.Login: generate tokens failed", logger.String("user_id", user.ID), logger.SafeString("err", err.Error()))
@@ -170,6 +242,13 @@ func (uc *useCase) Login(ctx context.Context, req *entity.LoginReq, ip, userAgen
 func (uc *useCase) Refresh(ctx context.Context, req *entity.RefreshReq) (*entity.TokenPair, error) {
 	access, refresh, err := uc.tokens.Rotate(ctx, req.RefreshToken)
 	if err != nil {
+		// Sessiya server tomonidan tugatilgan (boshqa qurilmada kirish, logout,
+		// parol tiklash) — buni oddiy "token buzuq" dan ajratamiz, shunda klient
+		// «Boshqa qurilmada kirildi» deb aniq xabar bera oladi.
+		if errors.Is(err, token.ErrSessionRevoked) {
+			uc.log.Info(ctx, "auth.Refresh: sessiya tugatilgan (boshqa qurilmada kirilgan bo'lishi mumkin)")
+			return nil, apperr.SessionRevoked("session ended: signed in on another device")
+		}
 		uc.log.Warn(ctx, "auth.Refresh: invalid token")
 		return nil, apperr.Unauthorized("invalid or expired refresh token")
 	}

@@ -18,13 +18,21 @@ const testLessonID = "11111111-1111-4111-8111-111111111111"
 
 func setup(t *testing.T) (chat.UseCase, *testutil.FakeLiveKit) {
 	t.Helper()
+	uc, lk, _ := setupFull(t)
+	return uc, lk
+}
+
+// setupFull — fayl/moderatsiya testlari uchun repo va saqlagichga ham kirish beradi.
+func setupFull(t *testing.T) (chat.UseCase, *testutil.FakeLiveKit, *testutil.FakeChatRepo) {
+	t.Helper()
 	lrepo := testutil.NewFakeLessonRepo()
 	urepo := testutil.NewFakeUserRepo()
 	require.NoError(t, urepo.Create(context.Background(), &entity.User{ID: "mentor1", Email: "m@x.uz", FullName: "Dilnoza", Role: "mentor"}))
 	require.NoError(t, lrepo.Create(context.Background(), &entity.Lesson{ID: testLessonID, MentorID: "mentor1", Title: "X", Status: entity.LessonStatusLive}))
 	lk := testutil.NewFakeLiveKit() // enabled mock — SendData chaqiruvini assert qilamiz
-	uc := chat.New(testutil.NewFakeChatRepo(), lrepo, urepo, lk, testutil.NewFakeCache(), testutil.NewLogger())
-	return uc, lk
+	crepo := testutil.NewFakeChatRepo()
+	uc := chat.New(crepo, lrepo, urepo, lk, testutil.NewFakeMinio(), testutil.NewFakeCache(), testutil.NewLogger())
+	return uc, lk, crepo
 }
 
 func TestSendAndHistory(t *testing.T) {

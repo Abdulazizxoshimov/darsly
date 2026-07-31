@@ -8,7 +8,6 @@ import (
 	sq "github.com/Masterminds/squirrel"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/zoom/darsly/internal/entity"
 	"github.com/zoom/darsly/internal/infrastructure/repository"
@@ -24,12 +23,19 @@ func isUniqueViolation(err error) bool {
 }
 
 type authRepo struct {
-	db      *pgxpool.Pool
+	// db — `pg.Querier`: pool ham, tranzaksiya ham bo'lishi mumkin
+	// (`storage.WithTx` shu bilan ishlaydi).
+	db      pg.Querier
 	builder sq.StatementBuilderType
 }
 
 func NewAuthRepo(p *pg.Postgres) repository.AuthRepository {
 	return &authRepo{db: p.DB, builder: p.Builder}
+}
+
+// NewAuthRepoTx — repozitoriyni TRANZAKSIYAGA bog'laydi (`storage.WithTx`).
+func NewAuthRepoTx(q pg.Querier, b sq.StatementBuilderType) repository.AuthRepository {
+	return &authRepo{db: q, builder: b}
 }
 
 func (r *authRepo) CreateRefreshToken(ctx context.Context, rt *entity.RefreshToken) error {

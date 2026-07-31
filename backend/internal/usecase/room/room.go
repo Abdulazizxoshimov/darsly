@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/singleflight"
 
@@ -77,31 +78,23 @@ type useCase struct {
 	recorder Recorder
 	// hands — nil bo'lishi mumkin (eski testlar); har chaqiruvdan oldin tekshiriladi.
 	hands Hands
+	// blocklist — mentor darajasidagi doimiy qora ro'yxat (№4). nil bo'lishi
+	// mumkin (eski testlar); har chaqiruvdan oldin tekshiriladi.
+	blocklist repository.BlocklistRepository
 	// ensureG — bir xona uchun bir vaqtda faqat bitta EnsureRoom (thundering herd:
 	// 500 talaba bir vaqtda kirsa 500 ta SFU CreateRoom o'rniga bitta chaqiruv).
 	ensureG singleflight.Group
 }
 
-func New(lessonRepo repository.LessonRepository, userRepo repository.UserRepository, lk LiveKit, cache redis.Cache, log logger.Logger, recorder Recorder, hands Hands) UseCase {
-	return &useCase{lessonRepo: lessonRepo, userRepo: userRepo, livekit: lk, cache: cache, log: log, recorder: recorder, hands: hands}
+func New(lessonRepo repository.LessonRepository, userRepo repository.UserRepository, lk LiveKit, cache redis.Cache, log logger.Logger, recorder Recorder, hands Hands, blocklist repository.BlocklistRepository) UseCase {
+	return &useCase{lessonRepo: lessonRepo, userRepo: userRepo, livekit: lk, cache: cache, log: log, recorder: recorder, hands: hands, blocklist: blocklist}
 }
 
 func roomReadyKey(lessonID string) string { return "room:ready:" + lessonID }
 
-// banKey — darsdan chiqarilgan ishtirokchi.
-//
-// Nega kerak: LiveKit'da `RemoveParticipant` faqat JORIY ulanishni uzadi. Token
-// esa hali yaroqli (TTL soatlar bilan o'lchanadi) va `room.auto_create` yoqilgan —
-// ya'ni chiqarilgan buzg'unchi darhol qaytib ulanadi va hatto YOPILGAN xonani
-// qayta yaratadi. Zoom'da "remove" = qaytib kira olmaslik; bizda ham shunday
-// bo'lishi kerak.
-//
-// TTL — darsning oqilona uzunligi: dars tugagach ban ham keraksiz (yangi darsda
-// yangi xona, yangi token). Redis o'zi tozalaydi — alohida ish yuritish shart emas.
-func banKey(lessonID, identity string) string { return "room:ban:" + lessonID + ":" + identity }
-
-// banTTL — chiqarilgan ishtirokchi shuncha vaqt qayta kira olmaydi.
-const banTTL = 6 * time.Hour
+// Ban reyestri `usecase/shared` ga ko'chirildi: uni endi faqat token berish emas,
+// xonaga tegishli BARCHA usecase'lar (roomstate, chat, poll) va
+// `participant_joined` webhook'i ham tekshiradi. Sabablari `shared/ban.go` da.
 
 // markRoomReady xona yaratilganini Redis'ga belgilaydi.
 func (uc *useCase) markRoomReady(ctx context.Context, lessonID string) {
@@ -201,7 +194,7 @@ func (uc *useCase) HostToken(ctx context.Context, mentorID, lessonID string) (*e
 	uc.log.Info(ctx, "room.HostToken: issued", logger.String("lesson_id", l.ID), logger.String("mentor_id", mentorID))
 	return &entity.RoomToken{
 		Token:    token,
-		WSURL:    uc.livekit.WSURL(),
+		WSURL:    uc.livekit.ClientWSURL(shared.RequestHost(ctx)),
 		RoomName: roomName,
 		Identity: mentorID,
 		Role:     entity.RoomRoleHost,
@@ -234,7 +227,7 @@ func (uc *useCase) ParticipantToken(ctx context.Context, l *entity.Lesson, ident
 	uc.log.Info(ctx, "room.ParticipantToken: issued", logger.String("lesson_id", l.ID), logger.String("identity", identity))
 	return &entity.RoomToken{
 		Token:    token,
-		WSURL:    uc.livekit.WSURL(),
+		WSURL:    uc.livekit.ClientWSURL(shared.RequestHost(ctx)),
 		RoomName: roomName,
 		Identity: identity,
 		Role:     entity.RoomRoleParticipant,
@@ -262,55 +255,211 @@ func (uc *useCase) EndLesson(ctx context.Context, mentorID, lessonID string) err
 		return err
 	}
 
+	uc.teardown(ctx, l.ID)
+	uc.log.Info(ctx, "room.EndLesson: ended", logger.String("lesson_id", l.ID))
+	return nil
+}
+
+// teardown — dars yakunlangandan KEYINGI tozalash: yozuvni to'xtatish, LiveKit
+// xonasini o'chirish, kesh bayroqlari va ko'tarilgan qo'llar.
+//
+// Ajratilganining sababi: darsni yakunlashning ikki yo'li bor — mentor tugmasi
+// ([useCase.EndLesson]) va avtomatik yakun ([useCase.SweepAutoEnd]: 4 soatlik
+// limit / bo'sh xona). Ikkalasida ham AYNAN shu tozalash bajarilishi shart.
+// Nusxa ko'chirilganda avto-yakun yo'lida masalan `StopActiveForLesson` unutilib,
+// yozuv abadiy "recording" holatida qolishi mumkin edi.
+//
+// Xato qaytarmaydi: bu bosqichdagi har bir amal "eng yaxshi harakat" —
+// dars DB'da allaqachon yakunlangan va uni orqaga qaytarish noto'g'ri bo'lardi.
+func (uc *useCase) teardown(ctx context.Context, lessonID string) {
 	// Yozuvni xona o'chirilishidan OLDIN to'xtatamiz. Tartib muhim: xona
 	// o'chirilsa egress o'zi ham tugaydi, lekin u holda DB'dagi yozuv webhook
 	// kelguncha "recording" bo'lib turadi va ustoz yozuvlar ro'yxatida
 	// "hali yozilmoqda" degan yolg'onni ko'radi.
 	if uc.recorder != nil {
-		if err := uc.recorder.StopActiveForLesson(ctx, l.ID); err != nil {
+		if err := uc.recorder.StopActiveForLesson(ctx, lessonID); err != nil {
 			// Darsni yakunlashni bloklamaydi — xona o'chirilishi baribir
 			// egress'ni tugatadi va webhook yakuniy holatni qo'yadi.
-			uc.log.Warn(ctx, "room.EndLesson: yozuvni to'xtatib bo'lmadi",
-				logger.String("lesson_id", l.ID), logger.SafeString("err", err.Error()))
+			uc.log.Warn(ctx, "room.teardown: yozuvni to'xtatib bo'lmadi",
+				logger.String("lesson_id", lessonID), logger.SafeString("err", err.Error()))
 		}
 	}
 
 	if uc.livekit.Enabled() {
 		delCtx, delCancel := lkCtx(ctx)
-		err := uc.livekit.DeleteRoom(delCtx, roomName(l.ID))
+		err := uc.livekit.DeleteRoom(delCtx, roomName(lessonID))
 		delCancel()
 		if err != nil {
-			uc.log.Warn(ctx, "room.EndLesson: delete room failed", logger.String("lesson_id", l.ID), logger.SafeString("err", err.Error()))
+			uc.log.Warn(ctx, "room.teardown: delete room failed", logger.String("lesson_id", lessonID), logger.SafeString("err", err.Error()))
 		}
 	}
 	// Stale "room-ready" flagni tozalaymiz (aks holda qayta ulanishda EnsureRoom o'tkazib yuboriladi).
 	if uc.cache != nil {
-		_ = uc.cache.Del(ctx, roomReadyKey(l.ID))
+		_ = uc.cache.Del(ctx, roomReadyKey(lessonID))
+		// Bo'shlik hisoblagichi ham keraksiz — dars tugadi.
+		_ = uc.cache.Del(ctx, roomEmptyKey(lessonID))
 	}
+	// "Jonli" keshini ham tozalaymiz — busiz chat/reaksiya/ovoz endpointlari
+	// yakunlangan darsni TTL tugagunicha jonli deb qabul qilaverardi
+	// (`shared.GuardRoomAction`).
+	shared.InvalidateLive(ctx, uc.cache, lessonID)
 	// Ko'tarilgan qo'llar dars bilan birga tugaydi. Tozalanmasa, xuddi shu dars
 	// qayta ochilganda (masalan takroriy mashg'ulot) eski navbat qayta paydo bo'lardi.
 	if uc.hands != nil {
-		if err := uc.hands.Clear(ctx, l.ID); err != nil {
-			uc.log.Warn(ctx, "room.EndLesson: qo'l holatini tozalab bo'lmadi",
-				logger.String("lesson_id", l.ID), logger.SafeString("err", err.Error()))
+		if err := uc.hands.Clear(ctx, lessonID); err != nil {
+			uc.log.Warn(ctx, "room.teardown: qo'l holatini tozalab bo'lmadi",
+				logger.String("lesson_id", lessonID), logger.SafeString("err", err.Error()))
 		}
 	}
-
-	uc.log.Info(ctx, "room.EndLesson: ended", logger.String("lesson_id", l.ID))
-	return nil
 }
 
-// isBanned — ishtirokchi shu darsdan chiqarilganmi.
-//
-// Redis yetib bo'lmasa `false` qaytadi (fail-open): ban — moderatsiya qulayligi,
-// autentifikatsiya emas. Redis uzilganda butun darsga kirishni to'sib qo'yish
-// zarari chiqarilgan bitta kishining qaytib kirishidan ancha katta.
+// isBanned — ishtirokchi shu darsdan chiqarilganmi (`shared.IsBanned` ustidan).
 func (uc *useCase) isBanned(ctx context.Context, lessonID, identity string) bool {
-	if uc.cache == nil || identity == "" {
+	return shared.IsBanned(ctx, uc.cache, lessonID, identity)
+}
+
+// EnforceJoin — `participant_joined` webhook'i uchun: chiqarilgan ishtirokchi
+// xonaga qaytib kirgan bo'lsa uni darhol uzadi.
+//
+// # Nega token tekshiruvining o'zi yetmaydi
+//
+// `ParticipantToken` ban'ni tekshiradi, lekin u faqat YANGI token so'ralganda
+// ishlaydi. Chiqarilgan ishtirokchining tokeni esa qo'lida qolgan va TTL
+// tugagunicha yaroqli — u backendga umuman murojaat qilmasdan to'g'ridan-to'g'ri
+// `room.connect(wsUrl, eskiToken)` qila oladi. Ya'ni "chiqarish" tugmasi
+// serverdan o'tmaydigan yo'l orqali chetlab o'tilardi.
+//
+// Bu webhook esa aynan SFU tomonidan, har bir ulanishda chaqiriladi — token
+// qayerdan kelganidan qat'i nazar. Qisqa ishtirokchi TTL'i bilan birga
+// (`livekit.participantTokenTTLMax`) ban endi haqiqiy kuchga ega.
+//
+// Xato qaytmaydi: webhook non-200 olsa LiveKit hodisani qayta yuboradi, bu esa
+// foyda bermaydi (ulanish allaqachon sodir bo'lgan). Muvaffaqiyatsizlik
+// jurnalga yoziladi.
+func (uc *useCase) EnforceJoin(ctx context.Context, rn, identity, displayName string) {
+	if identity == "" || !uc.livekit.Enabled() {
+		return
+	}
+	lessonID, ok := shared.LessonIDFromRoom(rn)
+	if !ok {
+		return // bizniki bo'lmagan xona
+	}
+	if !shared.IsBanned(ctx, uc.cache, lessonID, identity) &&
+		!uc.isMentorBlockedByLesson(ctx, lessonID, identity, displayName) {
+		return
+	}
+	lctx, cancel := lkCtx(ctx)
+	defer cancel()
+	if err := uc.livekit.RemoveParticipant(lctx, rn, identity); err != nil {
+		uc.log.Error(ctx, "room.EnforceJoin: chiqarilgan ishtirokchini uzib bo'lmadi",
+			logger.String("lesson_id", lessonID), logger.String("identity", identity),
+			logger.SafeString("err", err.Error()))
+		return
+	}
+	uc.log.Info(ctx, "room.EnforceJoin: chiqarilgan ishtirokchi qaytib kirdi — uzildi",
+		logger.String("lesson_id", lessonID), logger.String("identity", identity))
+}
+
+// isMentorBlockedByLesson — ishtirokchi shu dars mentorining DOIMIY qora
+// ro'yxatidami (№4). Ism bo'yicha tekshiriladi (`repository.BlocklistRepository`
+// izohiga qarang); host hech qachon bloklanmaydi (mentorID == identity).
+//
+// Fail-open (xatoda false): bu moderatsiya qulayligi, autentifikatsiya emas —
+// DB uzilganda butun sinfni darsdan to'sish zarari bloklangan bitta odamning
+// kirishidan katta (shared.IsBanned bilan bir xil falsafa).
+func (uc *useCase) isMentorBlockedByLesson(ctx context.Context, lessonID, identity, displayName string) bool {
+	if uc.blocklist == nil || displayName == "" {
 		return false
 	}
-	v, err := uc.cache.Get(ctx, banKey(lessonID, identity))
-	return err == nil && v != ""
+	l, err := uc.lessonRepo.GetByID(ctx, lessonID)
+	if err != nil {
+		return false
+	}
+	if isHostIdentity(l.MentorID, identity) {
+		return false
+	}
+	blocked, err := uc.blocklist.IsBlocked(ctx, l.MentorID, displayName)
+	if err != nil {
+		uc.log.Warn(ctx, "room: blocklist tekshirib bo'lmadi (fail-open)",
+			logger.String("lesson_id", lessonID), logger.SafeString("err", err.Error()))
+		return false
+	}
+	return blocked
+}
+
+// entryMuteKey — "kirishdagi mute allaqachon qo'llangan" belgisi (Redis).
+// TTL BanTTL bilan bir xil mantiqda: dars tugagach belgi ham keraksiz.
+func entryMuteKey(lessonID, identity string) string {
+	return "room:entrymuted:" + lessonID + ":" + identity
+}
+
+// EnforceAudioPolicy — `track_published` (audio) webhook'ida dars ovoz
+// sozlamalarini SERVER tomonda qo'llaydi (Zoom modeli, №11):
+//
+//   - allow_self_unmute=false → HAR audio publish qayta mute qilinadi
+//     ("unmute taqiqlangan" xulqi). Mentor bayroqni PATCH bilan jonli o'zgartiradi.
+//   - mute_on_entry=true → ishtirokchining BIRINCHI audio publish'i mute qilinadi
+//     (SetNX belgisi bilan bir marta): "kirganda mute", keyin o'zi ochsa — ochiq
+//     qoladi (allow_self_unmute=true bo'lsa).
+//
+// Nega webhook, token emas: "kirganda mute" tokenga yozib bo'lmaydi (grant faqat
+// publish HUQUQINI boshqaradi, trekning mute holatini emas), klientga ishonib
+// bo'lmaydi (curl/konsol chetlab o'tadi). `participant_joined` da esa hali trek
+// yo'q — mute qiladigan narsaning o'zi bo'lmaydi. Shuning uchun aynan
+// `track_published`.
+//
+// Ma'lum cheklov (hujjatlashtirilgan): klient SDK'si mute'da trekni unpublish
+// qilmasa, keyingi self-unmute yangi webhook bermaydi. Buni "Mute All"
+// (allow_self_unmute=false bilan) yopadi — u joriy treklarni darhol mute qiladi,
+// yangi publish'lar esa shu yerda tutiladi.
+//
+// Xato qaytarmaydi (EnforceJoin bilan bir xil): webhook'ga non-200 qaytarish
+// hodisani qayta-qayta yubortiradi, foydasi yo'q; muvaffaqiyatsizlik jurnalda.
+func (uc *useCase) EnforceAudioPolicy(ctx context.Context, rn, identity string) {
+	if identity == "" || !uc.livekit.Enabled() {
+		return
+	}
+	lessonID, ok := shared.LessonIDFromRoom(rn)
+	if !ok {
+		return // bizniki bo'lmagan xona
+	}
+	l, err := uc.lessonRepo.GetByID(ctx, lessonID)
+	if err != nil {
+		return
+	}
+	// Host'ga ovoz siyosati qo'llanmaydi — ustoz har doim erkin gapiradi.
+	if isHostIdentity(l.MentorID, identity) {
+		return
+	}
+
+	mute := false
+	switch {
+	case !l.AllowSelfUnmute:
+		mute = true
+	case l.MuteOnEntry:
+		// Faqat BIRINCHI publish (SetNX true qaytarsa). Keyingi publish'lar
+		// (masalan mobil SDK unmute'da qayta publish qilsa) tegilmaydi —
+		// aks holda "kirganda mute" amalda "hech qachon gapira olmaydi"ga aylanardi.
+		if uc.cache != nil {
+			first, err := uc.cache.SetNX(ctx, entryMuteKey(lessonID, identity), "1", shared.BanTTL)
+			mute = err == nil && first
+		}
+	}
+	if !mute {
+		return
+	}
+
+	lctx, cancel := lkCtx(ctx)
+	defer cancel()
+	if err := uc.livekit.MuteParticipant(lctx, rn, identity, true); err != nil {
+		uc.log.Warn(ctx, "room.EnforceAudioPolicy: mute qilib bo'lmadi",
+			logger.String("lesson_id", lessonID), logger.String("identity", identity),
+			logger.SafeString("err", err.Error()))
+		return
+	}
+	uc.log.Info(ctx, "room.EnforceAudioPolicy: audio mute qilindi",
+		logger.String("lesson_id", lessonID), logger.String("identity", identity),
+		logger.Int("allow_self_unmute", boolToInt(l.AllowSelfUnmute)))
 }
 
 // roomName dars ID sidan barqaror LiveKit xona nomini hosil qiladi (shared.RoomName).
@@ -363,16 +512,26 @@ func (uc *useCase) MuteParticipant(ctx context.Context, mentorID, lessonID, iden
 	return nil
 }
 
-func (uc *useCase) MuteAll(ctx context.Context, mentorID, lessonID string) error {
-	if _, err := shared.OwnedLesson(ctx, uc.lessonRepo, mentorID, lessonID); err != nil {
+func (uc *useCase) MuteAll(ctx context.Context, mentorID, lessonID string, allowSelfUnmute *bool) error {
+	l, err := shared.OwnedLesson(ctx, uc.lessonRepo, mentorID, lessonID)
+	if err != nil {
 		return err
+	}
+	// Zoom'dagi "Mute All" dialogidagi checkbox: bayroq AVVAL yangilanadi, keyin
+	// mute — aks holda mute bilan bayroq orasida publish qilgan o'quvchi eski
+	// (ruxsat beruvchi) siyosatga tushib qolardi.
+	if allowSelfUnmute != nil && l.AllowSelfUnmute != *allowSelfUnmute {
+		l.AllowSelfUnmute = *allowSelfUnmute
+		if err := uc.lessonRepo.Update(ctx, l); err != nil {
+			return err
+		}
 	}
 	rn := roomName(lessonID)
 	listCtx, listCancel := lkCtx(ctx)
-	parts, err := uc.livekit.ListParticipantViews(listCtx, rn)
+	parts, lkErr := uc.livekit.ListParticipantViews(listCtx, rn)
 	listCancel()
-	if err != nil {
-		return apperr.Internal(fmt.Errorf("room.MuteAll list: %w", err))
+	if lkErr != nil {
+		return apperr.Internal(fmt.Errorf("room.MuteAll list: %w", lkErr))
 	}
 	// PARALLEL mute. Ketma-ket bajarilganda 100 kishilik darsda ~100 ta HTTP
 	// chaqiruvi navbatga tushardi: har biri 10 s timeout bilan, ya'ni eng yomon
@@ -405,7 +564,13 @@ func (uc *useCase) MuteAll(ctx context.Context, mentorID, lessonID string) error
 	return nil
 }
 
-func (uc *useCase) RemoveParticipant(ctx context.Context, mentorID, lessonID, identity string) error {
+func (uc *useCase) RemoveParticipant(ctx context.Context, mentorID, lessonID, identity, scope string) error {
+	switch scope {
+	case "", entity.BanScopeLesson, entity.BanScopeMentor:
+		// "" = default (lesson) — eski klientlar body yubormaydi.
+	default:
+		return apperr.BadRequest("scope must be \"lesson\" or \"mentor\"")
+	}
 	if _, err := shared.OwnedLesson(ctx, uc.lessonRepo, mentorID, lessonID); err != nil {
 		return err
 	}
@@ -414,14 +579,21 @@ func (uc *useCase) RemoveParticipant(ctx context.Context, mentorID, lessonID, id
 	if isHostIdentity(mentorID, identity) {
 		return apperr.BadRequest("cannot remove the host: use POST /lessons/:id/end to finish the lesson")
 	}
+	// DOIMIY ban (scope=mentor): ismni UZISHDAN OLDIN o'qiymiz — chiqarib
+	// yuborilgan ishtirokchi ro'yxatda qolmaydi va ismi keyin topilmasdi.
+	if scope == entity.BanScopeMentor {
+		if err := uc.blockPermanently(ctx, mentorID, lessonID, identity); err != nil {
+			// Doimiy ban yozilmasa amalni TO'XTATAMIZ: ustoz "doimiy" deb bosdi,
+			// biz esa jimgina faqat bir darslik qilib qo'ysak — bu yolg'on UI.
+			return err
+		}
+	}
 	// AVVAL ban, KEYIN uzish. Tartib muhim: teskarisi bo'lsa, uzilish bilan ban
 	// yozilishi orasidagi bir necha millisekundda ishtirokchi qayta ulanib
 	// ulgurishi mumkin (klient SDK'si uzilishda darhol qayta urinadi).
-	if uc.cache != nil {
-		if err := uc.cache.Set(ctx, banKey(lessonID, identity), "1", banTTL); err != nil {
-			uc.log.Error(ctx, "room.RemoveParticipant: ban yozib bo'lmadi — chiqarilgan qaytib kirishi mumkin",
-				logger.String("lesson_id", lessonID), logger.SafeString("err", err.Error()))
-		}
+	if err := shared.Ban(ctx, uc.cache, lessonID, identity); err != nil {
+		uc.log.Error(ctx, "room.RemoveParticipant: ban yozib bo'lmadi — chiqarilgan qaytib kirishi mumkin",
+			logger.String("lesson_id", lessonID), logger.SafeString("err", err.Error()))
 	}
 
 	lctx, cancel := lkCtx(ctx)
@@ -468,4 +640,68 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// blockPermanently — ishtirokchini mentorning doimiy qora ro'yxatiga qo'shadi
+// (scope=mentor). Ism xonadagi joriy ro'yxatdan olinadi; ishtirokchi allaqachon
+// chiqib ketgan bo'lsa ism bo'sh qoladi (faqat identity/audit) — bu holda
+// ism-mosligi ishlamasligi ongli cheklov (`migrations/000015` izohi).
+func (uc *useCase) blockPermanently(ctx context.Context, mentorID, lessonID, identity string) error {
+	if uc.blocklist == nil {
+		return apperr.Internal(fmt.Errorf("room.blockPermanently: blocklist repository is not configured"))
+	}
+	displayName := ""
+	lctx, cancel := lkCtx(ctx)
+	parts, err := uc.livekit.ListParticipantViews(lctx, roomName(lessonID))
+	cancel()
+	if err != nil {
+		uc.log.Warn(ctx, "room.blockPermanently: ishtirokchi ismini o'qib bo'lmadi",
+			logger.String("lesson_id", lessonID), logger.SafeString("err", err.Error()))
+	} else {
+		for _, p := range parts {
+			if p.Identity == identity {
+				displayName = p.Name
+				break
+			}
+		}
+	}
+	e := &entity.BlocklistEntry{
+		ID:          uuid.NewString(),
+		MentorID:    mentorID,
+		Identity:    identity,
+		DisplayName: displayName,
+	}
+	if err := uc.blocklist.Add(ctx, e); err != nil {
+		uc.log.Error(ctx, "room.blockPermanently: qora ro'yxatga yozib bo'lmadi",
+			logger.String("lesson_id", lessonID), logger.SafeString("err", err.Error()))
+		return apperr.Internal(fmt.Errorf("room.blockPermanently: %w", err))
+	}
+	uc.log.Info(ctx, "room: participant blocked permanently",
+		logger.String("mentor_id", mentorID), logger.String("identity", identity))
+	return nil
+}
+
+func (uc *useCase) ListBlocklist(ctx context.Context, mentorID string) ([]*entity.BlocklistEntry, error) {
+	if uc.blocklist == nil {
+		return nil, apperr.Internal(fmt.Errorf("room.ListBlocklist: blocklist repository is not configured"))
+	}
+	items, err := uc.blocklist.ListByMentor(ctx, mentorID)
+	if err != nil {
+		return nil, apperr.Internal(fmt.Errorf("room.ListBlocklist: %w", err))
+	}
+	return items, nil
+}
+
+func (uc *useCase) Unblock(ctx context.Context, mentorID, entryID string) error {
+	if uc.blocklist == nil {
+		return apperr.Internal(fmt.Errorf("room.Unblock: blocklist repository is not configured"))
+	}
+	if err := shared.ValidateID(entryID, "blocklist entry"); err != nil {
+		return err
+	}
+	if err := uc.blocklist.Delete(ctx, mentorID, entryID); err != nil {
+		return err
+	}
+	uc.log.Info(ctx, "room: blocklist entry removed", logger.String("mentor_id", mentorID), logger.String("entry_id", entryID))
+	return nil
 }

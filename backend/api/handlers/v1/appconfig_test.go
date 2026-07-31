@@ -72,6 +72,6 @@ func TestGetAppConfig_NoAuthAndEmptyConfig(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code)
 	require.JSONEq(t,
-		`{"data":{"android":{"min_version":"","latest_version":"","apk_url":"","force_update":false,"release_notes":""}}}`,
+		`{"data":{"allow_open_registration":false,"android":{"min_version":"","latest_version":"","apk_url":"","force_update":false,"release_notes":""}}}`,
 		w.Body.String())
 }

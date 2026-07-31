@@ -180,7 +180,25 @@ func (uc *useCase) ChangePassword(ctx context.Context, id string, req *entity.Ch
 		uc.log.Error(ctx, "user.ChangePassword: db error", logger.String("id", id), logger.SafeString("err", err.Error()))
 		return err
 	}
-	uc.log.Info(ctx, "user password changed", logger.String("id", id))
+	// Parol o'zgargach BARCHA sessiyalar bekor qilinadi — `ResetPassword` bilan izchil.
+	//
+	// Nega muhim: parolni almashtirishning eng keng tarqalgan sababi "hisobim
+	// buzilgan bo'lishi mumkin". Sessiyalar tirik qolsa o'g'irlangan refresh
+	// token 30 kun yashaydi va parol almashtirish HECH NARSANI o'zgartirmaydi —
+	// foydalanuvchi esa o'zini himoyalangan deb o'ylaydi. Bu eng yomon turdagi
+	// xavfsizlik xatosi: qo'llanilmagan emas, ALDAMCHI.
+	//
+	// Admin yo'lida (`ResetPassword`) bu allaqachon bor edi, o'z parolini
+	// almashtirish yo'lida esa tushib qolgan edi.
+	if uc.tokens != nil {
+		if err := uc.tokens.RevokeAllUserSessions(ctx, id); err != nil {
+			// Parol allaqachon o'zgargan — amalni bekor qilmaymiz, lekin bu
+			// xavfsizlik hodisasi.
+			uc.log.Error(ctx, "user.ChangePassword: revoke sessions failed",
+				logger.String("id", id), logger.SafeString("err", err.Error()))
+		}
+	}
+	uc.log.Info(ctx, "user password changed — sessions revoked", logger.String("id", id))
 	return nil
 }
 

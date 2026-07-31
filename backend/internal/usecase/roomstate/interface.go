@@ -15,6 +15,13 @@ type LiveKit interface {
 	VerifyToken(token string) (identity, name, room string, err error)
 }
 
+// Recorder — yozuv holatini o'qish (DIP: `recording.UseCase` buni qondiradi).
+// Faqat O'QISH: roomstate yozuvni boshqarmaydi, u ishtirokchiga ko'rsatiladigan
+// indikator uchun kerak (`entity.RoomState.Recording` izohiga qara).
+type Recorder interface {
+	IsRecording(ctx context.Context, lessonID string) bool
+}
+
 // UseCase — dars xonasining o'tkinchi holati (qo'l ko'tarish, reaksiya).
 //
 // Bu holat Postgres'da EMAS, Redis'da: u darsning umri bilan cheklangan va

@@ -34,6 +34,8 @@ func main() {
 	lkHost := flag.String("lk", "ws://localhost:7880", "livekit ws url")
 	lkKey := flag.String("lk-key", "devkey", "livekit api key")
 	lkSecret := flag.String("lk-secret", "secret_at_least_32_characters_long_000000", "livekit api secret")
+	batch := flag.Int("batch", 25, "bir to'lqinda ochiladigan ulanishlar soni")
+	batchDelay := flag.Duration("batch-delay", 1500*time.Millisecond, "to'lqinlar orasidagi pauza")
 	flag.Parse()
 
 	access := login(*base, *email, *password)
@@ -49,23 +51,44 @@ func main() {
 	start := time.Now()
 	rooms := make([]*lksdk.Room, *n)
 
-	for i := 0; i < *n; i++ {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
-			token := joinToken(*base, slug, fmt.Sprintf("Load-%02d", idx))
-			if token == "" {
-				fmt.Printf("  [%02d] no token\n", idx)
-				return
-			}
-			room, err := lksdk.ConnectToRoomWithToken(*lkHost, token, nil)
-			if err != nil {
-				fmt.Printf("  [%02d] connect err: %v\n", idx, err)
-				return
-			}
-			rooms[idx] = room
-			atomic.AddInt64(&connected, 1)
-		}(i)
+	// ULANISHLAR TO'LQIN-TO'LQIN (batch) OCHILADI.
+	//
+	// Avval hammasi bir vaqtda `go func` bilan otilardi va 150 dan oshganda
+	// natija yolg'on bo'lardi: 150 tadan faqat 35 tasi ulanardi, log esa
+	// "handshake error: EOF" bilan to'lardi. Sabab SERVERDA emas — SFU CPU'si
+	// 1% da turardi — bitta yuklama JARAYONI 150 ta WebRTC peer'ini bir zumda
+	// ko'tara olmasdi (ICE/DTLS handshake'lari o'zaro raqobatga tushadi).
+	// Ya'ni o'lchov vositasi o'zining chegarasini o'lchab qo'yardi.
+	//
+	// Haqiqiy dars ham shunday emas: 300 o'quvchi bitta millisekundda emas,
+	// bir necha soniya davomida kiradi. Batch qadam shu haqiqatni modellaydi
+	// va sinovni takrorlanadigan qiladi.
+	for i := 0; i < *n; i += *batch {
+		end := i + *batch
+		if end > *n {
+			end = *n
+		}
+		for j := i; j < end; j++ {
+			wg.Add(1)
+			go func(idx int) {
+				defer wg.Done()
+				token := joinToken(*base, slug, fmt.Sprintf("Load-%03d", idx))
+				if token == "" {
+					fmt.Printf("  [%03d] token yo'q\n", idx)
+					return
+				}
+				room, err := lksdk.ConnectToRoomWithToken(*lkHost, token, nil)
+				if err != nil {
+					fmt.Printf("  [%03d] ulanish xatosi: %v\n", idx, err)
+					return
+				}
+				rooms[idx] = room
+				atomic.AddInt64(&connected, 1)
+			}(j)
+		}
+		if end < *n {
+			time.Sleep(*batchDelay)
+		}
 	}
 	wg.Wait()
 	fmt.Printf("connected %d/%d in %s\n", connected, *n, time.Since(start).Round(time.Millisecond))

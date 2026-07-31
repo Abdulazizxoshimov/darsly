@@ -49,9 +49,18 @@ p, mentor, /api/v1/lessons/:id/hands/lower,     POST
 p, mentor, /api/v1/lessons/:id/hands/lower-all, POST
 p, mentor, /api/v1/lessons/:id/chat, GET
 p, mentor, /api/v1/lessons/:id/chat, POST
+# Fayl ulashish (№15) va moderatsiya (№6). `keyMatch2` bitta segmentni qamraydi,
+# shuning uchun `/chat` qoidasi bu ikkisini QOPLAMAYDI — alohida yozilgan.
+p, mentor, /api/v1/lessons/:id/chat/upload, POST
+p, mentor, /api/v1/lessons/:id/chat/:messageID, DELETE
 p, mentor, /api/v1/lessons/:id/polls, GET
 p, mentor, /api/v1/lessons/:id/polls, POST
+p, mentor, /api/v1/lessons/:id/polls/:pollID/publish, POST
 p, mentor, /api/v1/polls/:id/close, POST
+
+# ─── mentor — doimiy qora ro'yxat (kick scope=mentor) ────────────────────────
+p, mentor, /api/v1/blocklist,     GET
+p, mentor, /api/v1/blocklist/:id, DELETE
 
 # ─── mentor — kutish xonasi qarorlari ────────────────────────────────────────
 p, mentor, /api/v1/waitingroom/:id/admit,  POST

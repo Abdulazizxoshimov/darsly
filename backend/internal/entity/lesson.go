@@ -17,6 +17,12 @@ type Lesson struct {
 	IsLocked             bool       `json:"is_locked"`
 	IsRecordingEnabled   bool       `json:"is_recording_enabled"`
 	IsWaitingRoomEnabled bool       `json:"is_waiting_room_enabled"`
+	// Zoom modeli — ovoz nazorati (№11):
+	// MuteOnEntry — yangi ishtirokchi mikrofoni server tomonda o'chirilgan holda boshlanadi.
+	// AllowSelfUnmute — o'quvchi o'zini unmute qila oladimi; false bo'lsa server
+	// har audio publish'ni qayta mute qiladi (webhook'da).
+	MuteOnEntry     bool `json:"mute_on_entry"`
+	AllowSelfUnmute bool `json:"allow_self_unmute"`
 	Status               string     `json:"status"` // scheduled | live | ended | cancelled
 	StartedAt            *time.Time `json:"started_at,omitempty"`
 	EndedAt              *time.Time `json:"ended_at,omitempty"`
@@ -52,12 +58,27 @@ type CreateLessonReq struct {
 	// `nil` = "berilmagan" → yoqiladi. Oshkora `false` esa hurmat qilinadi.
 	IsRecordingEnabled   *bool      `json:"is_recording_enabled"`
 	IsWaitingRoomEnabled bool       `json:"is_waiting_room_enabled"`
+	// MuteOnEntry / AllowSelfUnmute — IsRecordingEnabled bilan bir xil
+	// "nil = server default (yoniq)" naqshi: mahsulot default'i (Zoom bilan bir
+	// xil, ikkalasi TRUE) klientda emas, serverda bajarilishi kerak.
+	MuteOnEntry     *bool `json:"mute_on_entry"`
+	AllowSelfUnmute *bool `json:"allow_self_unmute"`
 }
 
 // RecordingEnabled — [CreateLessonReq.IsRecordingEnabled] ning default'i
 // qo'llangan qiymati (berilmagan bo'lsa yoqilgan).
 func (r *CreateLessonReq) RecordingEnabled() bool {
 	return r.IsRecordingEnabled == nil || *r.IsRecordingEnabled
+}
+
+// MuteOnEntryEnabled — berilmagan bo'lsa YONIQ (Zoom default'i).
+func (r *CreateLessonReq) MuteOnEntryEnabled() bool {
+	return r.MuteOnEntry == nil || *r.MuteOnEntry
+}
+
+// SelfUnmuteAllowed — berilmagan bo'lsa RUXSAT (Zoom default'i).
+func (r *CreateLessonReq) SelfUnmuteAllowed() bool {
+	return r.AllowSelfUnmute == nil || *r.AllowSelfUnmute
 }
 
 type UpdateLessonReq struct {
@@ -71,6 +92,8 @@ type UpdateLessonReq struct {
 	IsLocked             *bool      `json:"is_locked"`
 	IsRecordingEnabled   *bool      `json:"is_recording_enabled"`
 	IsWaitingRoomEnabled *bool      `json:"is_waiting_room_enabled"`
+	MuteOnEntry          *bool      `json:"mute_on_entry"`
+	AllowSelfUnmute      *bool      `json:"allow_self_unmute"`
 	Status               *string    `json:"status"                  validate:"omitempty,oneof=scheduled live ended cancelled"`
 }
 

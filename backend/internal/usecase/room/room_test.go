@@ -42,8 +42,8 @@ func setupWithRecorder(t *testing.T) (room.UseCase, *testutil.FakeLessonRepo, *t
 	cache := testutil.NewFakeCache()
 	// Haqiqiy roomstate ulanadi (nil emas): "ruxsat berilganda qo'l tushadi" va
 	// "dars tugaganda qo'llar tozalanadi" qoidalari aynan shu integratsiyada yashaydi.
-	hands := roomstate.New(lrepo, lk, cache, testutil.NewLogger())
-	return room.New(lrepo, urepo, lk, cache, testutil.NewLogger(), rec, hands), lrepo, lk, rec
+	hands := roomstate.New(lrepo, lk, cache, nil, testutil.NewLogger())
+	return room.New(lrepo, urepo, lk, cache, testutil.NewLogger(), rec, hands, testutil.NewFakeBlocklistRepo()), lrepo, lk, rec
 }
 
 func setup(t *testing.T) (room.UseCase, *testutil.FakeLessonRepo, *testutil.FakeLiveKit) {
@@ -54,8 +54,8 @@ func setup(t *testing.T) (room.UseCase, *testutil.FakeLessonRepo, *testutil.Fake
 	require.NoError(t, lrepo.Create(context.Background(), &entity.Lesson{ID: testLessonID, MentorID: "mentor1", Status: entity.LessonStatusScheduled}))
 	lk := testutil.NewFakeLiveKit()
 	cache := testutil.NewFakeCache()
-	hands := roomstate.New(lrepo, lk, cache, testutil.NewLogger())
-	uc := room.New(lrepo, urepo, lk, cache, testutil.NewLogger(), nil, hands)
+	hands := roomstate.New(lrepo, lk, cache, nil, testutil.NewLogger())
+	uc := room.New(lrepo, urepo, lk, cache, testutil.NewLogger(), nil, hands, testutil.NewFakeBlocklistRepo())
 	return uc, lrepo, lk
 }
 
@@ -110,15 +110,15 @@ func TestMuteAll_SkipsHost(t *testing.T) {
 	lk.Participants = []entity.RoomParticipant{
 		{Identity: "mentor1"}, {Identity: "guest_a"}, {Identity: "guest_b"},
 	}
-	require.NoError(t, uc.MuteAll(context.Background(), "mentor1", testLessonID))
+	require.NoError(t, uc.MuteAll(context.Background(), "mentor1", testLessonID, nil))
 	// host (mentor1) mute qilinmaydi → 2 ta guest mute qilinadi.
 	require.Equal(t, 2, lk.Calls["MuteParticipant"])
 }
 
 func TestHostControls_Ownership(t *testing.T) {
 	uc, _, _ := setup(t)
-	require.True(t, apperr.IsForbidden(uc.MuteAll(context.Background(), "intruder", testLessonID)))
-	require.True(t, apperr.IsForbidden(uc.RemoveParticipant(context.Background(), "intruder", testLessonID, "g")))
+	require.True(t, apperr.IsForbidden(uc.MuteAll(context.Background(), "intruder", testLessonID, nil)))
+	require.True(t, apperr.IsForbidden(uc.RemoveParticipant(context.Background(), "intruder", testLessonID, "g", "")))
 	require.True(t, apperr.IsForbidden(uc.SetSpeakPermission(context.Background(), "intruder", testLessonID, "g", true)))
 	_, err := uc.ListParticipants(context.Background(), "intruder", testLessonID)
 	require.True(t, apperr.IsForbidden(err))
@@ -133,7 +133,7 @@ func TestRoom_InvalidUUID_NotFound(t *testing.T) {
 		_, err := uc.HostToken(ctx, "mentor1", id)
 		require.True(t, apperr.IsNotFound(err), "HostToken(%q) → 404 kutilgan, oldi: %v", id, err)
 		require.True(t, apperr.IsNotFound(uc.EndLesson(ctx, "mentor1", id)), "EndLesson(%q) → 404 kutilgan", id)
-		require.True(t, apperr.IsNotFound(uc.MuteAll(ctx, "mentor1", id)), "MuteAll(%q) → 404 kutilgan", id)
+		require.True(t, apperr.IsNotFound(uc.MuteAll(ctx, "mentor1", id, nil)), "MuteAll(%q) → 404 kutilgan", id)
 		require.True(t, apperr.IsNotFound(uc.SetSpeakPermission(ctx, "mentor1", id, "g", true)), "SetSpeakPermission(%q) → 404 kutilgan", id)
 		_, err = uc.ListParticipants(ctx, "mentor1", id)
 		require.True(t, apperr.IsNotFound(err), "ListParticipants(%q) → 404 kutilgan, oldi: %v", id, err)
@@ -160,14 +160,14 @@ func TestHostControls_CannotTargetHost(t *testing.T) {
 		"host mute qilinmasligi kerak")
 
 	// remove (aks holda dars host'siz "live" qolardi)
-	requireBadRequest(t, uc.RemoveParticipant(ctx, "mentor1", testLessonID, "mentor1"),
+	requireBadRequest(t, uc.RemoveParticipant(ctx, "mentor1", testLessonID, "mentor1", ""),
 		"host xonadan chiqarilmasligi kerak")
 	require.Equal(t, 0, lk.Calls["RemoveParticipant"])
 
 	// Regressiya: oddiy student ustida uchala amal ham AVVALGIDEK ishlaydi.
 	require.NoError(t, uc.SetSpeakPermission(ctx, "mentor1", testLessonID, "guest_a", true))
 	require.NoError(t, uc.MuteParticipant(ctx, "mentor1", testLessonID, "guest_a", true))
-	require.NoError(t, uc.RemoveParticipant(ctx, "mentor1", testLessonID, "guest_a"))
+	require.NoError(t, uc.RemoveParticipant(ctx, "mentor1", testLessonID, "guest_a", ""))
 	require.Equal(t, 1, lk.Calls["SetParticipantPublish"])
 	require.Equal(t, 1, lk.Calls["RemoveParticipant"])
 }
@@ -239,7 +239,7 @@ func TestRemoveParticipant_BansFromRejoining(t *testing.T) {
 	_, err = uc.ParticipantToken(ctx, lesson, "buzgunchi", "Buzg'unchi")
 	require.NoError(t, err)
 
-	require.NoError(t, uc.RemoveParticipant(ctx, "mentor1", testLessonID, "buzgunchi"))
+	require.NoError(t, uc.RemoveParticipant(ctx, "mentor1", testLessonID, "buzgunchi", ""))
 
 	// Chiqarishdan KEYIN token berilmaydi.
 	_, err = uc.ParticipantToken(ctx, lesson, "buzgunchi", "Buzg'unchi")
@@ -258,7 +258,7 @@ func TestRemoveParticipant_BanIsPerLesson(t *testing.T) {
 	other := &entity.Lesson{ID: "22222222-2222-4222-8222-222222222222", MentorID: "mentor1", Status: entity.LessonStatusLive}
 	require.NoError(t, lrepo.Create(ctx, other))
 
-	require.NoError(t, uc.RemoveParticipant(ctx, "mentor1", testLessonID, "ali"))
+	require.NoError(t, uc.RemoveParticipant(ctx, "mentor1", testLessonID, "ali", ""))
 
 	_, err := uc.ParticipantToken(ctx, other, "ali", "Ali")
 	require.NoError(t, err, "boshqa darsga kirish bloklanmasligi kerak")
@@ -270,6 +270,6 @@ func TestMuteAll_SkipsHostAndCoversEveryone(t *testing.T) {
 	lk.Participants = []entity.RoomParticipant{
 		{Identity: "mentor1"}, {Identity: "u1"}, {Identity: "u2"}, {Identity: "u3"},
 	}
-	require.NoError(t, uc.MuteAll(context.Background(), "mentor1", testLessonID))
+	require.NoError(t, uc.MuteAll(context.Background(), "mentor1", testLessonID, nil))
 	require.Equal(t, 3, lk.Calls["MuteParticipant"], "host'dan tashqari hamma mute qilinishi kerak")
 }
