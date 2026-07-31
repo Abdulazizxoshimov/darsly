@@ -1,4 +1,4 @@
-import { ScreenSharePresets } from 'livekit-client'
+import { AudioPresets, ScreenSharePresets, VideoPresets } from 'livekit-client'
 
 /**
  * Media sifati sozlamalari — **past internetli hududlar uchun**.
@@ -69,10 +69,41 @@ export const SCREEN_LOW = ScreenSharePresets.h360fps3
  * dekodlash CPU'ni yeydi (bizning asosiy auditoriya). O'lchovsiz almashtirilmaydi.
  * O'zgartirmoqchi bo'lsangiz — avval `tests/load` bilan o'lchang.
  */
+/**
+ * KAMERA qatlamlari — ekrandan ATAYLAB past.
+ *
+ * Mahsulot qoidasi (docs/PRODUCT.md): kanal torayganda birinchi bo'lib KAMERA
+ * qurbon bo'ladi, ekran (slayd/misol) va ovoz saqlanadi. Kamera 360p/20fps dan
+ * yuqoriga chiqmaydi: dars mazmuni ekranda, kamera esa "gapirayotgan odam"
+ * konteksti — u uchun HD trafik sarflash noto'g'ri savdo.
+ */
+export const CAMERA_HIGH = VideoPresets.h360
+export const CAMERA_LOW = VideoPresets.h180
+
+/**
+ * Trek ustuvorligi: **ovoz > ekran > kamera** (RTCPriorityType).
+ *
+ * Brauzer/WebRTC kanal yetmaganda `priority` bo'yicha taqsimlaydi. Bularsiz uch
+ * oqim teng da'vogar bo'lib qolardi va aynan eng yomon tarmoqda — eng kerakli
+ * paytda — ovoz kamera bilan raqobatga tushardi.
+ *
+ * · audio: SDK'da alohida `priority` yo'q, lekin audio bitreyti kichik (32 kbps
+ *   speech preset) va RED/DTX bilan himoyalangan — u amalda birinchi o'rinda qoladi.
+ * · ekran: 'high' — matn o'qilishi mahsulotning o'zagi.
+ * · kamera: 'low' — birinchi bo'lib siqiladi.
+ */
+const SCREEN_ENCODING = { ...SCREEN_HIGH.encoding, priority: 'high' }
+const CAMERA_ENCODING = { ...CAMERA_HIGH.encoding, priority: 'low' }
+
 export const PUBLISH_DEFAULTS = {
   simulcast: true,
-  screenShareEncoding: SCREEN_HIGH.encoding,
+  screenShareEncoding: SCREEN_ENCODING,
   screenShareSimulcastLayers: [SCREEN_LOW],
+  // Kamera: past qatlam bilan — zaif o'quvchi kamerani butunlay yo'qotmaydi.
+  videoEncoding: CAMERA_ENCODING,
+  videoSimulcastLayers: [CAMERA_LOW],
+  // Ovoz: nutq preseti (32 kbps) — musiqa emas, dars ovozi.
+  audioPreset: AudioPresets.speech,
   degradationPreference: 'maintain-resolution',
   red: true,
   dtx: true,

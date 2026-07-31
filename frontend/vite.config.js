@@ -12,7 +12,10 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
-      '/api': { target: 'http://localhost:8087', changeOrigin: true, ws: true },
+      // changeOrigin: FALSE — asl Host backend'ga yetib borsin: LIVEKIT_CLIENT_WS_URL=auto
+      // rejimi klient kelgan hostdan LiveKit manzilini yasaydi (boshqa qurilmadan
+      // kirganda ws://localhost emas, ws://<PC-IP> qaytishi kerak).
+      '/api': { target: 'http://localhost:8087', changeOrigin: false, ws: true },
     },
   },
   // Vitest — birlik testlari FAQAT src/ ichida. `e2e/` Playwright'niki: uni bu yerga

@@ -11,14 +11,27 @@ import {
   Hand,
   ArrowUpToLine,
 } from 'lucide-react'
-import * as pdfjsLib from 'pdfjs-dist'
 import { toast } from '../lib/toast'
 
-// pdfjs worker'ni Vite asset sifatida bundle qilamiz (CDN'siz, offline ishlaydi).
-pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-  'pdfjs-dist/build/pdf.worker.min.mjs',
-  import.meta.url,
-).toString()
+// pdf.js DINAMIK yuklanadi — statik import xona chunk'ini ~300KB gzip qilardi
+// va uni HAR BIR ishtirokchi darsga kirishda yuklab olardi. Aslida PDF faqat
+// USTOZ fayl tanlaganda kerak (o'quvchi sahifalarni tayyor rasm sifatida
+// oladi), ya'ni bu og'irlik deyarli hamma uchun ortiqcha edi. Sekin internetda
+// xonaga kirish vaqti aynan shu yerda yo'qolardi.
+let pdfjsPromise = null
+function loadPdfjs() {
+  if (!pdfjsPromise) {
+    pdfjsPromise = import('pdfjs-dist').then((lib) => {
+      // Worker'ni Vite asset sifatida bundle qilamiz (CDN'siz, offline ishlaydi).
+      lib.GlobalWorkerOptions.workerSrc = new URL(
+        'pdfjs-dist/build/pdf.worker.min.mjs',
+        import.meta.url,
+      ).toString()
+      return lib
+    })
+  }
+  return pdfjsPromise
+}
 
 // PDF sahifasi qanchalik katta rasterlansa (px eni). Kattaroq = tiniqroq, lekin og'irroq chunk.
 const PDF_RENDER_WIDTH = 1200
@@ -48,8 +61,6 @@ const WORLD_W = 1000
 // Chizishda pastki chekkaga yaqinlashganda avto-scroll qiladigan chegara (css px) va tezlik.
 const AUTOSCROLL_MARGIN = 56
 const AUTOSCROLL_RATE = 0.18
-
-const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v))
 
 // Real-time oq doska — EN-FIT + VERTIKAL SCROLL modeli.
 // World eni qat'iy WORLD_W; scale = canvasCssW / WORLD_W → EN DOIM to'liq sig'adi (telefon, planshet — bir xil enli kontent).
@@ -588,6 +599,7 @@ export const Whiteboard = memo(function Whiteboard({
     setPdfBusy(true)
     try {
       const buf = await file.arrayBuffer()
+      const pdfjsLib = await loadPdfjs()
       const doc = await pdfjsLib.getDocument({ data: buf }).promise
       try {
         pdfDocRef.current?.destroy?.()

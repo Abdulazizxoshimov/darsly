@@ -14,6 +14,8 @@ import { Schedule } from './views/Schedule'
 import { Recordings } from './views/Recordings'
 import { Notifications } from './views/Notifications'
 import { Profile } from './views/Profile'
+import { UsersView } from './views/Users'
+import { Blocklist } from './views/Blocklist'
 import { NotFound } from './views/NotFound'
 
 // Jonli xona LiveKit'ni tortadi — faqat xonaga kirilganda yuklanadi.
@@ -47,8 +49,11 @@ export default function App() {
           <Route index element={<Dashboard />} />
           <Route path="schedule" element={<Schedule />} />
           <Route path="recordings" element={<Recordings />} />
+          <Route path="blocklist" element={<Blocklist />} />
           <Route path="notifications" element={<Notifications />} />
           <Route path="profile" element={<Profile />} />
+          {/* Faqat admin — komponent ichida rol tekshiriladi (redirect) */}
+          <Route path="users" element={<UsersView />} />
         </Route>
       </Route>
 

@@ -1,10 +1,18 @@
 import { useState } from 'react'
-import { Bell, BellOff, Calendar, CheckCheck, Info, Users } from 'lucide-react'
+import { Bell, BellOff, Calendar, CheckCheck, Info, Timer, Users } from 'lucide-react'
 import { useNotifications, useMarkRead, useMarkAllRead } from '../store/data'
 import { Button } from '../components/Button'
 import { PageLoader } from '../components/Spinner'
 
-const TYPE_ICON = { lesson_reminder: Calendar, waiting_room: Users, system: Info }
+// `recording_expiring` — yozuv 3 kundan keyin o'chadi. Boshqa turlardan
+// ko'rinishi bilan farq qilishi kerak: bu MUDDATLI, ya'ni harakat talab
+// qiladigan yagona bildirishnoma (yuklab olib qolish).
+const TYPE_ICON = {
+  lesson_reminder: Calendar,
+  waiting_room: Users,
+  system: Info,
+  recording_expiring: Timer,
+}
 
 export function Notifications() {
   const [unreadOnly, setUnreadOnly] = useState(false)

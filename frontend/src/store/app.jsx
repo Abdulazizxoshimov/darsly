@@ -1,8 +1,9 @@
 import { createContext, useContext, useEffect, useState, useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { tokenStore, setUnauthorizedHandler } from '../api/api'
+import { tokenStore, setUnauthorizedHandler, ApiError, errorText } from '../api/api'
 import { me, login as apiLogin, register as apiRegister, logout as apiLogout } from '../api/auth'
 import { connectRealtime } from '../lib/ws'
+import { setLogoutReason } from '../lib/logoutReason'
 import { toast } from '../lib/toast'
 
 const AppContext = createContext(null)
@@ -13,9 +14,13 @@ export function AppProvider({ children }) {
   const [ready, setReady] = useState(!tokenStore.isAuthed) // token yo'q → darrov tayyor
 
   // 401 → sessiyani tozalash (RequireAuth /auth ga yo'naltiradi).
+  // Sabab (`session_revoked` / `expired`) sessionStorage'ga yoziladi va login
+  // sahifasi uni ko'rsatadi — bu yerda to'g'ridan-to'g'ri ko'rsatib bo'lmaydi,
+  // chunki keyingi qatorda sahifa butunlay qayta yuklanadi.
   useEffect(() => {
-    setUnauthorizedHandler(() => {
+    setUnauthorizedHandler((reason) => {
       tokenStore.clear()
+      setLogoutReason(reason)
       setUser(null)
       if (!window.location.pathname.startsWith('/auth')) window.location.href = '/auth'
     })
@@ -27,7 +32,25 @@ export function AppProvider({ children }) {
     if (tokenStore.isAuthed && !user) {
       me()
         .then((u) => alive && setUser(u))
-        .catch(() => alive && tokenStore.clear())
+        .catch((e) => {
+          if (!alive) return
+          // Sessiyani FAQAT token haqiqatan rad etilganda tozalaymiz.
+          //
+          // Avval har qanday xato logout qilardi: server 30 soniya javob
+          // bermasa yoki internet bir lahzaga uzilsa foydalanuvchi tizimdan
+          // chiqarilardi va qaytadan parol kiritishga majbur bo'lardi —
+          // dars boshlanishida bu eng yomon paytda sodir bo'ladi.
+          //
+          // 401 esa `api.jsx` da allaqachon refresh bilan bir marta
+          // qayta urinilgan; bu yerga yetgan bo'lsa sessiya rostan o'lgan.
+          if (e instanceof ApiError && e.status === 401) {
+            tokenStore.clear()
+            return
+          }
+          // Tarmoq/server xatosi — token saqlanadi, foydalanuvchi xabardor
+          // qilinadi va keyingi so'rov o'z-o'zidan tiklanadi.
+          toast.error(errorText(e, 'Serverga ulanib bo‘lmadi — qayta urinilmoqda'))
+        })
         .finally(() => alive && setReady(true))
     } else {
       setReady(true)

@@ -23,6 +23,20 @@ const REACTIONS = ['👍', '👏', '❤️', '😂', '😮', '🎉', '✋']
 // Boshqaruv paneli. `local` — `useRoom` snapshot'i (SDK obyektini render paytida
 // o'qimaymiz), `room` esa faqat amal bajarish uchun kerak — uning identiteti barqaror,
 // shuning uchun `memo` ishlaydi: sahnadagi o'zgarish panelni qayta render qilmaydi.
+// getUserMedia xatosini foydalanuvchi TUZATA OLADIGAN o'zbekcha matnga aylantiradi.
+// Umumiy "yoqib bo'lmadi" yetarli emas: ruxsat bermaslik, band qurilma va
+// qurilma yo'qligi — uchtasi uch xil harakat talab qiladi.
+function mediaFailText(what, e) {
+  const name = e?.name || ''
+  if (name === 'NotAllowedError' || name === 'PermissionDeniedError')
+    return `${what}ga ruxsat berilmagan — brauzer manzil satridagi qulf belgisidan ruxsat bering`
+  if (name === 'NotFoundError' || name === 'DevicesNotFoundError')
+    return `${what} topilmadi — qurilma ulanganini tekshiring`
+  if (name === 'NotReadableError' || name === 'TrackStartError')
+    return `${what} band — uni ishlatayotgan boshqa dasturni yoping`
+  return `${what}ni yoqib bo‘lmadi`
+}
+
 export const Controls = memo(function Controls({
   room,
   local,
@@ -42,6 +56,9 @@ export const Controls = memo(function Controls({
   onToggleBoard,
   dataSaver,
   onToggleDataSaver,
+  // Dars siyosati: allow_self_unmute=false → o'quvchi o'zini OCHOLMAYDI
+  // (server enforce qiladi; bu UI'da tugmani o'chirib sababini aytadi).
+  selfUnmuteBlocked = false,
 }) {
   const [reactOpen, setReactOpen] = useState(false)
   const lp = room.localParticipant
@@ -50,20 +67,47 @@ export const Controls = memo(function Controls({
   const camOn = !!local?.camOn
   const screenOn = !!local?.screenOn
 
+  // Insecure origin'da (http + IP, localhost emas) brauzer mediaDevices'ni
+  // UMUMAN bermaydi. O'quvchi xonaga KIRADI (ko'rish/eshitish ishlaydi), faqat
+  // publish tugmalari o'chiq turadi — sababi tooltip'da.
+  const mediaOk =
+    typeof navigator !== 'undefined' &&
+    !!navigator.mediaDevices &&
+    typeof navigator.mediaDevices.getUserMedia === 'function'
+
+  // Mikrofonni OCHISH taqiqlangan holat; o'chirish (mute) har doim mumkin.
+  const micLocked = !micOn && selfUnmuteBlocked && !isHost
+
+  const micTitle = !mediaOk
+    ? 'HTTPS kerak — mikrofon faqat xavfsiz (https) ulanishda ishlaydi'
+    : micLocked
+      ? 'Mentor ruxsat bermagan — mikrofonni ustoz ochadi'
+      : !canPublish
+        ? 'Ustoz gapirishga ruxsat bermagan'
+        : 'Mikrofon'
+  const camTitle = !mediaOk
+    ? 'HTTPS kerak — kamera faqat xavfsiz (https) ulanishda ishlaydi'
+    : !canPublish
+      ? 'Ustoz kamera uchun ruxsat bermagan'
+      : 'Kamera'
+
   async function toggleMic() {
     if (!canPublish) return toast.info('Ustoz gapirishga ruxsat bermagan')
     try {
+      // Optimistik EMAS: tugma holati `local.micOn` (LiveKit muted hodisalari)
+      // dan keladi. Server siyosat bo'yicha qayta mute qilsa, tugma o'zi
+      // o'chiq holatga qaytadi.
       await lp.setMicrophoneEnabled(!micOn)
-    } catch {
-      toast.error('Mikrofonni yoqib bo‘lmadi')
+    } catch (e) {
+      toast.error(mediaFailText('Mikrofon', e))
     }
   }
   async function toggleCam() {
     if (!canPublish) return toast.info('Ustoz kamera uchun ruxsat bermagan')
     try {
       await lp.setCameraEnabled(!camOn)
-    } catch {
-      toast.error('Kamerani yoqib bo‘lmadi')
+    } catch (e) {
+      toast.error(mediaFailText('Kamera', e))
     }
   }
   async function toggleScreen() {
@@ -91,15 +135,19 @@ export const Controls = memo(function Controls({
 
   return (
     <div className="controls">
-      <Ctrl label="Mikrofon" onClick={toggleMic} disabled={!canPublish} danger={!micOn}>
+      <Ctrl label={micTitle} onClick={toggleMic} disabled={!canPublish || !mediaOk || micLocked} danger={!micOn}>
         {micOn ? <Mic size={20} /> : <MicOff size={20} />}
       </Ctrl>
-      <Ctrl label="Kamera" onClick={toggleCam} disabled={!canPublish} danger={!camOn}>
+      <Ctrl label={camTitle} onClick={toggleCam} disabled={!canPublish || !mediaOk} danger={!camOn}>
         {camOn ? <Video size={20} /> : <VideoOff size={20} />}
       </Ctrl>
-      <Ctrl label="Ekran" onClick={toggleScreen} on={screenOn}>
-        <MonitorUp size={20} />
-      </Ctrl>
+      {/* Ekran ulashish FAQAT ustozda — o'quvchi tokeniga bu manba imzolanmagan
+          (backend `studentPublishSources`). Ishlamaydigan tugmani ko'rsatmaymiz. */}
+      {isHost && (
+        <Ctrl label="Ekran" onClick={toggleScreen} on={screenOn}>
+          <MonitorUp size={20} />
+        </Ctrl>
+      )}
 
       <div style={{ position: 'relative' }}>
         <Ctrl label="Reaksiya" onClick={() => setReactOpen((v) => !v)} active={reactOpen}>

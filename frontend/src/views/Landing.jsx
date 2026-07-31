@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Check, Link2 } from 'lucide-react'
 import { Button } from '../components/Button'
+import BrandMark from '../components/BrandMark'
 
 const FEATURES = [
   'Dars yozib olish va yuklab olish',
@@ -28,7 +29,7 @@ export function Landing() {
     <div style={{ minHeight: '100%', overflow: 'auto' }}>
       <div className="landing-nav">
         <div className="row gap-3" style={{ fontWeight: 800, fontSize: 20 }}>
-          <div className="brand-logo">D</div> Darsly
+          <BrandMark /> jonly
         </div>
         <div className="row gap-4 text-2" style={{ fontSize: 14 }}>
           <Button variant="ghost" size="sm" onClick={() => navigate('/auth')}>
@@ -72,7 +73,7 @@ export function Landing() {
               value={joinUrl}
               onChange={(e) => setJoinUrl(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && goJoin()}
-              placeholder="darsly.uz/r/... havolasini joylashtiring"
+              placeholder="jonly.uz/r/... havolasini joylashtiring"
               style={{ flex: 1, background: 'none', border: 'none', color: 'var(--text)', fontSize: 13.5, outline: 'none' }}
             />
             <Button variant="secondary" size="sm" onClick={goJoin}>

@@ -1,17 +1,52 @@
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { Bell, Calendar, Film, LayoutGrid, LogOut, Menu, User, X } from 'lucide-react'
+import { Bell, Calendar, Film, LayoutGrid, LogOut, Menu, ShieldOff, User, Users, X } from 'lucide-react'
 import { useApp } from '../store/app'
 import { useUnreadCount } from '../store/data'
 import { Avatar } from './Avatar'
+import { roleLabel } from '../lib/format'
+import BrandMark from './BrandMark'
 
+// Asosiy bo'limlar — doimiy chap sidebar'da. Bildirishnoma (topbar qo'ng'irog'i)
+// va Profil (pastdagi foydalanuvchi kartasi) alohida kirish nuqtalariga ega,
+// shuning uchun asosiy ro'yxatda takrorlanmaydi (mobil drawer'da esa bor).
 const NAV = [
-  { to: '/app', label: 'Boshqaruv', icon: LayoutGrid, end: true },
+  { to: '/app', label: 'Darslar', icon: LayoutGrid, end: true },
   { to: '/app/schedule', label: 'Jadval', icon: Calendar },
   { to: '/app/recordings', label: 'Yozuvlar', icon: Film },
+  // Qora ro'yxat — mentorning doimiy bloklari (darsdan «Doimiy» chiqarilganlar).
+  { to: '/app/blocklist', label: "Qora ro'yxat", icon: ShieldOff },
+]
+
+const ADMIN_NAV = [{ to: '/app/users', label: 'Foydalanuvchilar', icon: Users }]
+
+const EXTRA_NAV = [
   { to: '/app/notifications', label: 'Bildirishnomalar', icon: Bell },
   { to: '/app/profile', label: 'Profil', icon: User },
 ]
+
+function pageTitle(pathname, isAdmin) {
+  const all = [...NAV, ...(isAdmin ? ADMIN_NAV : []), ...EXTRA_NAV]
+  // Eng aniq (uzun) mos kelgan yo'l g'olib — '/app' hammaga mos kelmasin.
+  const hit = all
+    .filter((n) => (n.end ? pathname === n.to : pathname.startsWith(n.to)))
+    .sort((a, b) => b.to.length - a.to.length)[0]
+  return hit?.label || ''
+}
+
+function NavItems({ items, onNavigate }) {
+  return items.map(({ to, label, icon: Icon, end }) => (
+    <NavLink
+      key={to}
+      to={to}
+      end={end}
+      onClick={onNavigate}
+      className={({ isActive }) => `nav__item ${isActive ? 'active' : ''}`}
+    >
+      <Icon size={18} /> {label}
+    </NavLink>
+  ))
+}
 
 export function AppShell() {
   const { user, doLogout } = useApp()
@@ -19,6 +54,7 @@ export function AppShell() {
   const location = useLocation()
   const { data: unread = 0 } = useUnreadCount()
   const [menuOpen, setMenuOpen] = useState(false)
+  const isAdmin = user?.role === 'admin'
 
   async function logout() {
     setMenuOpen(false)
@@ -45,16 +81,52 @@ export function AppShell() {
     <div className="shell">
       <aside className="sidebar">
         <div className="sidebar__brand">
-          <div className="brand-logo">D</div>
-          Darsly
+          <span className="brand-logo--pulse" style={{ display: 'flex' }}>
+            <BrandMark />
+          </span>
+          jonly
         </div>
         <nav className="nav">
-          {NAV.map(({ to, label, icon: Icon, end }) => (
-            <NavLink key={to} to={to} end={end} className={({ isActive }) => `nav__item ${isActive ? 'active' : ''}`}>
-              <Icon size={18} /> {label}
-            </NavLink>
-          ))}
+          <NavItems items={NAV} />
+          {isAdmin && (
+            <>
+              <div className="nav__section">Boshqaruv</div>
+              <NavItems items={ADMIN_NAV} />
+            </>
+          )}
         </nav>
+        <div className="sidebar__foot">
+          <div
+            className="sidebar__user"
+            onClick={() => navigate('/app/profile')}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                navigate('/app/profile')
+              }
+            }}
+            title="Profil"
+          >
+            <Avatar name={user?.full_name || '?'} color={user?.color} src={user?.avatar_url} size={36} />
+            <div className="grow" style={{ lineHeight: 1.25 }}>
+              <div className="sidebar__user-name truncate">{user?.full_name}</div>
+              <div className="sidebar__user-role">{roleLabel(user?.role)}</div>
+            </div>
+            <button
+              className="icon-btn"
+              onClick={(e) => {
+                e.stopPropagation()
+                logout()
+              }}
+              title="Chiqish"
+              aria-label="Chiqish"
+            >
+              <LogOut size={17} />
+            </button>
+          </div>
+        </div>
       </aside>
 
       <div className="main">
@@ -62,19 +134,19 @@ export function AppShell() {
           <button className="hamburger" onClick={() => setMenuOpen(true)} aria-label="Menyu" aria-expanded={menuOpen}>
             <Menu size={22} />
           </button>
+          <div className="topbar__title">{pageTitle(location.pathname, isAdmin)}</div>
           <button className="bell" onClick={() => navigate('/app/notifications')} aria-label="Bildirishnomalar">
             <Bell size={20} />
             {unread > 0 && <span className="bell__dot">{unread > 9 ? '9+' : unread}</span>}
           </button>
-          <div className="row gap-3">
-            <Avatar name={user?.full_name || '?'} color={user?.color} src={user?.avatar_url} size={36} />
-            <div className="topbar__user" style={{ textAlign: 'right', lineHeight: 1.2 }}>
-              <div style={{ fontSize: 14, fontWeight: 700 }}>{user?.full_name}</div>
-              <div className="muted cap" style={{ fontSize: 12 }}>{user?.role}</div>
-            </div>
-          </div>
-          <button className="icon-btn" onClick={logout} title="Chiqish" style={{ color: 'var(--text-3)' }}>
-            <LogOut size={20} />
+          <button
+            className="icon-btn"
+            onClick={() => navigate('/app/profile')}
+            title="Profil"
+            aria-label="Profil"
+            style={{ padding: 0 }}
+          >
+            <Avatar name={user?.full_name || '?'} color={user?.color} src={user?.avatar_url} size={32} />
           </button>
         </header>
         <main className="topbar__content">
@@ -88,25 +160,17 @@ export function AppShell() {
           <aside className="drawer" onClick={(e) => e.stopPropagation()}>
             <div className="drawer__head">
               <div className="sidebar__brand" style={{ border: 'none', padding: 0, height: 'auto' }}>
-                <div className="brand-logo">D</div>
-                Darsly
+                <BrandMark />
+                jonly
               </div>
               <button className="icon-btn" onClick={() => setMenuOpen(false)} aria-label="Yopish">
                 <X size={20} />
               </button>
             </div>
             <nav className="nav">
-              {NAV.map(({ to, label, icon: Icon, end }) => (
-                <NavLink
-                  key={to}
-                  to={to}
-                  end={end}
-                  onClick={() => setMenuOpen(false)}
-                  className={({ isActive }) => `nav__item ${isActive ? 'active' : ''}`}
-                >
-                  <Icon size={18} /> {label}
-                </NavLink>
-              ))}
+              <NavItems items={NAV} onNavigate={() => setMenuOpen(false)} />
+              {isAdmin && <NavItems items={ADMIN_NAV} onNavigate={() => setMenuOpen(false)} />}
+              <NavItems items={EXTRA_NAV} onNavigate={() => setMenuOpen(false)} />
               <button className="nav__item" onClick={logout} style={{ background: 'none', border: 'none', width: '100%', textAlign: 'left' }}>
                 <LogOut size={18} /> Chiqish
               </button>

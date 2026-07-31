@@ -42,8 +42,15 @@ export function PresenterPip({ open, onClose, onOpenFailed, width = 340, height 
   // `open` o'zgarganda ishlashi kerak (aks holda oyna yopilib-ochilib turardi).
   const onCloseRef = useRef(onClose)
   const onFailRef = useRef(onOpenFailed)
+  // "Latest ref" naqshi. ESLint render paytida ref'ga yozishni ogohlantiradi
+  // (u concurrent rejimda xavfsiz emas), lekin bu yerda ATAYLAB: effektga
+  // ko'chirilsa ref joriy render effekti uchun eskirgan bo'lib qolardi va
+  // oyna yopilganda eski callback chaqirilardi. Ilova concurrent
+  // xususiyatlarini (Suspense bilan o'tuvchi render) ishlatmaydi.
+  /* eslint-disable react-hooks/refs */
   onCloseRef.current = onClose
   onFailRef.current = onOpenFailed
+  /* eslint-enable react-hooks/refs */
 
   useEffect(() => {
     if (!open || !PIP_SUPPORTED) return undefined
@@ -75,7 +82,7 @@ export function PresenterPip({ open, onClose, onOpenFailed, width = 340, height 
         return
       }
       copyStyles(win.document)
-      win.document.title = 'Darsly — dars signallari'
+      win.document.title = 'Jonly — dars signallari'
       win.document.body.classList.add('pip-body')
       win.addEventListener('pagehide', handleHide)
       setPipWin(win)
@@ -187,7 +194,12 @@ export const PresenterPanel = memo(function PresenterPanel({
                   {m.self ? 'Siz' : m.name}
                   {m.toIdentity && <span className="pip__msg-dm">shaxsiy</span>}
                 </span>
-                <span className="pip__msg-body">{m.body}</span>
+                {/* Suzuvchi oyna kichkina — fayl KARTOCHKASI sig'maydi, lekin
+                    "kimdir fayl yubordi" signali yo'qolmasligi kerak: aks holda
+                    ekran ulashayotgan ustoz uchun xabar BO'SH ko'rinardi. */}
+                <span className="pip__msg-body">
+                  {m.file ? `📎 ${m.file.name}${m.body ? ` — ${m.body}` : ''}` : m.body}
+                </span>
               </div>
             ))}
             <div ref={endRef} />

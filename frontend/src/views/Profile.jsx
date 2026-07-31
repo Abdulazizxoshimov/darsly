@@ -7,7 +7,7 @@ import { Field } from '../components/Field'
 import { Button } from '../components/Button'
 import { Avatar } from '../components/Avatar'
 import { toast } from '../lib/toast'
-import { DEFAULT_LANGUAGE, DEFAULT_TIMEZONE } from '../lib/format'
+import { DEFAULT_LANGUAGE, DEFAULT_TIMEZONE, roleLabel } from '../lib/format'
 
 export function Profile() {
   const { user, setUser } = useApp()
@@ -60,7 +60,7 @@ export function Profile() {
           <div>
             <div style={{ fontWeight: 700, fontSize: 18 }}>{user?.full_name}</div>
             <div className="text-2" style={{ fontSize: 14 }}>{user?.email}</div>
-            <div className="muted cap" style={{ fontSize: 12, marginTop: 2 }}>{user?.role}</div>
+            <div className="muted cap" style={{ fontSize: 12, marginTop: 2 }}>{roleLabel(user?.role)}</div>
           </div>
         </div>
         <form onSubmit={saveProfile} className="col gap-4">

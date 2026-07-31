@@ -1,9 +1,12 @@
-import { memo } from 'react'
+import { memo, useState } from 'react'
 import { Check, Hand, Mic, MicOff, UserX, X } from 'lucide-react'
 import { useWaiting, useAdmit, useReject } from '../store/data'
 import { allowSpeak, muteAll, muteParticipant, removeParticipant, revokeSpeak } from '../api/room'
 import { errorText } from '../api/api'
 import { Avatar } from '../components/Avatar'
+import { Button } from '../components/Button'
+import { Modal } from '../components/Modal'
+import { Toggle } from '../components/Toggle'
 import { toast } from '../lib/toast'
 
 // Ishtirokchilar paneli. `participants` — `useRoom` snapshot'i.
@@ -17,14 +20,21 @@ export const ParticipantsPanel = memo(function ParticipantsPanel({
   lessonId,
   localId,
   raisedHands,
+  allowSelfUnmute = true,
+  onPolicyChanged,
   onLowerHand,
   onLowerAllHands,
   onClose,
 }) {
   const { data: waitingData } = useWaiting(lessonId, isHost && !!lessonId)
-  const waiting = waitingData || [] // backend null qaytarishi mumkin → guard
+  const waiting = waitingData || [] // backend bo'sh ro'yxatni null qaytaradi → null.length crash bo'lmasin
   const admit = useAdmit()
   const reject = useReject()
+
+  // "Hammani o'chirish" modali (Zoom andozasi: checkbox bilan).
+  const [muteAllOpen, setMuteAllOpen] = useState(false)
+  // Chiqarish tanlovi: qaysi ishtirokchi uchun dialog ochiq ({identity, name} | null).
+  const [removing, setRemoving] = useState(null)
 
   const present = new Set(participants.map((p) => p.identity))
   const byId = new Map(participants.map((p) => [p.identity, p]))
@@ -42,15 +52,18 @@ export const ParticipantsPanel = memo(function ParticipantsPanel({
   return (
     <div className="panel">
       <div className="panel__head">
-        <h3 className="h2">Ishtirokchilar ({participants.length})</h3>
+        <h3 className="h2" style={{ whiteSpace: 'nowrap' }}>
+          Ishtirokchilar ({participants.length})
+        </h3>
         <div className="row gap-2">
           {isHost && lessonId && (
             <button
               className="icon-btn"
-              style={{ fontSize: 12, fontWeight: 600, width: 'auto' }}
-              onClick={() => hostAction(() => muteAll(lessonId), 'Hamma mute qilindi')}
+              // Tor panelda matn ikki qatorga bo'linib sarlavhani siqib qo'yardi.
+              style={{ fontSize: 12, fontWeight: 600, width: 'auto', whiteSpace: 'nowrap' }}
+              onClick={() => setMuteAllOpen(true)}
             >
-              Hammani mute
+              Hammani o'chirish
             </button>
           )}
           <button className="icon-btn" onClick={onClose} aria-label="Yopish">
@@ -166,7 +179,7 @@ export const ParticipantsPanel = memo(function ParticipantsPanel({
                     <button
                       className="mini-btn"
                       title="Chiqarib yuborish"
-                      onClick={() => hostAction(() => removeParticipant(lessonId, p.identity), 'Chiqarildi')}
+                      onClick={() => setRemoving({ identity: p.identity, name: p.name })}
                     >
                       <UserX size={16} color="var(--danger)" />
                     </button>
@@ -177,6 +190,99 @@ export const ParticipantsPanel = memo(function ParticipantsPanel({
           })}
         </div>
       </div>
+
+      {isHost && lessonId && (
+        <MuteAllModal
+          open={muteAllOpen}
+          allowSelfUnmute={allowSelfUnmute}
+          onPolicyChanged={onPolicyChanged}
+          lessonId={lessonId}
+          onClose={() => setMuteAllOpen(false)}
+        />
+      )}
+      {isHost && lessonId && removing && (
+        <RemoveModal lessonId={lessonId} participant={removing} onClose={() => setRemoving(null)} />
+      )}
     </div>
   )
 })
+
+// «Hammani o'chirish» — Zoom andozasi: barcha mikrofonlar o'chadi, checkbox esa
+// o'quvchilar KEYIN o'zlari ocha oladimi-yo'qligini belgilaydi (allow_self_unmute).
+function MuteAllModal({ open, lessonId, allowSelfUnmute, onPolicyChanged, onClose }) {
+  // Checkbox «o'zi ocholmasin» — joriy siyosatning teskarisi bilan boshlanadi.
+  const [dontAllow, setDontAllow] = useState(!allowSelfUnmute)
+  const [busy, setBusy] = useState(false)
+
+  async function confirm() {
+    setBusy(true)
+    try {
+      await muteAll(lessonId, !dontAllow)
+      onPolicyChanged?.(!dontAllow)
+      toast.success('Hammaning mikrofoni o‘chirildi')
+      onClose()
+    } catch (e) {
+      toast.error(errorText(e, 'Mute qilib bo‘lmadi'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Modal open={open} onClose={() => !busy && onClose()} title="Hammani o'chirish" width={420}>
+      <p className="text-2" style={{ fontSize: 14, marginBottom: 16 }}>
+        Barcha o'quvchilarning mikrofoni o'chiriladi (sizniki qolmaydi).
+      </p>
+      <Toggle label="O'quvchilar o'zi ocholmasin" checked={dontAllow} onChange={setDontAllow} />
+      <div className="row gap-3" style={{ justifyContent: 'flex-end', marginTop: 20 }}>
+        <Button variant="ghost" onClick={onClose} disabled={busy}>
+          Bekor qilish
+        </Button>
+        <Button onClick={confirm} loading={busy}>
+          O'chirish
+        </Button>
+      </div>
+    </Modal>
+  )
+}
+
+// Chiqarish tanlovi (№4): bir darslik yoki mentor bo'yicha doimiy blok.
+// Doimiy blok QAYTARILADI (Qora ro'yxat sahifasidan) — shuning uchun alohida
+// tasdiq bosqichisiz ikkita aniq tugma yetarli.
+function RemoveModal({ lessonId, participant, onClose }) {
+  const [busy, setBusy] = useState(false)
+
+  async function doRemove(scope) {
+    setBusy(true)
+    try {
+      await removeParticipant(lessonId, participant.identity, scope)
+      toast.success(
+        scope === 'mentor'
+          ? `${participant.name} barcha darslaringizdan bloklandi`
+          : `${participant.name} darsdan chiqarildi`,
+      )
+      onClose()
+    } catch (e) {
+      toast.error(errorText(e, 'Chiqarib bo‘lmadi'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Modal open onClose={() => !busy && onClose()} title="Chiqarib yuborish" width={440}>
+      <p className="text-2" style={{ fontSize: 14, marginBottom: 20 }}>
+        <strong>{participant.name}</strong> qanday chiqarilsin? Doimiy blok «Qora ro'yxat»
+        sahifasidan bekor qilinadi.
+      </p>
+      <div className="col gap-3">
+        <Button variant="ghost" onClick={() => doRemove('lesson')} disabled={busy} className="full">
+          Shu darsdan
+        </Button>
+        <Button variant="danger" onClick={() => doRemove('mentor')} disabled={busy} className="full">
+          Doimiy (barcha darslarimdan)
+        </Button>
+      </div>
+    </Modal>
+  )
+}

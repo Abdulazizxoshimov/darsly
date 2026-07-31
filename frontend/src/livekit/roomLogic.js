@@ -21,11 +21,43 @@ import { ConnectionQuality } from 'livekit-client'
 export function participantSignature(items) {
   let s = ''
   for (const i of items) {
-    s += `${i.identity}|${i.name}|${i.speaking ? 1 : 0}${i.micMuted ? 1 : 0}${i.canPublish ? 1 : 0}|${
-      i.camTrack?.sid || '-'
-    }|${i.screenTrack?.sid || '-'};`
+    s += `${i.identity}|${i.name}|${i.speaking ? 1 : 0}${i.micMuted ? 1 : 0}${i.canPublish ? 1 : 0}${
+      i.isHost ? 1 : 0
+    }|${i.camTrack?.sid || '-'}|${i.screenTrack?.sid || '-'};`
   }
   return s
+}
+
+/** Bir sahifadagi maksimal plitka soni (Zoom andozasi: 3×3 galereya). */
+export const GALLERY_PAGE_SIZE = 9
+
+/**
+ * Galereya tartibi: ustoz → o'zim → gapirayotganlar → qolganlar.
+ *
+ * Nega shunday: sahifalashda birinchi sahifa "muhimlar sahifasi" (Zoom andozasi) —
+ * ustoz va hozir gapirayotganlar KO'RINIB turishi kerak, 3-sahifada yashirinib
+ * qolmasligi kerak. Sort BARQAROR (Array.sort ES2019+ da stable), ya'ni bir xil
+ * darajadagi ishtirokchilar kelish tartibini saqlaydi — plitkalar har hodisada
+ * sakramaydi.
+ */
+export function galleryOrder(items) {
+  const rank = (p) => (p.isHost ? 0 : p.isLocal ? 1 : p.speaking ? 2 : 3)
+  return [...items].sort((a, b) => rank(a) - rank(b))
+}
+
+/**
+ * Galereya sahifasi: so'ralgan sahifani [0..total-1] ga qisadi va shu sahifa
+ * plitkalarini qaytaradi. Ishtirokchi chiqib ketib sahifa "bo'sh qolsa" ham
+ * chegaradan chiqmaydi — oxirgi mavjud sahifa ko'rsatiladi.
+ *
+ * Faqat JORIY sahifa plitkalari render qilinadi — ko'rinmagan plitkaning video
+ * elementi DOM'da bo'lmaydi va LiveKit adaptiveStream u trekka obuna bo'lmaydi
+ * (trafik tejash sahifalashning asosiy foydalaridan biri).
+ */
+export function galleryPage(items, page, size = GALLERY_PAGE_SIZE) {
+  const total = Math.max(1, Math.ceil(items.length / size))
+  const p = Math.min(Math.max(0, page), total - 1)
+  return { items: items.slice(p * size, p * size + size), page: p, total }
 }
 
 /** Local media holatining imzosi (boshqaruv paneli shunga bog'lanadi). */

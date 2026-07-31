@@ -5,7 +5,20 @@ import * as waitingApi from '../api/waitingroom'
 import * as recordingsApi from '../api/recordings'
 import * as notificationsApi from '../api/notifications'
 import * as pollsApi from '../api/polls'
+import * as chatApi from '../api/chat'
 import * as userApi from '../api/user'
+import * as appApi from '../api/app'
+import * as blocklistApi from '../api/blocklist'
+
+/* -------- App config (ochiq) -------- */
+export function useAppConfig() {
+  return useQuery({
+    queryKey: ['app-config'],
+    queryFn: appApi.getAppConfig,
+    staleTime: 5 * 60_000,
+    retry: 1,
+  })
+}
 
 /* -------- Lessons -------- */
 export function useLessons(params) {
@@ -40,12 +53,15 @@ export function useDeleteLesson() {
 }
 
 /* -------- Join / waiting -------- */
-export function useJoinPreview(slug) {
+export function useJoinPreview(slug, opts = {}) {
   return useQuery({
     queryKey: ['join-preview', slug],
     queryFn: () => joinApi.previewJoinLink(slug),
     enabled: !!slug,
     retry: false,
+    // Dars-oldi kutish sahifasi shu so'rovni davriy takrorlab statusni kuzatadi
+    // (scheduled → live bo'lganda avto-kirish).
+    refetchInterval: opts.refetchInterval,
   })
 }
 export function useWaitingStatus(requestId, enabled = true) {
@@ -133,12 +149,16 @@ export function usePollResults(pollId, token, opts = {}) {
     queryFn: () => pollsApi.pollResults(pollId, token),
     enabled: !!pollId && !!token && (opts.enabled ?? true),
     refetchInterval: opts.refetchInterval,
+    // O'quvchida e'lon qilinmagan natija 403 beradi — bu KUTILGAN javob,
+    // xato emas. Qayta urinish faqat serverni bezovta qilardi.
+    retry: opts.retry ?? 1,
   })
 }
 export function useCreatePoll() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ lessonId, question, options }) => pollsApi.createPoll(lessonId, question, options),
+    mutationFn: ({ lessonId, question, options, resultsVisibility }) =>
+      pollsApi.createPoll(lessonId, question, options, resultsVisibility),
     onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: ['polls', v.lessonId] }),
   })
 }
@@ -149,6 +169,33 @@ export function useClosePoll() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['polls'] }),
   })
 }
+// Natijani e'lon qilish — poll ro'yxati (`results_published_at`) VA natija
+// keshini yangilaydi: tugma bosilgan zahoti diagramma ustozda ham yangilanadi.
+export function usePublishPoll() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ lessonId, pollId }) => pollsApi.publishPoll(lessonId, pollId),
+    onSuccess: (res, v) => {
+      qc.invalidateQueries({ queryKey: ['polls', v.lessonId] })
+      if (res) qc.setQueryData(['poll-results', v.pollId], res)
+    },
+  })
+}
+
+/* -------- Chat moderatsiyasi -------- */
+// Xabar tarixdan butunlay o'chadi — kesh ham darhol tozalanadi (jonli xonada
+// esa `chat_deleted` data-xabari bir vaqtning o'zida hammadan olib tashlaydi).
+export function useDeleteChatMessage() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ lessonId, messageId }) => chatApi.deleteChatMessage(lessonId, messageId),
+    onSuccess: (_d, v) => {
+      qc.setQueryData(['chat-history', v.lessonId], (old) =>
+        Array.isArray(old) ? old.filter((m) => m.id !== v.messageId) : old,
+      )
+    },
+  })
+}
 
 /* -------- Profile -------- */
 export function useUpdateProfile() {
@@ -156,4 +203,43 @@ export function useUpdateProfile() {
 }
 export function useChangePassword() {
   return useMutation({ mutationFn: ({ current, next }) => userApi.changePassword(current, next) })
+}
+
+/* -------- Blocklist (mentor) -------- */
+export function useBlocklist() {
+  return useQuery({
+    queryKey: ['blocklist'],
+    queryFn: blocklistApi.listBlocklist,
+  })
+}
+export function useUnblock() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: blocklistApi.unblock,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['blocklist'] }),
+  })
+}
+
+/* -------- Users (admin) -------- */
+export function useUsers(params, opts = {}) {
+  return useQuery({
+    queryKey: ['users', params || {}],
+    queryFn: () => userApi.listUsers(params),
+    // Admin bo'lmaganda so'rov umuman ketmaydi (403 shovqini bo'lmasin).
+    enabled: opts.enabled ?? true,
+  })
+}
+export function useCreateUser() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: userApi.createUser,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+  })
+}
+export function useDeleteUser() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: userApi.deleteUser,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+  })
 }

@@ -6,11 +6,18 @@ import { api } from './api'
 export function muteParticipant(lessonId, identity) {
   return api.post(`/lessons/${lessonId}/participants/${encodeURIComponent(identity)}/mute`)
 }
-export function removeParticipant(lessonId, identity) {
-  return api.post(`/lessons/${lessonId}/participants/${encodeURIComponent(identity)}/remove`)
+// scope: 'lesson' (faqat shu dars — default) | 'mentor' (mentorning HAMMA
+// darslaridan doimiy blok, qora ro'yxatga tushadi).
+export function removeParticipant(lessonId, identity, scope = 'lesson') {
+  return api.post(`/lessons/${lessonId}/participants/${encodeURIComponent(identity)}/remove`, { scope })
 }
-export function muteAll(lessonId) {
-  return api.post(`/lessons/${lessonId}/mute-all`)
+// allowSelfUnmute berilsa bayroq bir yo'la yangilanadi (Zoom checkbox'i);
+// undefined bo'lsa body yuborilmaydi — bayroq o'zgarmaydi.
+export function muteAll(lessonId, allowSelfUnmute) {
+  return api.post(
+    `/lessons/${lessonId}/mute-all`,
+    allowSelfUnmute === undefined ? undefined : { allow_self_unmute: allowSelfUnmute },
+  )
 }
 export function allowSpeak(lessonId, identity) {
   return api.post(`/lessons/${lessonId}/participants/${encodeURIComponent(identity)}/allow-speak`)

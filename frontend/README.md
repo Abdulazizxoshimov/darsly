@@ -1,4 +1,4 @@
-# Darsly — Frontend
+# Jonly — Frontend
 
 **React 18 + Vite + TanStack Query v5 + vanilla CSS + `.jsx`** (Tailwind/TS YO'Q).
 Backend (`github.com/zoom/darsly`) bilan ishlaydi. Dizayn: `../Darsly Platform Design System(1)/`.

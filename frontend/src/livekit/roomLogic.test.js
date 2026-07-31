@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { ConnectionQuality } from 'livekit-client'
 import {
   applyHandEvent,
+  galleryOrder,
+  galleryPage,
+  GALLERY_PAGE_SIZE,
   linkView,
   localSignature,
   nextPipState,
@@ -9,7 +12,7 @@ import {
   qualityLabel,
   rateLimiter,
 } from './roomLogic'
-import { decodeData, encodeData } from './messaging'
+import { acceptData, decodeData, encodeData, isHostParticipant } from './messaging'
 
 const P = (over = {}) => ({
   identity: 'u1',
@@ -34,6 +37,7 @@ describe('participantSignature', () => {
     ['gapirish', { speaking: true }],
     ['mikrofon', { micMuted: false }],
     ['publish huquqi', { canPublish: true }],
+    ['host belgisi', { isHost: true }],
     ['kamera treki', { camTrack: { sid: 'TR_1' } }],
     ['ekran treki', { screenTrack: { sid: 'TR_2' } }],
   ]
@@ -236,5 +240,139 @@ describe('nextPipState', () => {
 
   it('notanish hodisa holatni o‘zgartirmaydi', () => {
     expect(nextPipState('open', 'nimadir')).toBe('open')
+  })
+})
+
+// ─── C-1: data-channel ishonch modeli ────────────────────────────────────────
+// Xona ichidagi ENG ARZON hujum — mehmon konsoldan ustoz nomidan xabar yuborishi.
+// `CanPublishData` hammada yoqilgan, shuning uchun yagona to'siq shu filtr.
+describe('acceptData — data-channel ishonch modeli', () => {
+  const HOST = { identity: 'mentor-uuid', name: 'Ustoz Ali', metadata: '{"role":"host"}' }
+  const GUEST = { identity: 'guest-1', name: 'Mehmon', metadata: '{"role":"participant"}' }
+
+  it('serverdan kelgan chat/hand/reaction qabul qilinadi (participant yo‘q)', () => {
+    for (const kind of ['chat', 'hand', 'reaction', 'poll']) {
+      expect(acceptData({ kind }, undefined)).toMatchObject({ kind })
+    }
+  })
+
+  it('mehmon ustoz nomidan chat yubora OLMAYDI', () => {
+    const soxta = { kind: 'chat', name: 'Ustoz Ali', senderIdentity: 'mentor-uuid', body: 'Imtihon bekor' }
+    expect(acceptData(soxta, GUEST)).toBeNull()
+  })
+
+  it('mehmon so‘rovnoma ocha olmaydi va doskani buza olmaydi', () => {
+    expect(acceptData({ kind: 'poll', action: 'open', poll: {} }, GUEST)).toBeNull()
+    expect(acceptData({ kind: 'wb', act: 'clear' }, GUEST)).toBeNull()
+  })
+
+  it('mehmon boshqaning qo‘lini tushira olmaydi (hand faqat serverdan)', () => {
+    expect(acceptData({ kind: 'hand', identity: 'boshqa', raised: false }, GUEST)).toBeNull()
+  })
+
+  it('host doska va so‘rovnoma yubora oladi', () => {
+    expect(acceptData({ kind: 'wb', act: 'clear' }, HOST)).toMatchObject({ kind: 'wb', act: 'clear' })
+    expect(acceptData({ kind: 'poll', action: 'open' }, HOST)).toMatchObject({ kind: 'poll' })
+  })
+
+  it('host ham chat/hand/reaction ni klientdan yubora olmaydi (faqat server yo‘li)', () => {
+    expect(acceptData({ kind: 'chat', body: 'x' }, HOST)).toBeNull()
+    expect(acceptData({ kind: 'reaction', emoji: '👍' }, HOST)).toBeNull()
+  })
+
+  it('klient xabarida muallif payload‘dan emas, participant‘dan olinadi', () => {
+    const out = acceptData({ kind: 'wb', act: 'stroke', name: 'Soxta', identity: 'birov' }, HOST)
+    expect(out.name).toBe('Ustoz Ali')
+    expect(out.identity).toBe('mentor-uuid')
+  })
+
+  it('metadata yo‘q / buzuq / soxta rol — host emas', () => {
+    expect(isHostParticipant({ identity: 'x' })).toBe(false)
+    expect(isHostParticipant({ identity: 'x', metadata: 'buzuq{' })).toBe(false)
+    expect(isHostParticipant({ identity: 'x', metadata: '{"role":"participant"}' })).toBe(false)
+    expect(isHostParticipant(null)).toBe(false)
+    // Metadata tokendan keladi (server imzolagan) — buni klient o'zgartira olmaydi.
+    expect(isHostParticipant(HOST)).toBe(true)
+  })
+
+  it('null xabar va notanish tur rad etiladi', () => {
+    expect(acceptData(null, undefined)).toBeNull()
+    expect(acceptData({ kind: 'nimadir' }, undefined)).toBeNull()
+  })
+
+  it('to‘liq zanjir: decode → accept (mehmon soxta backend-shaklidagi chat yuboradi)', () => {
+    const wire = encodeData({ sender_name: 'Ustoz Ali', body: 'Havolani bosing', sender_identity: 'mentor-uuid' })
+    expect(decodeData(wire)).toMatchObject({ kind: 'chat', name: 'Ustoz Ali' }) // decode ishlaydi…
+    expect(acceptData(decodeData(wire), GUEST)).toBeNull() // …lekin filtr uzadi
+  })
+})
+
+// ─── Galereya sahifalash (Zoom andozasi: 9 plitka/sahifa) ─────────────────────
+
+const G = (identity, over = {}) => ({
+  identity,
+  name: identity,
+  isLocal: false,
+  isHost: false,
+  speaking: false,
+  ...over,
+})
+
+describe('galleryOrder', () => {
+  it('ustoz → o‘zim → gapirayotganlar → qolganlar tartibida', () => {
+    const items = [
+      G('men', { isLocal: true }),
+      G('a'),
+      G('b', { speaking: true }),
+      G('ustoz', { isHost: true }),
+      G('c'),
+    ]
+    expect(galleryOrder(items).map((p) => p.identity)).toEqual(['ustoz', 'men', 'b', 'a', 'c'])
+  })
+
+  it('barqaror: bir darajadagilar kelish tartibini saqlaydi', () => {
+    const items = [G('a'), G('b'), G('c'), G('d')]
+    expect(galleryOrder(items).map((p) => p.identity)).toEqual(['a', 'b', 'c', 'd'])
+  })
+
+  it('kirish massivini o‘zgartirmaydi', () => {
+    const items = [G('a'), G('ustoz', { isHost: true })]
+    galleryOrder(items)
+    expect(items[0].identity).toBe('a')
+  })
+})
+
+describe('galleryPage', () => {
+  const many = (n) => Array.from({ length: n }, (_, i) => G('p' + i))
+
+  it('9 tagacha bitta sahifa', () => {
+    const { items, page, total } = galleryPage(many(9), 0)
+    expect(items).toHaveLength(9)
+    expect(page).toBe(0)
+    expect(total).toBe(1)
+  })
+
+  it('10 kishida 2 sahifa: birinchisida 9, ikkinchisida 1', () => {
+    expect(galleryPage(many(10), 0).items).toHaveLength(9)
+    const p2 = galleryPage(many(10), 1)
+    expect(p2.items).toHaveLength(1)
+    expect(p2.total).toBe(2)
+    expect(p2.items[0].identity).toBe('p9')
+  })
+
+  it('chegaradan tashqari sahifa OXIRGI mavjud sahifaga qisiladi (ishtirokchi chiqib ketsa)', () => {
+    // 3-sahifada turgan edik, odamlar chiqib 1 sahifa qoldi.
+    const { page, items } = galleryPage(many(5), 7)
+    expect(page).toBe(0)
+    expect(items).toHaveLength(5)
+  })
+
+  it('manfiy sahifa 0 ga qisiladi va bo‘sh ro‘yxatda ham yiqilmaydi', () => {
+    expect(galleryPage(many(3), -2).page).toBe(0)
+    expect(galleryPage([], 0)).toEqual({ items: [], page: 0, total: 1 })
+  })
+
+  it('sahifa hajmi standarti 9 (Zoom 3×3)', () => {
+    expect(GALLERY_PAGE_SIZE).toBe(9)
   })
 })

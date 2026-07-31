@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { ConnectionState, DisconnectReason, Room, RoomEvent, Track } from 'livekit-client'
 import { PUBLISH_DEFAULTS } from './mediaTuning'
 import { localSignature, participantSignature, qualityLabel } from './roomLogic'
+import { isHostParticipant } from './messaging'
 
 // livekit-client'ga to'g'ridan-to'g'ri ulanadigan hook.
 //
@@ -34,6 +35,9 @@ function snapshotOne(p, isLocal) {
     camTrack: cam && cam.videoTrack && !cam.isMuted ? cam.videoTrack : null,
     screenTrack: screen && screen.videoTrack && !screen.isMuted ? screen.videoTrack : null,
     canPublish: p.permissions?.canPublish ?? false,
+    // Ustozmi — token metadata'sidan (backend imzolagan, soxtalab bo'lmaydi).
+    // Galereya tartibi (ustoz birinchi sahifada) shu bayroqqa tayanadi.
+    isHost: isHostParticipant(p),
   }
 }
 
@@ -84,6 +88,19 @@ export function useRoom({ wsUrl, token, publish, retryKey = 0 }) {
   // Tejamkor rejim: kirish (remote) kamera oqimlarini butunlay uzadi.
   // Ekran ulashish va ovoz QOLADI — dars mazmuni aynan shularda.
   const [dataSaver, setDataSaver] = useState(false)
+  // M9 — media nosozliklari ENDI KO'RINADI.
+  //
+  // Avval uchala holat ham `.catch(() => {})` bilan jimgina yutilardi va
+  // foydalanuvchi uchun bu "dars buzildi" degani edi: ovoz eshitilmaydi yoki
+  // kamera ko'rinmaydi, ekranda esa hech qanday izoh yo'q va nima qilish
+  // kerakligi ham noma'lum. Bularning har biri TUZATILADIGAN holat, shuning
+  // uchun ular UI'ga chiqariladi.
+  //
+  //   audioBlocked — brauzer avtomatik ijroni to'sdi (foydalanuvchi hali
+  //                  sahifa bilan muloqot qilmagan). Yechim: bitta bosish.
+  //   mediaError   — kamera/mikrofonga ruxsat berilmadi yoki qurilma band.
+  const [audioBlocked, setAudioBlocked] = useState(false)
+  const [mediaError, setMediaError] = useState(null) // null | 'camera' | 'mic' | 'both'
   const dataSaverRef = useRef(false)
   const roomRef = useRef(null)
 
@@ -201,6 +218,12 @@ export function useRoom({ wsUrl, token, publish, retryKey = 0 }) {
       .on(RoomEvent.ParticipantMetadataChanged, sync)
       .on(RoomEvent.ParticipantPermissionsChanged, sync)
       .on(RoomEvent.ConnectionQualityChanged, onQuality)
+      // Ovoz ijrosi holati keyin ham o'zgarishi mumkin (masalan ustoz
+      // gapirgach yangi audio trek kelganda brauzer yana to'sadi), shuning
+      // uchun boshlang'ich `startAudio()` dan tashqari bu hodisa ham kerak.
+      .on(RoomEvent.AudioPlaybackStatusChanged, () => {
+        setAudioBlocked(!r.canPlaybackAudio)
+      })
 
     let cancelled = false
     ;(async () => {
@@ -211,10 +234,33 @@ export function useRoom({ wsUrl, token, publish, retryKey = 0 }) {
         setConnState('connected')
         sync()
         if (publish) {
-          await r.localParticipant.setCameraEnabled(true).catch(() => {})
-          await r.localParticipant.setMicrophoneEnabled(true).catch(() => {})
+          // Har biri ALOHIDA kuzatiladi: kamera rad etilib mikrofon
+          // ishlashi odatiy holat va bunda "kamera yoqilmadi" deb aniq
+          // aytish kerak, umumiy "xatolik" emas.
+          let camFailed = false
+          let micFailed = false
+          try {
+            await r.localParticipant.setCameraEnabled(true)
+          } catch {
+            camFailed = true
+          }
+          try {
+            await r.localParticipant.setMicrophoneEnabled(true)
+          } catch {
+            micFailed = true
+          }
+          if (cancelled) return
+          if (camFailed && micFailed) setMediaError('both')
+          else if (camFailed) setMediaError('camera')
+          else if (micFailed) setMediaError('mic')
         }
-        await r.startAudio().catch(() => {})
+        try {
+          await r.startAudio()
+        } catch {
+          // Avtomatik ijro to'sildi — bu XATO EMAS, brauzer siyosati.
+          // Foydalanuvchi bitta bosish bilan tiklaydi (`resumeAudio`).
+          if (!cancelled) setAudioBlocked(true)
+        }
         sync()
       } catch {
         if (!cancelled) setConnState('disconnected')
@@ -229,7 +275,6 @@ export function useRoom({ wsUrl, token, publish, retryKey = 0 }) {
       roomRef.current = null
     }
     // retryKey — "Qayta ulanish" bosilganda bu effekt qaytadan ishga tushadi.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wsUrl, token, publish, sync, retryKey])
 
   // Tejamkor rejim o'zgarganda mavjud obunalarga qo'llaymiz.
@@ -238,5 +283,35 @@ export function useRoom({ wsUrl, token, publish, retryKey = 0 }) {
     applyDataSaver(dataSaver)
   }, [dataSaver, applyDataSaver])
 
-  return { room, connState, ended, quality, participants, local, dataSaver, setDataSaver }
+  // Foydalanuvchi bosgach ovozni tiklaydi (brauzer avtomatik ijro siyosati
+  // aynan "foydalanuvchi harakati" ni talab qiladi).
+  const resumeAudio = useCallback(async () => {
+    const r = roomRef.current
+    if (!r) return
+    try {
+      await r.startAudio()
+      setAudioBlocked(false)
+    } catch {
+      // Kamdan-kam: qayta urinish ham to'silsa banner joyida qoladi.
+    }
+  }, [])
+
+  // Media xatosi bannerini foydalanuvchi yopa olsin (ruxsat bermaslik ham
+  // ongli tanlov bo'lishi mumkin — masalan faqat tinglash uchun kirgan).
+  const dismissMediaError = useCallback(() => setMediaError(null), [])
+
+  return {
+    room,
+    connState,
+    ended,
+    quality,
+    participants,
+    local,
+    dataSaver,
+    setDataSaver,
+    audioBlocked,
+    resumeAudio,
+    mediaError,
+    dismissMediaError,
+  }
 }

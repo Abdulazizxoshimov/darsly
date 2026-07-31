@@ -41,6 +41,43 @@ export function formatDuration(sec) {
   return Math.round((sec || 0) / 60) + ' daq'
 }
 
+// Chat fayllari uchun — `formatSize` dan farqi: kichik fayl «0.0 MB» emas,
+// «84 KB» bo'lib chiqadi (rasm/hujjatlar odatda megabaytdan kichik).
+export function formatBytes(bytes) {
+  const b = Number(bytes) || 0
+  if (b < 1024) return `${b} B`
+  if (b < 1024 * 1024) return `${Math.round(b / 1024)} KB`
+  return `${(b / 1024 / 1024).toFixed(1)} MB`
+}
+
+// ── Yozuv saqlanish muddati (retention, 30 kun) ─────────────────────────────
+// Backend `expires_at` beradi (faqat `ready` yozuvda). Ustoz «yozuv qachongacha
+// turadi» degan savolga bir qarashda javob topishi kerak — aks holda muhim
+// darsni yuklab olishni unutib, keyin uni topmay qoladi.
+
+/** `expires_at` gacha qolgan kun (yuqoriga yaxlitlangan) yoki `null`. */
+export function expiresInDays(iso, now = Date.now()) {
+  if (!iso) return null
+  const ts = new Date(iso).getTime()
+  if (Number.isNaN(ts)) return null
+  return Math.ceil((ts - now) / 86_400_000)
+}
+
+export function formatExpiry(iso, now = Date.now()) {
+  const d = expiresInDays(iso, now)
+  if (d === null) return null
+  // Muddat allaqachon o'tgan (fon ishchisi hali yetib bormagan) — "Bugun
+  // o'chadi" deyish noto'g'ri va'da bo'lardi: fayl istalgan daqiqada ketadi.
+  if (d < 0) return 'Muddati tugagan'
+  if (d === 0) return 'Bugun o‘chadi'
+  if (d === 1) return 'Ertaga o‘chadi'
+  return `${d} kundan keyin o‘chadi`
+}
+
+// Muddat yaqinlashganda ogohlantirish rangi (server 3 kun qolganda
+// bildirishnoma yuboradi — UI shu chegara bilan izchil bo'lsin).
+export const EXPIRY_WARN_DAYS = 3
+
 export const LESSON_STATUS_UZ = {
   scheduled: 'Rejalashtirilgan',
   live: 'Jonli',
@@ -53,4 +90,21 @@ export const RECORDING_STATUS_UZ = {
   processing: 'Tayyorlanmoqda…',
   ready: 'Tayyor',
   failed: 'Xatolik',
+  // Saqlash muddati (30 kun) tugagan — fayl o'chirilgan, qator tarix uchun qoladi.
+  expired: 'Muddati tugagan',
+}
+
+// Rol nomlari. Backend xom qiymat qaytaradi (`mentor`/`student`/`admin`) va u
+// UI'da to'g'ridan-to'g'ri ko'rsatilardi — foydalanuvchi profilida inglizcha
+// "mentor" deb turardi. Noma'lum rol uchun xom qiymat qoladi (yangi rol
+// qo'shilsa bo'sh joy ko'rinmasin).
+export const ROLE_UZ = {
+  mentor: 'Ustoz',
+  student: "O'quvchi",
+  admin: 'Administrator',
+  guest: 'Mehmon',
+}
+
+export function roleLabel(role) {
+  return ROLE_UZ[role] || role || ''
 }
