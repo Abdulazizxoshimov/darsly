@@ -1,4 +1,54 @@
-# Darsly — Yuklama (Load) Test Hisoboti
+# Jonly — Yuklama (Load) Test Hisoboti
+
+## ⭐ 2026-07-31 — LiveKit media sig'imi (300 ishtirokchi maqsadi)
+
+> Maqsad (docs/PRODUCT.md): birinchi relizda **100–300 ishtirokchi**.
+> Vosita: `backend/tests/load/livekit_load` — HAQIQIY LiveKit ulanishlari (HTTP imitatsiya emas).
+> Muhit: lokal 4 yadro; backend + LiveKit (docker, host-net) + Postgres/Redis/MinIO.
+> Ishtirokchilar tomoshabin rejimida (Zoom modelida gapirganda vaqtincha publish qiladi).
+
+| Ishtirokchi | Ulanish rejimi | Natija | Vaqt | LiveKit CPU | LiveKit RAM |
+|---|---|---|---|---|---|
+| 50  | bir vaqtda | 50/50 | 4.3 s | ~1 % | ~0.4 GB |
+| 150 | 25 tadan / 2 s | **150/150** | 10.5 s | ~1 % | ~0.7 GB |
+| 300 | 25 tadan / 2 s | 275/300 | 38 s | ~1 % | 1.16 GB |
+| 300 | 15 tadan / 3 s | **300/300** | 57 s | ~0.3 % | 1.07 GB |
+
+Backend cho'qqida: CPU ~13 %, RAM ~95 MB. **300 maqsadi bajarildi**; cheklovchi omil
+protsessor emas — ulanish o'rnatish (signaling handshake) tezligi.
+
+### Topilgan va tuzatilgan KRITIK muammo
+**LiveKit webhook'i 30/daqiqa bilan cheklangan edi** (`api/router.go`). 150 kishilik
+sinovda **10 ta webhook 429 bilan rad etildi**. Oqibatlari jimgina va og'ir:
+`track_published` yo'qolsa dars **umuman yozib olinmaydi**; `participant_joined`
+yo'qolsa **ban qo'llanmaydi**; `participant_left` yo'qolsa **avto-yakun ishlamaydi**.
+Chegara 200/s (burst 400) ga ko'tarildi — manba bitta va imzo bilan tekshiriladi,
+ya'ni chegara faqat DoS to'sig'i. Keyingi barcha yurishlarda 429 = 0.
+
+### O'lchov vositasidagi xato (natijani buzayotgan edi)
+Birinchi 150 kishilik yurishda faqat 35 tasi ulandi, log «handshake error: EOF»
+bilan to'ldi — lekin SFU CPU'si 1 % da edi. Sabab serverda emas: vosita 150 ta
+WebRTC peer'ini bitta jarayonda bir zumda ochib, o'z chegarasini o'lchab qo'yardi.
+To'lqinli rejim qo'shildi (`-batch`, `-batch-delay`) — bu haqiqatga ham mos:
+300 o'quvchi bitta millisekundda emas, bir necha soniyada kiradi.
+
+### Tavsiyalar
+1. 3-haftada real serverda (TURN + HTTPS) qayta o'lchash — signaling navbati o'zgaradi.
+2. Publish qiluvchi ishtirokchilar (5–10 kishi gapirganda) alohida o'lchanishi kerak
+   (`tests/load/publish_probe`).
+3. 4 yadroli VPS 300 tomoshabinni ko'taradi; hal qiluvchi omil — **chiquvchi kanal**
+   (300 × ~0.5 Mbit/s ≈ 150 Mbit/s), protsessor emas.
+
+### Takrorlash
+```bash
+cd backend && go run ./tests/load/livekit_load \
+  -base http://localhost:8087 -email <mentor> -password <parol> \
+  -n 300 -batch 15 -batch-delay 3s
+```
+
+---
+
+# Darsly — Yuklama (Load) Test Hisoboti (2026-07-24, HTTP/k6)
 
 Vosita: **k6** (Docker: `grafana/k6`). Skriptlar: `backend/tests/load/scenario_{a,b,c}_*.js`.
 Sana: 2026-07-24.

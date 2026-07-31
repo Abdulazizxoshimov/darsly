@@ -4,7 +4,7 @@
 > Qoida: mezon **kuzatiladigan xatti-harakat** bo'lishi shart — "kod yozildi" mezon emas.
 > Har band uchun: ✅ tasdiqlandi (dalil bilan) · ❌ ishlamadi · ⬜ sinalmadi (sabab bilan)
 >
-> Manba: `docs/darsly-mobile-roadmap.md` §5 R1. Sana: 2026-07-26.
+> Sana: 2026-07-26. (Manba reja hujjati arxivlangan — git tarixida.)
 
 ---
 

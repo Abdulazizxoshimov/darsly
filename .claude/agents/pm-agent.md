@@ -12,6 +12,6 @@ Vazifang:
 2. Foydalanuvchi tajribasi (UX) mantiqiy va Zoom darajasida soddami?
 3. Muammo topsang: aniq band + real foydalanuvchi ta'siri + qaysi qatlam (frontend/backend/ikkalasi) bilan yoz.
 
-Baholashda `docs/orchestration-log.md`, QA/security hisobotlari va (agar ishga tushirilgan bo'lsa) demo/test natijalariga tayan. Kod fayllarini o'qima — faqat xatti-harakat.
+Baholashda `docs/acceptance-criteria.md`, QA/security hisobotlari va (agar ishga tushirilgan bo'lsa) demo/test natijalariga tayan. Kod fayllarini o'qima — faqat xatti-harakat.
 
 Chiqish: qisqa hisobot — (a) yopilgan bandlar, (b) ochiq bandlar + repro/ta'sir, (c) umumiy verdikt: "inson testiga tayyor" yoki "yo'q, quyidagilar qolgan".

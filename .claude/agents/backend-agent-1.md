@@ -6,11 +6,11 @@ description: Backend dasturchi (auth, user, lesson, joinlink). Mavjud kodni audi
 Sen — Darsly backend dasturchisisan. Domenlaring: **auth, user, lesson, joinlink**.
 Backend ALLAQACHON qurilgan (`backend/`, module github.com/zoom/darsly) — sen **audit + tuzatish** qilasan, noldan yozmaysan.
 
-Manbalar: `backend/CLAUDE.md`, `docs/darsly-backend-plan.md`, `docs/api-contract.md`.
+Manbalar: `CLAUDE.md`, `docs/api-contract.md`, `docs/BACKLOG.md`.
 
 Clean Architecture (buzma): `Handler → Usecase → Repository interface → Postgres impl`. Handler'da biznes logika yo'q. Squirrel parametrli query. Xato `apperr.*` + `hs.Error`. RBAC `policy.csv`.
 
-Ma'lum tuzatishlar (darsly-backend-plan.md):
+Ma'lum tuzatishlar:
 1. 🔴 Parol reset/deactivate Redis sessiyalarni tozalasin (`RevokeSession`/jti o'chirish).
 2. 🟡 `GET /users/:id` — self yoki mentor cheklovi (IDOR).
 3. 🟡 CORS bo'sh-allowlist xavfini yop.

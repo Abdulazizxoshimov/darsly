@@ -1,7 +1,8 @@
 # Darsly Mobile — QURILMA SINOVI: holat va qolgan ishlar
 
 > Sana: **2026-07-26 (23:35)** · Qurilma: **HONOR ABR-LX1, Android 15 (API 35)**, adb `AY3SUT5109002441`
-> Bu fayl — qurilma ulanganda davom ettirish uchun. Kod holati: `docs/MOBILE-STATUS.md`
+> Bu fayl — qurilma sinovining EMPIRIK yozuvi: o'lchov usullari, platforma
+> cheklovlari va takrorlanmasligi kerak bo'lgan xatolar. Ochiq ishlar: `docs/BACKLOG.md`
 
 ---
 
@@ -429,18 +430,30 @@ Abort message: 'libc++ Hardening assertion this->has_value() failed:
 
 Keyingi ikki takrorda qaytarilmadi. Belgilab qo'yildi: agar takrorlansa —
 `livekit-android` versiyasini yangilash yoki `disconnect()` o'rniga SDK'ning o'z
-qayta ulanishini kutish varianti sinaladi. Hozircha **bilib turilgan xavf**, chunki
-u tarmoq almashuvining aynan o'zida sodir bo'ladi.
+qayta ulanishini kutish varianti sinaladi.
+
+✅ **TELEMETRIYA QO'SHILDI (audit · 2026-07-28).** Bu yiqilish endi ko'rinmas
+emas: `sentry-android` NDK handler'i bilan ulandi (`DarslyApp.initCrashReporting`).
+Nativ SIGABRT'ni faqat NDK handler tutadi — Java darajasidagi handler u yerda
+hech nima ko'rmaydi. DSN reliz jarayonida beriladi
+(`-PdarslySentryDsn=...`); berilmasa SDK butunlay o'chiq qoladi.
+
+Shundan keyin "SDK'ni yangilash" qarori taxmin emas, **haqiqiy takrorlanish
+chastotasi** asosida qabul qilinadi.
 
 ---
 
 ## 5c. Kesh fayli haqida eslatma (maxfiylik)
 
-`darsly_lessons_cache.xml` **shifrlanmagan** (ataylab): dars sarlavhalari va **`join_slug`**
-ochiq matnda. Ilova xotirasi boshqa ilovalarga yopiq va release build'da `run-as` ishlamaydi,
-lekin root qilingan qurilmada slug o'qilishi mumkin. Slug — darsga kirish kaliti.
-Agar zarur deb topilsa, keshni ham `EncryptedSharedPreferences` ga o'tkazish arzon
-(`PrefsLessonsCache` allaqachon `SharedPreferences` interfeysini oladi).
+✅ **TUZATILDI (audit · 2026-07-28).** Kesh endi `EncryptedSharedPreferences`
+bilan shifrlanadi (`LessonsCache.create` → `SecureTokenStore.openEncryptedPrefs`).
+
+Avvalgi holat: `darsly_lessons_cache.xml` shifrlanmagan edi — dars sarlavhalari
+va **`join_slug`** ochiq matnda yotardi. Slug esa darsga kirish kaliti, ya'ni
+root qilingan qurilmada yoki zaxira nusxada u sizib chiqishi mumkin edi.
+
+Shifrlash ochilmasa (OEM Keystore nosozligi) kesh UMUMAN yozilmaydi
+(`NoopLessonsCache`) — shifrlanmagan holatga qaytilmaydi.
 
 ---
 
