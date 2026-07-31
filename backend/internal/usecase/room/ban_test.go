@@ -2,6 +2,7 @@ package room_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -357,4 +358,36 @@ func TestMuteAll_UpdatesAllowSelfUnmute(t *testing.T) {
 	require.NoError(t, uc.MuteAll(ctx, "mentor1", testLessonID, nil))
 	l, _ = lrepo.GetByID(ctx, testLessonID)
 	require.True(t, l.AllowSelfUnmute, "nil bayroqni o'zgartirmasligi kerak")
+}
+
+// ⭐ Ovoz siyosatini SERVER tarqatishi kerak.
+//
+// Avval `kind:"policy"` xabarini faqat WEB ustoz klienti yuborardi. Mobil ustoz
+// hech narsa yubormasdi — telefondan o'tilgan darsda o'quvchining mikrofon
+// tugmasi "yoqish mumkin" deb qolardi va bosilganda server uni jimgina qayta
+// mute qilardi. Endi manba bitta: siyosat qayerda saqlansa, e'lon ham
+// o'sha yerdan chiqadi.
+func TestMuteAll_BroadcastsPolicy(t *testing.T) {
+	uc, _, lk, _, _ := banSetupWithBlocklist(t)
+	ctx := context.Background()
+	lk.Participants = []entity.RoomParticipant{{Identity: "mentor1"}, {Identity: "u1"}}
+
+	f := false
+	require.NoError(t, uc.MuteAll(ctx, "mentor1", testLessonID, &f))
+
+	require.NotEmpty(t, lk.Sent, "siyosat xonaga tarqatilishi kerak")
+	var m map[string]any
+	require.NoError(t, json.Unmarshal(lk.Sent[len(lk.Sent)-1], &m))
+	// Xabar shakli klient bilan SHARTNOMA (`frontend/src/livekit/messaging.js`).
+	require.Equal(t, "policy", m["kind"])
+	require.Equal(t, false, m["allow_self_unmute"])
+	require.Contains(t, m, "mute_on_entry")
+
+	// Bayroq yumshatilganda ham e'lon qilinadi — aks holda o'quvchining tugmasi
+	// "taqiqlangan" holida qotib qolardi.
+	tr := true
+	require.NoError(t, uc.MuteAll(ctx, "mentor1", testLessonID, &tr))
+	require.NoError(t, json.Unmarshal(lk.Sent[len(lk.Sent)-1], &m))
+	require.Equal(t, "policy", m["kind"])
+	require.Equal(t, true, m["allow_self_unmute"])
 }

@@ -47,9 +47,11 @@ export function LiveRoom({ mode }) {
 
   const [token, setToken] = useState(isHost ? null : roomSession.get().room?.token || null)
   const [title, setTitle] = useState(isHost ? 'Jonli dars' : roomSession.get().room?.lesson.title || 'Jonli dars')
-  // Host uchun to'liq dars obyekti (ovoz siyosati bayroqlari kerak). Guest'da
-  // faqat LessonPublic bor — siyosatni host data-channel orqali aytadi.
-  const [lesson, setLesson] = useState(null)
+  // Dars obyekti — ovoz siyosati bayroqlari (`mute_on_entry`,
+  // `allow_self_unmute`) shu yerdan boshlanadi. Host'da to'liq `Lesson` (API),
+  // guest'da esa joinlink javobidagi `LessonPublic` — u ham AYNI ikki maydonni
+  // beradi. Keyin siyosatni server yangilab turadi (roomstate + `policy`).
+  const [lesson, setLesson] = useState(() => (isHost ? null : roomSession.get().room?.lesson || null))
   const [loading, setLoading] = useState(isHost)
   const [error, setError] = useState(null)
 
@@ -231,9 +233,11 @@ function RoomStage({ isHost, lessonId, slug, title, lesson, roomToken, onLeave }
   // yo'qoladi va o'quvchi mikrofon tugmasini o'zi qidirib qolardi).
   const [speakGranted, setSpeakGranted] = useState(false)
   // Dars ovoz siyosati (Zoom modeli): allow_self_unmute=false bo'lsa o'quvchi
-  // mikrofonni O'ZI ocholmaydi. Haqiqat manbai serverda (webhook enforce);
-  // host'da qiymat darsdan keladi, guest'ga host `policy` data-xabari bilan aytadi.
-  const [allowSelfUnmute, setAllowSelfUnmute] = useState(isHost ? lesson?.allow_self_unmute !== false : true)
+  // mikrofonni O'ZI ocholmaydi. Haqiqat manbai — SERVER (webhook enforce qiladi),
+  // klient uni uch joydan oladi: kirish qiymati darsdan (host: `Lesson`,
+  // guest: joinlink `LessonPublic`), keyin `GET /rooms/:id/state` bilan
+  // tiklanadi va `policy` data-xabari bilan jonli yangilanadi.
+  const [allowSelfUnmute, setAllowSelfUnmute] = useState(lesson?.allow_self_unmute !== false)
   // Suzuvchi oyna holati — mantiq `roomLogic.nextPipState` da (testlar ostida).
   const [pipState, setPipState] = useState('idle')
   const chatIds = useRef(new Set())
@@ -506,9 +510,11 @@ function RoomStage({ isHost, lessonId, slug, title, lesson, roomToken, onLeave }
         }
       } else if (msg.kind === 'wb') {
         applyWb(msg)
-      } else if (msg.kind === 'policy' && !isHost) {
-        // Ustoz ovoz siyosatini e'lon qildi (mute-all checkbox'i). Bu faqat
-        // UI ko'rsatkichi — server baribir har publish'da enforce qiladi.
+      } else if (msg.kind === 'policy') {
+        // SERVER ovoz siyosatini e'lon qildi (`mute-all` dan keyin). Host ham
+        // qabul qiladi: dars sozlamasi boshqa qurilmadan (mobil ustoz ilovasi)
+        // o'zgarsa web'dagi checkbox holati bilan farq qilib qolmasin.
+        // Bu faqat UI ko'rsatkichi — server baribir har publish'da enforce qiladi.
         setAllowSelfUnmute(msg.allow_self_unmute !== false)
       }
     }
@@ -519,8 +525,10 @@ function RoomStage({ isHost, lessonId, slug, title, lesson, roomToken, onLeave }
   }, [room, addChat, removeChat, pushReaction, applyHand, isHost, applyWb, toEntry, localId])
 
   // O'quvchi: siyosat o'zgarganda xabar beramiz — tugma "jimgina" o'chib
-  // qolsa foydalanuvchi buzilgan deb o'ylardi.
-  const prevAllowRef = useRef(true)
+  // qolsa foydalanuvchi buzilgan deb o'ylardi. Boshlang'ich qiymat KIRISH
+  // holatidan olinadi: aks holda taqiq bilan kirgan o'quvchi xonaga
+  // tushishi bilanoq "ustoz hozir o'chirdi" degan yolg'on xabarni ko'rardi.
+  const prevAllowRef = useRef(allowSelfUnmute)
   useEffect(() => {
     if (isHost) return
     if (prevAllowRef.current && !allowSelfUnmute) {
@@ -595,19 +603,10 @@ function RoomStage({ isHost, lessonId, slug, title, lesson, roomToken, onLeave }
     [room],
   )
 
-  // --- Ovoz siyosatini tarqatish (faqat host) ---
-  // Backend `allow_self_unmute`ni push qilmaydi; o'quvchi UI'si esa mikrofon
-  // tugmasi holatini bilishi kerak. Host haqiqat manbaiga eng yaqin klient —
-  // u e'lon qiladi: (1) ulanashda/o'zgarganda hammaga, (2) kech kirganga alohida.
-  useEffect(() => {
-    if (!room || !isHost) return
-    publish({ kind: 'policy', allow_self_unmute: allowSelfUnmute })
-    const onJoin = (p) => publish({ kind: 'policy', allow_self_unmute: allowSelfUnmute }, [p.identity])
-    room.on(RoomEvent.ParticipantConnected, onJoin)
-    return () => {
-      room.off(RoomEvent.ParticipantConnected, onJoin)
-    }
-  }, [room, isHost, allowSelfUnmute, publish])
+  // Ovoz siyosatini klient TARQATMAYDI: buni endi server qiladi (`mute-all`
+  // dan keyin xonaga `policy` yuboradi), kech ulangan esa `getRoomState` dan
+  // oladi. Avval xabarni faqat WEB ustoz klienti yuborardi — mobil ustoz
+  // umuman yubormasdi va o'quvchi tugmasi yolg'on ko'rsatardi.
 
   // --- Oq doska: host hodisalari ---
   const hostDraw = useCallback(
@@ -717,6 +716,11 @@ function RoomStage({ isHost, lessonId, slug, title, lesson, roomToken, onLeave }
             next.set(h.identity, { name: h.name, at: Date.parse(h.raised_at) || 0 })
           }
           setRaisedHands(next)
+          // Ovoz siyosati ham shu yerdan: `policy` data-xabarini o'tkazib
+          // yuborgan (kech ulangan yoki qayta ulangan) klient uni FAQAT shundan
+          // tiklaydi. Dars o'qilmasa server ruxsat beruvchi qiymat qaytaradi,
+          // ya'ni mavjud bo'lmagan taqiqni ko'rsatib qo'ymaymiz.
+          setAllowSelfUnmute(st.allow_self_unmute !== false)
           // O'quvchi yozuv holatini FAQAT shu yerdan biladi: `listRecordings`
           // mentor huquqini talab qiladi. Ustozda esa o'z manbasi bor
           // (quyidagi effekt), shuning uchun uni bu yerda ustiga yozmaymiz.

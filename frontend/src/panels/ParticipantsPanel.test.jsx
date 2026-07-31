@@ -12,11 +12,28 @@ vi.mock('../api/room', () => ({
   revokeSpeak: vi.fn().mockResolvedValue(null),
 }))
 
+// Kutish xonasi API'si — panel uni React Query orqali chaqiradi.
+vi.mock('../api/waitingroom', () => ({
+  listWaiting: vi.fn().mockResolvedValue([]),
+  admitWaiting: vi.fn().mockResolvedValue(null),
+  rejectWaiting: vi.fn().mockResolvedValue(null),
+  admitAllWaiting: vi.fn().mockResolvedValue({ total: 0, admitted: 0, failed: 0 }),
+  getWaitingStatus: vi.fn(),
+}))
+
+vi.mock('../lib/toast', () => ({
+  toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
+}))
+
 import { muteAll, removeParticipant } from '../api/room'
+import { admitAllWaiting, listWaiting } from '../api/waitingroom'
+import { toast } from '../lib/toast'
 import { ParticipantsPanel } from './ParticipantsPanel'
 
 beforeEach(() => {
   vi.clearAllMocks()
+  listWaiting.mockResolvedValue([])
+  admitAllWaiting.mockResolvedValue({ total: 0, admitted: 0, failed: 0 })
 })
 
 // Panel React Query'ga tayanadi (kutish xonasi ro'yxati). Testda tarmoqqa
@@ -191,5 +208,91 @@ describe('ParticipantsPanel', () => {
     setup()
     await user.click(screen.getAllByTitle('Chiqarib yuborish')[0])
     expect(removeParticipant).not.toHaveBeenCalled()
+  })
+
+  // ── «Hammasini kiritish» (100–300 kishilik dars) ───────────────────────────
+
+  const QUEUE = [
+    { id: 'w1', lesson_id: 'l1', requester_name: 'Sardor', status: 'pending', created_at: '2026-07-31T09:00:00Z' },
+    { id: 'w2', lesson_id: 'l1', requester_name: 'Nilufar', status: 'pending', created_at: '2026-07-31T09:00:05Z' },
+  ]
+
+  it('navbat BO‘SH bo‘lsa «Hammasini kiritish» umuman ko‘rinmaydi', async () => {
+    setup()
+    await waitFor(() => expect(listWaiting).toHaveBeenCalled())
+    expect(screen.queryByText('Hammasini kiritish')).not.toBeInTheDocument()
+  })
+
+  it('navbat bo‘lsa tugma chiqadi, tasdiq NECHTA ekanini aytadi va API chaqiriladi', async () => {
+    const user = userEvent.setup()
+    listWaiting.mockResolvedValue(QUEUE)
+    admitAllWaiting.mockResolvedValue({ total: 2, admitted: 2, failed: 0 })
+    setup()
+
+    await user.click(await screen.findByText('Hammasini kiritish'))
+    // Tasdiqda son bor — bir bosishda butun navbat kirib qolmasin.
+    expect(screen.getByText('2', { selector: 'strong' })).toBeInTheDocument()
+    // Tasdiqdan OLDIN hech narsa yuborilmaydi.
+    expect(admitAllWaiting).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole('button', { name: /^kiritish$/i }))
+    // TanStack Query mutationFn'ga ikkinchi argument (kontekst) ham uzatadi —
+    // shuning uchun faqat BIRINCHI argumentni tekshiramiz.
+    await waitFor(() => expect(admitAllWaiting).toHaveBeenCalled())
+    expect(admitAllWaiting.mock.calls[0][0]).toBe('l1')
+    expect(toast.success).toHaveBeenCalledWith('2 o‘quvchi kiritildi')
+  })
+
+  it('qisman muvaffaqiyat ROSTINI aytadi (failed>0)', async () => {
+    const user = userEvent.setup()
+    listWaiting.mockResolvedValue(QUEUE)
+    admitAllWaiting.mockResolvedValue({ total: 2, admitted: 1, failed: 1 })
+    setup()
+
+    await user.click(await screen.findByText('Hammasini kiritish'))
+    await user.click(screen.getByRole('button', { name: /^kiritish$/i }))
+
+    await waitFor(() =>
+      expect(toast.info).toHaveBeenCalledWith('1 o‘quvchi kiritildi · 1 tasi kiritilmadi'),
+    )
+    expect(toast.success).not.toHaveBeenCalled()
+  })
+
+  it('o‘quvchi (host emas) kutish navbatini ham, tugmani ham ko‘rmaydi', async () => {
+    listWaiting.mockResolvedValue(QUEUE)
+    setup({ isHost: false })
+    await waitFor(() => expect(screen.queryByText('Hammasini kiritish')).not.toBeInTheDocument())
+    expect(listWaiting).not.toHaveBeenCalled()
+  })
+
+  // ── Qidiruv (300 kishilik darsda aniq odamni topish) ──────────────────────
+
+  const many = (n) => Array.from({ length: n }, (_, i) => P(`u${i}`, i === 0 ? 'Alisher' : `O‘quvchi ${i}`))
+
+  it('ro‘yxat 10 tadan kam bo‘lsa qidiruv maydoni CHIZILMAYDI', () => {
+    setup({ participants: many(9) })
+    expect(screen.queryByLabelText('Ishtirokchilarni qidirish')).not.toBeInTheDocument()
+  })
+
+  it('10 tadan boshlab qidiruv chiqadi va ism bo‘yicha filtrlaydi (katta-kichik harf farqsiz)', async () => {
+    const user = userEvent.setup()
+    setup({ participants: many(12) })
+
+    const input = screen.getByLabelText('Ishtirokchilarni qidirish')
+    await user.type(input, 'alisher')
+
+    expect(screen.getByText('Alisher')).toBeInTheDocument()
+    expect(screen.queryByText('O‘quvchi 5')).not.toBeInTheDocument()
+    // Sarlavhada «topilgan/jami».
+    expect(screen.getByText('Ishtirokchilar (1/12)')).toBeInTheDocument()
+  })
+
+  it('hech kim topilmasa bo‘sh holat ko‘rsatiladi', async () => {
+    const user = userEvent.setup()
+    setup({ participants: many(12) })
+
+    await user.type(screen.getByLabelText('Ishtirokchilarni qidirish'), 'zzz')
+    expect(screen.getByText('Hech kim topilmadi')).toBeInTheDocument()
+    expect(screen.getByText('Ishtirokchilar (0/12)')).toBeInTheDocument()
   })
 })

@@ -96,10 +96,80 @@ func (uc *useCase) Admit(ctx context.Context, mentorID, requestID string) (*enti
 	if err != nil {
 		return nil, err
 	}
+	rt, err := uc.admitOne(ctx, lesson, req)
+	if err != nil {
+		return nil, err
+	}
+	audit.Record(ctx, uc.log, "waitingroom.admit", mentorID,
+		logger.String("request_id", req.ID), logger.String("lesson_id", req.LessonID), logger.String("guest", req.RequesterName))
+	return rt, nil
+}
+
+// AdmitAll — darsning BARCHA kutayotgan so'rovlarini qabul qiladi.
+//
+// # Nega alohida endpoint
+//
+// Mobil ustozda «Hammasini kiritish» tugmasi allaqachon bor edi, lekin u
+// N ta alohida `POST /waitingroom/:id/admit` chaqiruvini yuborardi: sekin
+// internetda ustoz ro'yxatning yarmi kirib yarmi kirmagan holatni ko'rardi va
+// har bir chaqiruv o'z rate-limit'ini yeb ketardi. Bitta amal — bitta so'rov.
+//
+// «Hammasi yoki hech nima» EMAS (`entity.AdmitAllResp` izohiga qara): har bir
+// so'rov mustaqil, atomik claim bilan olinadi. Ro'yxat o'qilgandan keyin
+// alohida admit/reject qilingan so'rov jimgina o'tkazib yuboriladi (dublikat
+// token berilmaydi), qolganlari kiritilaveradi.
+func (uc *useCase) AdmitAll(ctx context.Context, mentorID, lessonID string) (*entity.AdmitAllResp, error) {
+	// Egalik tekshiruvi — boshqa mentor birovning darsiga hech kimni kirita olmaydi.
+	// `shared.OwnedLesson` yaroqsiz UUID'ni ham DB'ga yetkazmaydi (404).
+	lesson, err := shared.OwnedLesson(ctx, uc.lessonRepo, mentorID, lessonID)
+	if err != nil {
+		return nil, err
+	}
+	reqs, err := uc.repo.ListPending(ctx, lessonID)
+	if err != nil {
+		uc.log.Error(ctx, "waitingroom.AdmitAll: list failed",
+			logger.String("lesson_id", lessonID), logger.SafeString("err", err.Error()))
+		return nil, err
+	}
+
+	resp := &entity.AdmitAllResp{Total: len(reqs)}
+	// KETMA-KET (parallel emas): har bir qabul LiveKit tokeni + Redis yozuvi
+	// bo'lib, kutayotganlar soni odatda o'nlab — parallellik foydasi kichik,
+	// lekin qisman xato holatidagi tartibsizlik va LiveKit'ga portlash yuki
+	// real. `MuteAll` dan farqi shu: u yuzlab ishtirokchiga tegadi.
+	for _, req := range reqs {
+		if _, err := uc.admitOne(ctx, lesson, req); err != nil {
+			// Bitta so'rovdagi xato qolganlarini to'xtatmaydi: 9 kishi
+			// kirgani 9 kishi kirmay qolganidan yaxshi.
+			uc.log.Warn(ctx, "waitingroom.AdmitAll: so'rov qabul qilinmadi",
+				logger.String("request_id", req.ID), logger.SafeString("err", err.Error()))
+			continue
+		}
+		resp.Admitted++
+	}
+	resp.Failed = resp.Total - resp.Admitted
+
+	audit.Record(ctx, uc.log, "waitingroom.admit_all", mentorID,
+		logger.String("lesson_id", lessonID),
+		logger.Int("admitted", resp.Admitted), logger.Int("failed", resp.Failed))
+	return resp, nil
+}
+
+// admitOne — bitta so'rovni atomik qabul qilib, guestga tokenni yetkazadi.
+//
+// `Admit` (bitta) va `AdmitAll` (ommaviy) uchun UMUMIY yadro: ikkala yo'l ham
+// aynan bir xil kafolatni berishi shart — atomik claim (TOCTOU race yo'q),
+// token Redis'da (WS kechiksa ham guest oladi), WS push, metrika. Avval bu
+// mantiq faqat `Admit` ichida edi va ommaviy yo'l uni takrorlaganda
+// nomutanosiblik paydo bo'lardi.
+//
+// EGALIK BU YERDA TEKSHIRILMAYDI — chaqiruvchi allaqachon tekshirgan
+// (`lesson` aynan shu tekshiruv natijasi).
+func (uc *useCase) admitOne(ctx context.Context, lesson *entity.Lesson, req *entity.WaitingRoomRequest) (*entity.RoomToken, error) {
 	// Atomik claim: faqat pending bo'lsa admitted'ga o'tkazadi (parallel admit race oldini oladi).
 	claimed, err := uc.repo.TransitionFromPending(ctx, req.ID, entity.WaitingStatusAdmitted, time.Now().UTC())
 	if err != nil {
-		uc.log.Error(ctx, "waitingroom.Admit: transition failed", logger.String("request_id", req.ID), logger.SafeString("err", err.Error()))
+		uc.log.Error(ctx, "waitingroom.admitOne: transition failed", logger.String("request_id", req.ID), logger.SafeString("err", err.Error()))
 		return nil, err
 	}
 	if !claimed {
@@ -117,8 +187,6 @@ func (uc *useCase) Admit(ctx context.Context, mentorID, requestID string) (*enti
 	uc.hub.Send(req.ID, ws.NewWaitingRoomAdmittedMsg(rt))
 
 	metrics.WaitingRoomDecisions.WithLabelValues("admit").Inc()
-	audit.Record(ctx, uc.log, "waitingroom.admit", mentorID,
-		logger.String("request_id", req.ID), logger.String("lesson_id", req.LessonID), logger.String("guest", req.RequesterName))
 	return rt, nil
 }
 

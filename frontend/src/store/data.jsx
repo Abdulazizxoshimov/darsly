@@ -94,6 +94,15 @@ export function useReject() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['waiting'] }),
   })
 }
+// Butun navbatni bir so'rovda kiritish. Natija sonlari (`total/admitted/failed`)
+// chaqiruvchiga qaytadi — u foydalanuvchiga ROSTINI aytadi.
+export function useAdmitAll() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: waitingApi.admitAllWaiting,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['waiting'] }),
+  })
+}
 
 /* -------- Recordings -------- */
 export function useRecordings(lessonId) {

@@ -127,6 +127,27 @@ interface DarslyApi {
         @Path("identity") identity: String,
     ): retrofit2.Response<Unit>
 
+    // ── Doimiy qora ro'yxat (kick scope="mentor" yozuvlari) ─────────────────
+    // Ustoz telefondan doimiy ban qo'ya olardi, lekin uni QAYTARIB ola olmasdi:
+    // ro'yxat faqat webda edi. Noto'g'ri bosilgan «Doimiy» tuzatib bo'lmas
+    // holatga aylanardi.
+
+    /** `hs.Success(items)` — sahifalanmagan ro'yxat, `total` yo'q. */
+    @GET("api/v1/blocklist")
+    suspend fun blocklist(): Envelope<List<BlocklistEntry>>
+
+    /**
+     * Yozuvni o'chiradi (unban) — 204.
+     *
+     * Qaytish tipi ATAYLAB `Response<Unit>` EMAS, tipsiz: `Response` bilan
+     * Retrofit 4xx'da ham muvaffaqiyat qaytaradi va xato jimgina yo'qolardi
+     * ("o'chirdim" deb yozib, ro'yxatda qolib ketish). Tipsiz `suspend`
+     * funksiya esa 4xx'da `HttpException` tashlaydi — repozitoriy `Result`i
+     * haqiqatni aks ettiradi.
+     */
+    @DELETE("api/v1/blocklist/{id}")
+    suspend fun unblock(@Path("id") entryId: String)
+
     @POST("api/v1/lessons/{id}/hands/lower")
     suspend fun lowerHand(
         @Path("id") lessonId: String,

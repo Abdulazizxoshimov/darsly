@@ -21,10 +21,12 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.PanTool
 import androidx.compose.material.icons.filled.PersonRemove
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -83,6 +85,12 @@ fun ParticipantsSheet(
     var muteAllOpen by remember { mutableStateOf(false) }
     var removeTarget by remember { mutableStateOf<Pair<String, String>?>(null) } // identity to name
 
+    // Qidiruv — mahalliy holat: u serverga ham, xona sessiyasiga ham tegishli
+    // emas, panel yopilishi bilan yo'qolishi TO'G'RI xulq.
+    var query by remember { mutableStateOf("") }
+    val searching = query.isNotBlank()
+    val visible = remember(state.roster, query) { ParticipantFilter.roster(state.roster, query) }
+
     // Panel ochilganda ro'yxat serverdan yangilanadi: LiveKit hodisalari orasida
     // o'tib ketgan o'zgarishlar (mute holati) shu yerda tekislanadi.
     LaunchedEffect(Unit) { onRefresh() }
@@ -125,7 +133,7 @@ fun ParticipantsSheet(
             text = {
                 Text(
                     "«Doimiy» — bu o'quvchi (shu ism bilan) sizning BARCHA darslaringizga " +
-                        "qaytib kira olmaydi. Qora ro'yxatni keyin web'dan boshqarish mumkin.",
+                        "qaytib kira olmaydi. Keyin Kabinet → Qora ro'yxat bo'limidan qaytarib olsangiz bo'ladi.",
                 )
             },
             confirmButton = {
@@ -150,14 +158,48 @@ fun ParticipantsSheet(
         Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 24.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "Ishtirokchilar (${state.roster.size})",
+                    if (searching) {
+                        "Ishtirokchilar (${visible.size}/${state.roster.size})"
+                    } else {
+                        "Ishtirokchilar (${state.roster.size})"
+                    },
                     style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.weight(1f),
                 )
                 TextButton(onClick = { muteAllOpen = true }) { Text("Hammani mute") }
             }
 
-            if (state.hands.isNotEmpty()) {
+            // ── Qidiruv ───────────────────────────────────────────────────────
+            // Katta darsda (200–300 kishi) aniq bir o'quvchini ko'z bilan topib
+            // mute qilish imkonsiz. Maydon FAQAT ro'yxat kattalashganda chiqadi
+            // (`ParticipantFilter.SEARCH_MIN_COUNT`) — kichik guruhda u shunchaki
+            // joy egallab, klaviatura bilan ro'yxatni yopib qo'yardi.
+            //
+            // `|| searching`: ro'yxat qidiruv paytida qisqarib ketsa (kimdir
+            // chiqib ketdi) maydon ichida yozuv bilan g'oyib bo'lmasin.
+            if (ParticipantFilter.shouldShowSearch(state.roster.size) || searching) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    placeholder = { Text("Ism bo'yicha qidirish") },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                    trailingIcon = {
+                        if (searching) {
+                            IconButton(onClick = { query = "" }) {
+                                Icon(Icons.Default.Close, contentDescription = "Tozalash")
+                            }
+                        }
+                    },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                )
+            }
+
+            // Qidiruv paytida qo'l navbati YASHIRILADI: ustoz aniq bir odamni
+            // qidirayotganda navbat ekranning yarmini egallab, natijani pastga
+            // surib yuborardi. Qo'l ko'targanlar baribir ro'yxatda belgisi
+            // bilan ko'rinadi.
+            if (state.hands.isNotEmpty() && !searching) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         "✋ Qo'l ko'targanlar (${state.hands.size})",
@@ -188,16 +230,20 @@ fun ParticipantsSheet(
                 }
             }
 
-            if (state.roster.isEmpty()) {
+            if (visible.isEmpty()) {
                 Text(
-                    "Xonada hali hech kim yo'q",
+                    if (searching) {
+                        "«${query.trim()}» bo'yicha hech kim topilmadi"
+                    } else {
+                        "Xonada hali hech kim yo'q"
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(vertical = 16.dp),
                 )
             } else {
                 LazyColumn(Modifier.heightIn(max = 360.dp)) {
-                    items(state.roster, key = { it.identity }) { p ->
+                    items(visible, key = { it.identity }) { p ->
                         Row(
                             Modifier.fillMaxWidth().padding(vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically,

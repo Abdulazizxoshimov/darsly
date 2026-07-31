@@ -276,3 +276,43 @@ func TestJoin_DistributedBruteForceStillLocked(t *testing.T) {
 	_, err := uc.Join(context.Background(), "dist", "198.51.100.200", &entity.JoinLessonReq{Passcode: ptr("1234")})
 	require.True(t, apperr.IsForbidden(err), "taqsimlangan hujum slug darajasida to'xtatilishi kerak")
 }
+
+// ⭐ Ovoz siyosati JAVOBDA bo'lishi shart.
+//
+// Avval o'quvchi `allow_self_unmute` ni faqat USTOZ KLIENTI yuboradigan
+// data-message'dan bilardi. Mobil ustoz uni yubormaydi — telefondan o'tilgan
+// darsda o'quvchining mikrofon tugmasi yolg'on ko'rsatardi (yoqadi, server esa
+// jimgina qayta mute qiladi). Siyosat serverda saqlanadi, demak javobda ham
+// serverdan kelishi kerak.
+func TestPreviewAndJoin_ReturnAudioPolicy(t *testing.T) {
+	uc, lrepo, _ := setup(t)
+	seedLesson(t, lrepo, &entity.Lesson{
+		ID: "l1", MentorID: "mentor1", Title: "Ovoz", JoinSlug: "pol-icy-1",
+		MuteOnEntry: true, AllowSelfUnmute: false,
+	})
+
+	prev, err := uc.Preview(context.Background(), "pol-icy-1")
+	require.NoError(t, err)
+	require.True(t, prev.MuteOnEntry, "preview siyosatni qaytarishi kerak")
+	require.False(t, prev.AllowSelfUnmute, "unmute taqiqi klientga yetishi kerak")
+
+	resp, err := uc.Join(context.Background(), "pol-icy-1", testIP, &entity.JoinLessonReq{})
+	require.NoError(t, err)
+	require.True(t, resp.Lesson.MuteOnEntry)
+	require.False(t, resp.Lesson.AllowSelfUnmute, "join javobida ham siyosat bo'lishi kerak")
+}
+
+// Ruxsat beruvchi dars uchun ikkala bayroq ham to'g'ri o'tishi kerak
+// (maydonlar "har doim false" bo'lib qolib ketmasin).
+func TestPreview_AudioPolicyPermissive(t *testing.T) {
+	uc, lrepo, _ := setup(t)
+	seedLesson(t, lrepo, &entity.Lesson{
+		ID: "l2", MentorID: "mentor1", Title: "Erkin", JoinSlug: "pol-icy-2",
+		MuteOnEntry: false, AllowSelfUnmute: true,
+	})
+
+	prev, err := uc.Preview(context.Background(), "pol-icy-2")
+	require.NoError(t, err)
+	require.False(t, prev.MuteOnEntry)
+	require.True(t, prev.AllowSelfUnmute)
+}

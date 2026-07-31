@@ -21,7 +21,8 @@ export function ScheduleLessonModal({ open, onClose }) {
   // Yozib olish DEFAULT YONIQ — yoqishni unutish qaytarib bo'lmaydigan
   // yo'qotish (dars o'tib ketdi), o'chirishni unutish esa tuzatiladi.
   const [recording, setRecording] = useState(true)
-  const [waitingRoom, setWaitingRoom] = useState(true)
+  // Kutish xonasi DEFAULT O'CHIQ (PRODUCT.md) — server default'i bilan bir xil.
+  const [waitingRoom, setWaitingRoom] = useState(false)
   // Zoom modeli ovoz sozlamalari (server default'lari ham true):
   // kirganda mute — sinf shovqin bilan boshlanmasin; o'zi ochish ruxsati —
   // o'quvchi gapirmoqchi bo'lsa mikrofonini o'zi yoqadi.

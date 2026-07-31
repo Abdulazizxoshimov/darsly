@@ -1529,6 +1529,34 @@ h1, h2, h3 { margin: 0; letter-spacing: -0.02em; }
 }
 .link-btn:hover { color: var(--accent-lighter); }
 
+/* Ishtirokchilarni qidirish — panel ichidagi ixcham maydon (to'liq `.input`
+   balandligi tor panelda ro'yxatdan ko'p joy olardi). */
+.p-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  margin-bottom: 6px;
+  background: var(--card);
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  color: var(--text-3);
+}
+.p-search:focus-within { border-color: var(--accent); }
+.p-search input {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13.5px;
+}
+.p-search input::placeholder { color: var(--text-3); }
+/* Webkit'ning o'z "x" tugmasi qora fonda ko'rinmaydi — o'chiramiz. */
+.p-search input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
+
 /* Participant rows */
 .p-row {
   display: flex;

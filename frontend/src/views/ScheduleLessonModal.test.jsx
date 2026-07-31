@@ -69,7 +69,8 @@ describe('ScheduleLessonModal (rejalashtirish)', () => {
     expect(body.scheduled_at).toBe(new Date('2026-08-01T10:00').toISOString())
     expect(body.duration_min).toBe(60)
     expect(body.is_recording_enabled).toBe(true)
-    expect(body.is_waiting_room_enabled).toBe(true)
+    // Kutish xonasi DEFAULT O'CHIQ (PRODUCT.md) — server default'i bilan bir xil.
+    expect(body.is_waiting_room_enabled).toBe(false)
 
     // Xonaga navigatsiya YO'Q — jadval sahifasida qoladi
     expect(screen.getByTestId('location')).toHaveTextContent('/app/schedule')

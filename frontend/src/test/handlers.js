@@ -40,6 +40,12 @@ let lessons = [
   },
 ]
 
+// Kutish navbati (mentor tomoni) — WaitingRoomRequest shakli.
+let waitingQueue = [
+  { id: 'w1', lesson_id: 'l1', requester_name: 'Sardor', status: 'pending', created_at: now() },
+  { id: 'w2', lesson_id: 'l1', requester_name: 'Nilufar', status: 'pending', created_at: now() },
+]
+
 // Mentorning doimiy qora ro'yxati (№4) — BlocklistEntry shakli.
 let blocklist = [
   { id: 'b1', identity: 'guest_1', display_name: 'Bezori Bola', created_at: now() },
@@ -142,9 +148,11 @@ export const handlers = [
       created_at: now(),
       updated_at: now(),
       duration_min: body.duration_min || 60,
-      // Server default'lari (berilmasa true) — CreateLessonReq bilan mos.
+      // Server default'lari — CreateLessonReq bilan mos: ovoz siyosati `true`,
+      // kutish xonasi esa `false` (PRODUCT.md «Kutish xonasi: default o'chiq»).
       mute_on_entry: body.mute_on_entry ?? true,
       allow_self_unmute: body.allow_self_unmute ?? true,
+      is_waiting_room_enabled: body.is_waiting_room_enabled ?? false,
       ...body,
     }
     lessons = [l, ...lessons]
@@ -172,13 +180,17 @@ export const handlers = [
       status: params.slug === 'sched' ? 'scheduled' : params.slug === 'ended' ? 'ended' : 'live',
       has_passcode: params.slug === 'locked',
       is_waiting_room_enabled: true,
+      // Ovoz siyosati LessonPublic'da ham keladi — o'quvchi mikrofon tugmasi
+      // holatini xonaga KIRISHDAN oldin biladi.
+      mute_on_entry: true,
+      allow_self_unmute: true,
     }),
   ),
   http.post(`${B}/joinlink/:slug`, async ({ params, request }) => {
     // Yakunlangan dars (№3): token ham, request ham YO'Q — faqat holat.
     if (params.slug === 'ended') {
       return ok({
-        lesson: { id: 'l1', title: 'Kvadrat tenglamalar', mentor_name: 'Aziz Karimov', status: 'ended', has_passcode: false, is_waiting_room_enabled: true },
+        lesson: { id: 'l1', title: 'Kvadrat tenglamalar', mentor_name: 'Aziz Karimov', status: 'ended', has_passcode: false, is_waiting_room_enabled: true, mute_on_entry: true, allow_self_unmute: true },
         next_step: 'lesson_ended',
       })
     }
@@ -190,7 +202,7 @@ export const handlers = [
       }
     }
     return ok({
-      lesson: { id: 'l1', title: 'Kvadrat tenglamalar', mentor_name: 'Aziz Karimov', status: 'live', has_passcode: false, is_waiting_room_enabled: true },
+      lesson: { id: 'l1', title: 'Kvadrat tenglamalar', mentor_name: 'Aziz Karimov', status: 'live', has_passcode: false, is_waiting_room_enabled: true, mute_on_entry: true, allow_self_unmute: true },
       next_step: 'waiting_room',
       request_id: 'req1',
     })
@@ -232,8 +244,35 @@ export const handlers = [
     })
   }),
 
-  // Xona holati (o'quvchi yozuv indikatorini shu yerdan biladi).
-  http.get(`${B}/rooms/:lessonID/state`, () => ok({ hands: [], recording: true })),
+  // Mentor tomoni: kutish navbati + bir donalik va TO'PLAMLI qaror.
+  http.get(`${B}/lessons/:id/waitingroom`, ({ params }) =>
+    ok(waitingQueue.filter((w) => w.lesson_id === params.id)),
+  ),
+  http.post(`${B}/waitingroom/:id/admit`, ({ params }) => {
+    waitingQueue = waitingQueue.filter((w) => w.id !== params.id)
+    return ok({ token: 'mock-room-token', ws_url: 'ws://localhost:7880', room_name: 'l1', identity: 'g1', role: 'participant' })
+  }),
+  http.post(`${B}/waitingroom/:id/reject`, ({ params }) => {
+    waitingQueue = waitingQueue.filter((w) => w.id !== params.id)
+    return new HttpResponse(null, { status: 204 })
+  }),
+  // «Hammasini kiritish» — tanasi YO'Q, javob HAR DOIM 200 (navbat bo'sh bo'lsa
+  // ham). Qisman muvaffaqiyat normal holat, shuning uchun mock ham `failed`ni
+  // ko'rsatadi: oxirgi so'rov "ro'yxat o'qilgandan keyin alohida hal qilingan"
+  // deb hisoblanadi (klient shu holatni to'g'ri ko'rsatishini sinash uchun).
+  http.post(`${B}/lessons/:id/waitingroom/admit-all`, ({ params }) => {
+    const mine = waitingQueue.filter((w) => w.lesson_id === params.id)
+    const total = mine.length
+    const failed = total > 1 ? 1 : 0
+    waitingQueue = waitingQueue.filter((w) => w.lesson_id !== params.id)
+    return ok({ total, admitted: total - failed, failed })
+  }),
+
+  // Xona holati — o'quvchi yozuv indikatorini VA ovoz siyosatini shu yerdan
+  // biladi (kech ulangan `policy` xabarini o'tkazib yuborgan bo'lishi mumkin).
+  http.get(`${B}/rooms/:lessonID/state`, () =>
+    ok({ hands: [], recording: true, mute_on_entry: true, allow_self_unmute: true }),
+  ),
   http.get(`${B}/rooms/:lessonID/chat`, () => HttpResponse.json({ data: [] })),
 
   // Dars chat tarixi (JWT yo'li) — dars tugagach ham o'qiladi.

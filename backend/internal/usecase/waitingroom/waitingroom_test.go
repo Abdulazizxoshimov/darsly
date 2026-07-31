@@ -210,3 +210,73 @@ func TestListPending_Ownership(t *testing.T) {
 	_, err = uc.ListPending(context.Background(), "intruder", lesson.ID)
 	require.True(t, apperr.IsForbidden(err))
 }
+
+// ── «Hammasini kiritish» (ommaviy admit) ─────────────────────────────────────
+
+// ⭐ Ikki kutayotgan → ikkalasi ham kiradi.
+//
+// Mobilda bu tugma bor edi, lekin u N ta alohida chaqiruv yuborardi: sekin
+// internetda ustoz ro'yxatning yarmi kirib yarmi kirmagan holatni ko'rardi.
+// Bitta amal — bitta so'rov.
+func TestAdmitAll_AdmitsEveryPending(t *testing.T) {
+	uc, _, _, lesson := setup(t)
+	ctx := context.Background()
+	r1, _ := uc.CreateRequest(ctx, lesson, "Ali")
+	r2, _ := uc.CreateRequest(ctx, lesson, "Vali")
+
+	resp, err := uc.AdmitAll(ctx, "mentor1", lesson.ID)
+	require.NoError(t, err)
+	require.Equal(t, 2, resp.Total)
+	require.Equal(t, 2, resp.Admitted)
+	require.Equal(t, 0, resp.Failed)
+
+	// Har biri haqiqatan admitted va TOKENGA ega — "hisoblagich oshdi" yetarli emas.
+	for _, id := range []string{r1.ID, r2.ID} {
+		st, err := uc.Status(ctx, id)
+		require.NoError(t, err)
+		require.Equal(t, entity.WaitingStatusAdmitted, st.Status)
+		require.NotNil(t, st.Room, "kiritilgan guest token olishi kerak")
+	}
+}
+
+// Bo'sh ro'yxat — xato EMAS, shunchaki 0 (ustoz tugmani bosaverishi mumkin).
+func TestAdmitAll_EmptyQueue(t *testing.T) {
+	uc, _, _, lesson := setup(t)
+	resp, err := uc.AdmitAll(context.Background(), "mentor1", lesson.ID)
+	require.NoError(t, err)
+	require.Equal(t, &entity.AdmitAllResp{Total: 0, Admitted: 0, Failed: 0}, resp)
+}
+
+// Boshqa mentor birovning darsiga hech kimni kirita olmaydi.
+func TestAdmitAll_Ownership(t *testing.T) {
+	uc, _, _, lesson := setup(t)
+	_, _ = uc.CreateRequest(context.Background(), lesson, "Ali")
+
+	_, err := uc.AdmitAll(context.Background(), "boshqa-mentor", lesson.ID)
+	require.True(t, apperr.IsForbidden(err), "begona mentor → 403")
+}
+
+// Ro'yxat olingandan keyin alohida qaror chiqqan so'rov DUBLIKAT token
+// olmasligi kerak — atomik claim ommaviy yo'lda ham ishlaydi.
+func TestAdmitAll_SkipsAlreadyDecided(t *testing.T) {
+	uc, _, _, lesson := setup(t)
+	ctx := context.Background()
+	r1, _ := uc.CreateRequest(ctx, lesson, "Ali")
+	_, _ = uc.CreateRequest(ctx, lesson, "Vali")
+	require.NoError(t, uc.Reject(ctx, "mentor1", r1.ID))
+
+	resp, err := uc.AdmitAll(ctx, "mentor1", lesson.ID)
+	require.NoError(t, err)
+	require.Equal(t, 1, resp.Total, "rad etilgan so'rov endi pending emas")
+	require.Equal(t, 1, resp.Admitted)
+
+	st, _ := uc.Status(ctx, r1.ID)
+	require.Equal(t, entity.WaitingStatusRejected, st.Status, "rad etilgan qaror bekor bo'lmasligi kerak")
+}
+
+// Yaroqsiz dars ID'si DB'ga yetmasligi kerak (22P02 → 500 emas, 404).
+func TestAdmitAll_InvalidLessonID(t *testing.T) {
+	uc, _, _, _ := setup(t)
+	_, err := uc.AdmitAll(context.Background(), "mentor1", "not-a-uuid")
+	require.True(t, apperr.IsNotFound(err))
+}

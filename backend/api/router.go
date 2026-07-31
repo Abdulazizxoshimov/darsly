@@ -272,6 +272,10 @@ func NewRouter(h *handlers.Handler, tokenMaker token.Maker, enforcer *casbin.Enf
 		lessons.POST("/:id/token", v1.GetRoomToken(h))         // host token
 		lessons.POST("/:id/end", v1.EndLesson(h))              // darsni yakunlash
 		lessons.GET("/:id/waitingroom", v1.ListWaitingRoom(h)) // kutayotgan so'rovlar
+		// «Hammasini kiritish» — bitta amal, bitta so'rov (mobil/web tugmasi).
+		// GET `/:id/waitingroom` bilan TO'QNASHMAYDI: gin har HTTP metodi uchun
+		// alohida daraxt tutadi, bu POST.
+		lessons.POST("/:id/waitingroom/admit-all", v1.AdmitAllWaitingRoom(h))
 		// Host boshqaruvi
 		lessons.GET("/:id/participants", v1.ListParticipants(h))
 		lessons.POST("/:id/mute-all", v1.MuteAll(h))

@@ -200,4 +200,41 @@ class LessonFormTest {
         val req = LessonForm.toRequest(input().copy(recording = false))
         assertFalse(req.isRecordingEnabled)
     }
+
+    // ─── Ovoz sozlamalari (№11) ───────────────────────────────────────────────
+
+    @Test
+    fun `ovoz sozlamalari default qiymatlari server bilan bir xil`() {
+        // Backend berilmagan maydonga `true` qo'yadi (api-contract.md:173).
+        // Klient default'i undan farq qilsa, forma ko'rsatgan holat bilan
+        // haqiqiy dars holati ajralib ketardi.
+        assertTrue(LessonForm.MUTE_ON_ENTRY_DEFAULT)
+        assertTrue(LessonForm.ALLOW_SELF_UNMUTE_DEFAULT)
+        assertTrue(LessonForm.Input().muteOnEntry)
+        assertTrue(LessonForm.Input().allowSelfUnmute)
+    }
+
+    @Test
+    fun `ovoz sozlamalari sorovga tushadi`() {
+        val req = LessonForm.toRequest(input())
+        assertTrue(req.muteOnEntry)
+        assertTrue(req.allowSelfUnmute)
+    }
+
+    @Test
+    fun `maruza rejimi sorovga false bolib tushadi`() {
+        // "O'quvchi o'zi ocholmasin" — `false` haqiqiy qiymat, tushib qolmasligi
+        // kerak (aks holda toggle jimgina ishlamasdi).
+        val req = LessonForm.toRequest(
+            input().copy(muteOnEntry = true, allowSelfUnmute = false),
+        )
+        assertTrue(req.muteOnEntry)
+        assertFalse(req.allowSelfUnmute)
+    }
+
+    @Test
+    fun `kirganda mikrofon yoniq bolsin tanlovi sorovga tushadi`() {
+        val req = LessonForm.toRequest(input().copy(muteOnEntry = false))
+        assertFalse(req.muteOnEntry)
+    }
 }

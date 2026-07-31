@@ -48,7 +48,32 @@ object LessonForm {
          * boshlaydi (`room.HostToken` → `recording.EnsureRecording`).
          */
         val recording: Boolean = RECORDING_DEFAULT_ON,
+        /**
+         * Kirganda mikrofon o'chiq bo'lsinmi (`mute_on_entry`).
+         *
+         * Default YONIQ — server default'i bilan bir xil. Zoom naqshi: kech
+         * kelgan o'quvchi darsning o'rtasiga shovqin bilan kirmasin.
+         */
+        val muteOnEntry: Boolean = MUTE_ON_ENTRY_DEFAULT,
+        /**
+         * O'quvchi mikrofonini o'zi yoqa oladimi (`allow_self_unmute`).
+         *
+         * Default YONIQ — bu **ruxsat**, cheklov emas: o'chirilgan bo'lsa
+         * o'quvchi savol berish uchun ustozdan ruxsat kutishi kerak bo'ladi.
+         */
+        val allowSelfUnmute: Boolean = ALLOW_SELF_UNMUTE_DEFAULT,
     )
+
+    /**
+     * Ovoz sozlamalarining default'lari — `backend/internal/entity/lesson.go`
+     * bilan AYNAN bir xil (server berilmagan maydonga `true` qo'yadi).
+     *
+     * Nega muhim: klient default'i serverdan farq qilsa, forma "shunday
+     * bo'ladi" deb ko'rsatgan holat bilan haqiqiy dars holati ajralib ketardi
+     * — va buni faqat dars boshlangandan keyin sezish mumkin bo'lardi.
+     */
+    const val MUTE_ON_ENTRY_DEFAULT = true
+    const val ALLOW_SELF_UNMUTE_DEFAULT = true
 
     /**
      * Yozib olish yangi darsda **yoqilgan holda** keladi.
@@ -127,6 +152,8 @@ object LessonForm {
         passcode = input.passcode.trim().takeIf { it.isNotEmpty() },
         isRecordingEnabled = input.recording,
         isWaitingRoomEnabled = input.waitingRoom,
+        muteOnEntry = input.muteOnEntry,
+        allowSelfUnmute = input.allowSelfUnmute,
     )
 
     // ─── Tahrirlash (PATCH) ───────────────────────────────────────────────────
@@ -148,6 +175,8 @@ object LessonForm {
         passcode = "",
         waitingRoom = lesson.isWaitingRoomEnabled,
         recording = lesson.isRecordingEnabled,
+        muteOnEntry = lesson.muteOnEntry,
+        allowSelfUnmute = lesson.allowSelfUnmute,
     )
 
     /**
@@ -194,10 +223,13 @@ object LessonForm {
         val removing = removePasscode && original.hasPasscode
         val waitingRoom = input.waitingRoom.takeIf { it != original.isWaitingRoomEnabled }
         val recording = input.recording.takeIf { it != original.isRecordingEnabled }
+        val muteOnEntry = input.muteOnEntry.takeIf { it != original.muteOnEntry }
+        val allowSelfUnmute = input.allowSelfUnmute.takeIf { it != original.allowSelfUnmute }
 
         val changed = title != null || description != null || duration != null ||
             scheduledAt != null || passcode != null || removing ||
-            waitingRoom != null || recording != null
+            waitingRoom != null || recording != null ||
+            muteOnEntry != null || allowSelfUnmute != null
         if (!changed) return null
 
         return UpdateLessonReq(
@@ -209,6 +241,8 @@ object LessonForm {
             removePasscode = removing,
             isWaitingRoomEnabled = waitingRoom,
             isRecordingEnabled = recording,
+            muteOnEntry = muteOnEntry,
+            allowSelfUnmute = allowSelfUnmute,
         )
     }
 

@@ -50,6 +50,27 @@ func AdmitWaitingRoom(h *handlers.Handler) gin.HandlerFunc {
 	}
 }
 
+// AdmitAllWaitingRoom godoc
+// @Summary      Barcha kutayotganlarni kiritish (mentor) — har biriga WS orqali token yuboriladi
+// @Description  Qisman muvaffaqiyat mumkin: javobda umumiy/kiritilgan/kiritilmagan sonlari.
+// @Tags         waitingroom
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id  path  string  true  "Lesson ID"
+// @Success      200  {object}  object{data=entity.AdmitAllResp}
+// @Router       /api/v1/lessons/{id}/waitingroom/admit-all [post]
+func AdmitAllWaitingRoom(h *handlers.Handler) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		mentorID := c.GetString(middleware.CtxUserID)
+		resp, err := h.WaitingRoom.AdmitAll(c.Request.Context(), mentorID, c.Param("id"))
+		if err != nil {
+			hs.Error(c, err)
+			return
+		}
+		hs.Success(c, resp)
+	}
+}
+
 // RejectWaitingRoom godoc
 // @Summary      Kutish so'rovini rad etish (mentor)
 // @Tags         waitingroom

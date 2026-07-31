@@ -155,6 +155,15 @@ data class Lesson(
     /** Parol bilan himoyalanganmi (backend hisoblaydi, hash hech qachon kelmaydi). */
     @Json(name = "has_passcode") val hasPasscode: Boolean = false,
     @Json(name = "is_locked") val isLocked: Boolean = false,
+    /**
+     * Ovoz sozlamalari (№11) — server webhook'da qo'llaydi.
+     *
+     * Default'lar server default'i bilan bir xil (`true`/`true`): eski backend
+     * bu maydonlarsiz javob qaytarsa ham forma "mikrofon o'chiq, o'quvchi o'zi
+     * yoqa oladi" degan HAQIQIY holatni ko'rsatadi, teskarisini emas.
+     */
+    @Json(name = "mute_on_entry") val muteOnEntry: Boolean = true,
+    @Json(name = "allow_self_unmute") val allowSelfUnmute: Boolean = true,
     /** Ro'yxatni barqaror tartiblash uchun (`scheduled_at` bo'sh darslar). */
     @Json(name = "created_at") val createdAt: String? = null,
 )
@@ -179,6 +188,13 @@ data class CreateLessonReq(
     @Json(name = "passcode") val passcode: String? = null,
     @Json(name = "is_recording_enabled") val isRecordingEnabled: Boolean = false,
     @Json(name = "is_waiting_room_enabled") val isWaitingRoomEnabled: Boolean = false,
+    /**
+     * Ovoz sozlamalari (№11). Server default'i ikkalasi uchun ham `true`,
+     * shuning uchun bu yerdagi default'lar ham `true` — forma yubormasa ham
+     * natija bir xil bo'ladi (yolg'on farq yo'q).
+     */
+    @Json(name = "mute_on_entry") val muteOnEntry: Boolean = true,
+    @Json(name = "allow_self_unmute") val allowSelfUnmute: Boolean = true,
 )
 
 /**
@@ -205,6 +221,12 @@ data class UpdateLessonReq(
     @Json(name = "is_locked") val isLocked: Boolean? = null,
     @Json(name = "is_recording_enabled") val isRecordingEnabled: Boolean? = null,
     @Json(name = "is_waiting_room_enabled") val isWaitingRoomEnabled: Boolean? = null,
+    /**
+     * Ovoz sozlamalari (№11) — jonli darsda ham o'zgartirsa bo'ladi
+     * (`api-contract.md`: bayroqni `PATCH` bilan ham yangilash mumkin).
+     */
+    @Json(name = "mute_on_entry") val muteOnEntry: Boolean? = null,
+    @Json(name = "allow_self_unmute") val allowSelfUnmute: Boolean? = null,
 )
 
 /**
@@ -443,6 +465,22 @@ data class CreatePollReq(
 @JsonClass(generateAdapter = true)
 data class RoomStateResp(
     @Json(name = "hands") val hands: List<RaisedHandDto> = emptyList(),
+)
+
+/**
+ * Qora ro'yxat yozuvi — `entity.BlocklistEntry` (№4).
+ *
+ * `mentor_id` backend'da `json:"-"` — kelmaydi (ro'yxat baribir faqat so'rovchi
+ * ustozniki). Moslik kaliti — [displayName]: o'quvchida akkaunt yo'q va LiveKit
+ * identity har kirishda yangi, shuning uchun ban **ism bo'yicha** (katta-kichik
+ * harf farqsiz) ishlaydi. [identity] esa chiqarilgan paytdagi qiymat — audit uchun.
+ */
+@JsonClass(generateAdapter = true)
+data class BlocklistEntry(
+    @Json(name = "id") val id: String,
+    @Json(name = "identity") val identity: String = "",
+    @Json(name = "display_name") val displayName: String = "",
+    @Json(name = "created_at") val createdAt: String? = null,
 )
 
 @JsonClass(generateAdapter = true)

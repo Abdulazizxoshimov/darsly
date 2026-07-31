@@ -160,3 +160,27 @@ func TestLessonGetOtherMentorForbidden(t *testing.T) {
 	code, _ := cl.get("/api/v1/lessons/"+id, tok2)
 	require.Equal(t, http.StatusForbidden, code, "boshqa mentor darsi → 403 (ownership)")
 }
+
+// ⭐ Kutish xonasi default O'CHIQ (PRODUCT.md «Xavfsizlik»).
+//
+// Qiymat uch joyda zid edi: DB ustuni DEFAULT TRUE, web `true` yuborardi,
+// mobil `false`. Ya'ni bir xil ustoz qaysi qurilmadan dars yaratganiga qarab
+// boshqa xulq olardi. Bu test qarorni SERVERGA mixlaydi.
+func TestLessonCreate_WaitingRoomDefaultsOff(t *testing.T) {
+	srv, pg := newTestServer(t)
+	cl := &httpClient{t: t, base: srv.URL}
+	tok := registerMentor(t, cl, pg, "Default Mentor", "wr_default@darsly.uz")
+
+	// Maydon UMUMAN berilmagan.
+	code, body := cl.post("/api/v1/lessons", tok, map[string]any{"title": "Bayroqsiz dars"})
+	require.Equal(t, http.StatusCreated, code, "create: %s", body)
+	require.Equal(t, false, jsonGet(body, "data", "is_waiting_room_enabled"),
+		"berilmagan kutish xonasi → O'CHIQ: %s", body)
+
+	// Oshkora yoqilsa — yoqiladi (default majburiy emas).
+	code, body = cl.post("/api/v1/lessons", tok, map[string]any{
+		"title": "Nazoratli dars", "is_waiting_room_enabled": true,
+	})
+	require.Equal(t, http.StatusCreated, code, "create: %s", body)
+	require.Equal(t, true, jsonGet(body, "data", "is_waiting_room_enabled"))
+}

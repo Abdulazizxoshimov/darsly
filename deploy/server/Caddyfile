@@ -52,9 +52,13 @@ app.194.163.139.242.sslip.io {
 			#   worker-src  — pdf.js worker'i o'z assetimiz; blob: pdf.js fallback'i uchun.
 			#   style/font  — index.html Google Fonts'ni tashqaridan yuklaydi.
 			#   img/media   — doska PDF sahifalarini dataURL, video esa blob sifatida beradi.
+			#                 img-src'da MinIO subdomeni ham bor: chatga yuborilgan rasm
+			#                 presigned havola bilan `files.<domen>` dan ko'rsatiladi
+			#                 (ChatFileCard). Usiz rasm FAQAT deploydan keyin bloklanardi —
+			#                 dev'da CSP yo'q, ya'ni muammo lokalda ko'rinmasdi.
 			#   connect-src — API/WS o'z originimizda; LiveKit signaling va MinIO
 			#                 yozuvlari alohida subdomenlarda.
-			Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' blob: wss://livekit.194.163.139.242.sslip.io https://files.194.163.139.242.sslip.io; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+			Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https://files.194.163.139.242.sslip.io; media-src 'self' blob:; connect-src 'self' blob: wss://livekit.194.163.139.242.sslip.io https://files.194.163.139.242.sslip.io; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
 		}
 
 		# Hash'li assetlar — abadiy keshlanadi (fayl nomi kontent bilan o'zgaradi).

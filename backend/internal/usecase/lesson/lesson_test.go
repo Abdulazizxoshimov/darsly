@@ -103,6 +103,31 @@ func TestCreate_RecordingDefaultsOn(t *testing.T) {
 	require.True(t, l.IsRecordingEnabled, "berilmagan bayroq → YOQILGAN")
 }
 
+func TestCreate_WaitingRoomDefaultsOff(t *testing.T) {
+	// ⭐ "Kutish xonasi default O'CHIQ" — PRODUCT.md «Xavfsizlik».
+	//
+	// Bu qiymat uch joyda ZID edi: DB ustuni DEFAULT TRUE, web klient `true`
+	// yuborardi, mobil `false`. Ya'ni bir xil ustoz qaysi qurilmadan dars
+	// yaratganiga qarab boshqa xulq olardi. Qaror serverda — va u shu yerda
+	// mixlanadi: maydon berilmasa kutish xonasi YOQILMAYDI.
+	uc := newLessonUC(testutil.NewFakeLessonRepo())
+
+	l, err := uc.Create(context.Background(), "mentor1", &entity.CreateLessonReq{Title: "Bayroqsiz"})
+	require.NoError(t, err)
+	require.False(t, l.IsWaitingRoomEnabled, "berilmagan kutish xonasi → O'CHIQ")
+}
+
+func TestCreate_WaitingRoomCanBeEnabledExplicitly(t *testing.T) {
+	// Default o'chiq, lekin ustoz oshkora yoqsa — yoqiladi.
+	uc := newLessonUC(testutil.NewFakeLessonRepo())
+
+	l, err := uc.Create(context.Background(), "mentor1", &entity.CreateLessonReq{
+		Title: "Nazoratli", IsWaitingRoomEnabled: true,
+	})
+	require.NoError(t, err)
+	require.True(t, l.IsWaitingRoomEnabled)
+}
+
 func TestCreate_RecordingCanBeDisabledExplicitly(t *testing.T) {
 	// Default yoniq, lekin MAJBURIY EMAS: oshkora `false` hurmat qilinadi.
 	uc := newLessonUC(testutil.NewFakeLessonRepo())

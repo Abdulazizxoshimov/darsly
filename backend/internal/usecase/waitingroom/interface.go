@@ -13,6 +13,10 @@ type UseCase interface {
 	ListPending(ctx context.Context, mentorID, lessonID string) ([]*entity.WaitingRoomRequest, error)
 	// Admit — so'rovni qabul qiladi, participant token generatsiya qiladi va guestga WS orqali yuboradi.
 	Admit(ctx context.Context, mentorID, requestID string) (*entity.RoomToken, error)
+	// AdmitAll — darsning BARCHA kutayotgan so'rovlarini qabul qiladi
+	// (ommaviy «Hammasini kiritish»). Qisman muvaffaqiyat mumkin — natija
+	// sonlar bilan qaytadi.
+	AdmitAll(ctx context.Context, mentorID, lessonID string) (*entity.AdmitAllResp, error)
 	// Reject — so'rovni rad etadi va guestga WS orqali bildiradi.
 	Reject(ctx context.Context, mentorID, requestID string) error
 	// Status — guest so'rovining hozirgi holati (public; admitted bo'lsa token bilan).

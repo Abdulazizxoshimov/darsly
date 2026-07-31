@@ -198,6 +198,35 @@ fun LessonFields(
             onChange = { v -> onEdit { it.copy(recording = v) } },
         )
 
+        // ── Ovoz (№11) ────────────────────────────────────────────────────────
+        // TEZKOR darsda ATAYLAB YO'Q: "New meeting" bosgan ustoz sozlamalar
+        // ro'yxatini emas, darhol xonani kutadi. Default'lar (ikkalasi ham
+        // yoniq) tezkor darsda ham qo'llanadi — ular server default'i bilan
+        // bir xil bo'lgani uchun hech narsa yo'qolmaydi.
+        if (!instant) {
+            LessonSwitchRow(
+                title = "Kirganda mikrofon o'chiq bo'lsin",
+                subtitle = if (input.muteOnEntry) {
+                    "Kech kelgan o'quvchi darsga shovqin bilan kirmaydi"
+                } else {
+                    "O'chirilgan — o'quvchi kirganda mikrofoni yoniq bo'ladi"
+                },
+                checked = input.muteOnEntry,
+                onChange = { v -> onEdit { it.copy(muteOnEntry = v) } },
+            )
+
+            LessonSwitchRow(
+                title = "O'quvchi mikrofonni o'zi yoqa olsin",
+                subtitle = if (input.allowSelfUnmute) {
+                    "O'quvchi savol berish uchun mikrofonini o'zi yoqadi"
+                } else {
+                    "Faqat siz ruxsat berganingizda gapira oladi (ma'ruza rejimi)"
+                },
+                checked = input.allowSelfUnmute,
+                onChange = { v -> onEdit { it.copy(allowSelfUnmute = v) } },
+            )
+        }
+
         serverError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         Spacer(Modifier.height(24.dp))
     }

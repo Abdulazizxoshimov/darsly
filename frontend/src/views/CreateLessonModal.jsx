@@ -22,7 +22,10 @@ export function CreateLessonModal({ open, onClose }) {
   // Yozib olish DEFAULT YONIQ — yoqishni unutish qaytarib bo'lmaydigan
   // yo'qotish (dars o'tib ketdi), o'chirishni unutish esa tuzatiladi.
   const [recording, setRecording] = useState(true)
-  const [waitingRoom, setWaitingRoom] = useState(true)
+  // Kutish xonasi DEFAULT O'CHIQ (PRODUCT.md): tezkor darsda ustoz odatda
+  // havolani o'zi tarqatadi va har kirganni qo'lda tasdiqlashni xohlamaydi.
+  // Server default'i ham `false` — uch joyda (DB / web / mobil) zid qiymat bor edi.
+  const [waitingRoom, setWaitingRoom] = useState(false)
 
   function reset() {
     setTitle('')

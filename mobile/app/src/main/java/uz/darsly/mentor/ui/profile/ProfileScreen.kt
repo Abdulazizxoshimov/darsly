@@ -62,7 +62,10 @@ import java.time.ZoneId
  * eng ko'p qaraladigan ma'lumot yuqorida, eng xavfli amal (chiqish) pastda.
  */
 @Composable
-fun ProfileScreen(vm: ProfileViewModel = hiltViewModel()) {
+fun ProfileScreen(
+    onOpenBlocklist: () -> Unit,
+    vm: ProfileViewModel = hiltViewModel(),
+) {
     val state by vm.state.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     var passwordOpen by rememberSaveable { mutableStateOf(false) }
@@ -110,6 +113,7 @@ fun ProfileScreen(vm: ProfileViewModel = hiltViewModel()) {
             ) {
                 IdentityCard(user)
                 SettingsCard(state, vm)
+                ModerationCard(onOpenBlocklist = onOpenBlocklist)
                 SecurityCard(
                     loggingOut = state.loggingOut,
                     onChangePassword = { passwordOpen = true },
@@ -317,6 +321,30 @@ private fun PickerField(
                         },
                     )
                 }
+            }
+        }
+    }
+}
+
+/**
+ * Moderatsiya — hisobga tegishli (darsga emas) sozlamalar.
+ *
+ * Qora ro'yxat aynan SHU YERDA, xona ekranida emas: ban dars tugagandan keyin
+ * ham kuchda qoladi va uni qaytarish odatda boshqa kuni, sovuq boshda esga
+ * tushadi. Xona ichida bo'lsa, ustoz uni faqat dars paytida topa olardi.
+ */
+@Composable
+private fun ModerationCard(onOpenBlocklist: () -> Unit) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Moderatsiya", style = MaterialTheme.typography.titleSmall)
+            Text(
+                "Doimiy ban qo'yilgan ishtirokchilar ro'yxati — qaytarib olish uchun",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedButton(onClick = onOpenBlocklist, modifier = Modifier.fillMaxWidth()) {
+                Text("Qora ro'yxat")
             }
         }
     }

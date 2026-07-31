@@ -223,6 +223,11 @@ func (uc *useCase) toPublic(ctx context.Context, l *entity.Lesson) *entity.Lesso
 		Status:               l.Status,
 		HasPasscode:          l.PasscodeHash != nil,
 		IsWaitingRoomEnabled: l.IsWaitingRoomEnabled,
+		// Ovoz siyosati — klient mikrofon tugmasini to'g'ri ko'rsatsin
+		// (`entity.LessonPublic` izohiga qara). Sir emas: kirgan har bir
+		// ishtirokchi buni baribir birinchi publish'da his qiladi.
+		MuteOnEntry:     l.MuteOnEntry,
+		AllowSelfUnmute: l.AllowSelfUnmute,
 	}
 }
 

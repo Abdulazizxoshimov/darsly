@@ -38,6 +38,7 @@ import uz.darsly.mentor.data.livekit.LessonSessionHolder
 import uz.darsly.mentor.data.repo.NotificationsBadge
 import uz.darsly.mentor.service.LessonService
 import uz.darsly.mentor.ui.auth.PasswordResetScreen
+import uz.darsly.mentor.ui.blocklist.BlocklistScreen
 import uz.darsly.mentor.data.api.Lesson
 import uz.darsly.mentor.ui.lessons.LessonActions
 import uz.darsly.mentor.ui.lessons.LessonsScreen
@@ -81,6 +82,9 @@ private object Routes {
 
     const val ROOM = "room/{lessonId}"
     fun room(id: String) = "room/$id"
+
+    /** Kabinet ichidan ochiladigan qora ro'yxat (argumentsiz — ustozning o'ziniki). */
+    const val BLOCKLIST = "blocklist"
 
     /**
      * Yozuvlar ekrani sarlavhada dars NOMINI ko'rsatadi, shuning uchun u
@@ -223,7 +227,16 @@ private fun AppNav(vm: AppViewModel = hiltViewModel()) {
                 )
             }
 
-            composable(Routes.PROFILE) { ProfileScreen() }
+            composable(Routes.PROFILE) {
+                ProfileScreen(onOpenBlocklist = { nav.navigate(Routes.BLOCKLIST) })
+            }
+
+            // Qora ro'yxat pastki panelda YO'Q: u kamdan-kam ochiladi va Kabinet
+            // ichidagi o'z joyida turadi (`showBottomBar` uni ko'rsatmaydi — bu
+            // ekran to'liq ekranli, "orqaga" bilan Kabinetga qaytadi).
+            composable(Routes.BLOCKLIST) {
+                BlocklistScreen(onBack = { nav.popBackStack() })
+            }
 
             composable(Routes.ROOM) { entry ->
                 val lessonId = entry.arguments?.getString("lessonId") ?: return@composable

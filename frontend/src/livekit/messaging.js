@@ -55,11 +55,21 @@ export function decodeData(payload) {
 // `chat_deleted` va `poll_published` — FAQAT serverdan: birinchisi begona
 // klientga istalgan xabarni ekrandan o'chirish imkonini berardi (jimgina
 // senzura), ikkinchisi esa soxta natija ko'rsatardi.
-const SERVER_KINDS = new Set(['chat', 'chat_deleted', 'reaction', 'hand', 'poll', 'poll_published'])
-// 'policy' — ustoz klienti dars ovoz siyosatini (allow_self_unmute) tarqatadi:
-// backend buni push qilmaydi, o'quvchi esa mikrofon tugmasi holatini bilishi kerak.
-// Server baribir ENFORCE qiladi — bu faqat UI ko'rsatkichi, xavfsizlik chegarasi emas.
-const HOST_KINDS = new Set(['wb', 'poll', 'policy'])
+// `policy` (ovoz siyosati) endi SERVERDAN keladi: avval uni faqat WEB ustoz
+// klienti yuborardi, ya'ni telefondan o'tilgan darsda o'quvchi hech qanday
+// siyosat xabarini olmasdi va mikrofon tugmasi yolg'on ko'rsatardi (yoqadi,
+// server esa jimgina qayta mute qiladi). Server `mute-all` dan keyin xonaga
+// o'zi tarqatadi — bu ham to'g'ri, ham soxtalashtirib bo'lmaydigan manba.
+const SERVER_KINDS = new Set([
+  'chat',
+  'chat_deleted',
+  'reaction',
+  'hand',
+  'poll',
+  'poll_published',
+  'policy',
+])
+const HOST_KINDS = new Set(['wb', 'poll'])
 
 /**
  * Ishtirokchi HOST'mi — token metadata'si bo'yicha.

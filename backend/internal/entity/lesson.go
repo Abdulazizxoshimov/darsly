@@ -57,7 +57,12 @@ type CreateLessonReq struct {
 	//
 	// `nil` = "berilmagan" → yoqiladi. Oshkora `false` esa hurmat qilinadi.
 	IsRecordingEnabled   *bool      `json:"is_recording_enabled"`
-	IsWaitingRoomEnabled bool       `json:"is_waiting_room_enabled"`
+	// IsWaitingRoomEnabled ATAYLAB oddiy `bool` — [IsRecordingEnabled] dan
+	// farqli o'laroq bu yerda Go'ning nol qiymati (`false`) AYNAN mahsulot
+	// qoidasi: PRODUCT.md «Kutish xonasi: default o'chiq». Ya'ni maydon
+	// berilmasa kutish xonasi YOQILMAYDI va uni ko'rsatkichga aylantirib
+	// "nil = yoniq" qilish qoidani buzardi.
+	IsWaitingRoomEnabled bool `json:"is_waiting_room_enabled"`
 	// MuteOnEntry / AllowSelfUnmute — IsRecordingEnabled bilan bir xil
 	// "nil = server default (yoniq)" naqshi: mahsulot default'i (Zoom bilan bir
 	// xil, ikkalasi TRUE) klientda emas, serverda bajarilishi kerak.

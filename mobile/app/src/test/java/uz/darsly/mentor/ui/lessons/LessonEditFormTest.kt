@@ -2,6 +2,7 @@ package uz.darsly.mentor.ui.lessons
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -25,6 +26,8 @@ class LessonEditFormTest {
         hasPasscode: Boolean = false,
         waitingRoom: Boolean = false,
         recording: Boolean = false,
+        muteOnEntry: Boolean = true,
+        allowSelfUnmute: Boolean = true,
     ) = Lesson(
         id = "l1",
         title = title,
@@ -34,6 +37,8 @@ class LessonEditFormTest {
         hasPasscode = hasPasscode,
         isWaitingRoomEnabled = waitingRoom,
         isRecordingEnabled = recording,
+        muteOnEntry = muteOnEntry,
+        allowSelfUnmute = allowSelfUnmute,
     )
 
     // ─── fromLesson ───────────────────────────────────────────────────────────
@@ -206,5 +211,55 @@ class LessonEditFormTest {
         val original = lesson(recording = true)
         val input = LessonForm.fromLesson(original).copy(title = "Yangi nom")
         assertNull(LessonForm.toUpdateRequest(original, input)!!.isRecordingEnabled)
+    }
+
+    // ─── Ovoz sozlamalari (№11) ───────────────────────────────────────────────
+
+    @Test
+    fun `darsning ovoz sozlamalari formaga tushadi`() {
+        val input = LessonForm.fromLesson(lesson(muteOnEntry = false, allowSelfUnmute = false))
+        assertFalse(input.muteOnEntry)
+        assertFalse(input.allowSelfUnmute)
+    }
+
+    @Test
+    fun `maruza rejimiga otish PATCH da yuboriladi`() {
+        // `allow_self_unmute=false` — jonli darsda ham qo'llanadigan cheklov
+        // (api-contract.md). `false` tushib qolsa toggle jimgina ishlamasdi.
+        val original = lesson(allowSelfUnmute = true)
+        val input = LessonForm.fromLesson(original).copy(allowSelfUnmute = false)
+        assertEquals(false, LessonForm.toUpdateRequest(original, input)!!.allowSelfUnmute)
+    }
+
+    @Test
+    fun `kirganda mikrofon ochirilishi PATCH da yuboriladi`() {
+        val original = lesson(muteOnEntry = true)
+        val input = LessonForm.fromLesson(original).copy(muteOnEntry = false)
+        assertEquals(false, LessonForm.toUpdateRequest(original, input)!!.muteOnEntry)
+    }
+
+    @Test
+    fun `ovoz sozlamasini qaytarish ham yuboriladi`() {
+        val original = lesson(muteOnEntry = false)
+        val input = LessonForm.fromLesson(original).copy(muteOnEntry = true)
+        assertEquals(true, LessonForm.toUpdateRequest(original, input)!!.muteOnEntry)
+    }
+
+    @Test
+    fun `tegilmagan ovoz sozlamalari yuborilmaydi`() {
+        val original = lesson(muteOnEntry = false, allowSelfUnmute = false)
+        val input = LessonForm.fromLesson(original).copy(title = "Yangi nom")
+        val req = LessonForm.toUpdateRequest(original, input)!!
+        assertNull(req.muteOnEntry)
+        assertNull(req.allowSelfUnmute)
+    }
+
+    @Test
+    fun `faqat ovoz sozlamasi ozgarsa ham sorov yasaladi`() {
+        // `changed` shartiga yangi maydonlar qo'shilmasa, forma "o'zgarish yo'q"
+        // deb tarmoqqa umuman chiqmasdi — toggle jimgina yo'qolardi.
+        val original = lesson()
+        val input = LessonForm.fromLesson(original).copy(allowSelfUnmute = false)
+        assertNotNull(LessonForm.toUpdateRequest(original, input))
     }
 }

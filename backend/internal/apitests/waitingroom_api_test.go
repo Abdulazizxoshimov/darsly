@@ -136,3 +136,59 @@ func TestWaitingRoom_AdmitTOCTOU(t *testing.T) {
 			"LiveKit yo'q: 1-admit token bosqichida 500 (video disabled)")
 	}
 }
+
+// ⭐ «Hammasini kiritish» — bitta amal, bitta so'rov.
+//
+// Route + RBAC + qisman muvaffaqiyat hisobini uchdan-uchga tekshiradi
+// (birlik testlari usecase'ni qoplaydi, bu esa yo'l/siyosat/JSON shaklini).
+func TestWaitingRoom_AdmitAll(t *testing.T) {
+	srv, pg := newTestServer(t)
+	cl := &httpClient{t: t, base: srv.URL}
+
+	mentorTok := registerMentor(t, cl, pg, "Mentor AA", "wr_all_mentor@darsly.uz")
+	otherTok := registerMentor(t, cl, pg, "Other AA", "wr_all_other@darsly.uz")
+	studentTok := registerStudent(t, cl, "Student AA", "wr_all_student@darsly.uz")
+	lessonID, slug := createLesson(t, cl, mentorTok, map[string]any{
+		"title": "Biologiya", "is_waiting_room_enabled": true,
+	})
+
+	r1 := guestJoinWaiting(t, cl, slug, "Aziz")
+	r2 := guestJoinWaiting(t, cl, slug, "Bek")
+
+	// Token'siz → 401, student → 403 (RBAC), begona mentor → 403 (egalik).
+	code, _ := cl.post("/api/v1/lessons/"+lessonID+"/waitingroom/admit-all", "", nil)
+	require.Equal(t, http.StatusUnauthorized, code, "token'siz admit-all → 401")
+	code, _ = cl.post("/api/v1/lessons/"+lessonID+"/waitingroom/admit-all", studentTok, nil)
+	require.Equal(t, http.StatusForbidden, code, "student admit-all → 403 (RBAC)")
+	code, _ = cl.post("/api/v1/lessons/"+lessonID+"/waitingroom/admit-all", otherTok, nil)
+	require.Equal(t, http.StatusForbidden, code, "begona mentor admit-all → 403 (egalik)")
+
+	// Egasi → butun navbat bitta so'rovda hal bo'ladi.
+	code, body := cl.post("/api/v1/lessons/"+lessonID+"/waitingroom/admit-all", mentorTok, nil)
+	require.Equal(t, http.StatusOK, code, "admit-all: %s", body)
+	require.Equal(t, 2, jsonInt(body, "data", "total"), "navbatdagilar soni: %s", body)
+
+	if liveKitAvailable() {
+		require.Equal(t, 2, jsonInt(body, "data", "admitted"))
+		require.Equal(t, 0, jsonInt(body, "data", "failed"))
+	} else {
+		// LiveKit yo'q — token bosqichi uziladi. Amal baribir BEKOR BO'LMAYDI
+		// va javob rostini aytadi (`failed`), 500 bermaydi: bir kishidagi
+		// nosozlik butun navbatni to'xtatmasligi kerak degan qoida shu.
+		require.Equal(t, 0, jsonInt(body, "data", "admitted"))
+		require.Equal(t, 2, jsonInt(body, "data", "failed"))
+	}
+
+	// Qaror IKKALASI uchun ham chiqqan (atomik claim tokendan oldin) — navbat bo'sh.
+	for _, rid := range []string{r1, r2} {
+		code, body = cl.get("/api/v1/waitingroom/"+rid+"/status", "")
+		require.Equal(t, http.StatusOK, code)
+		require.Equal(t, "admitted", gjson(body, "data", "status"))
+	}
+
+	// Qayta bosilsa — 0. Xato EMAS: tugma bloklanib qolmasin.
+	code, body = cl.post("/api/v1/lessons/"+lessonID+"/waitingroom/admit-all", mentorTok, nil)
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, 0, jsonInt(body, "data", "total"))
+	require.Equal(t, 0, jsonInt(body, "data", "admitted"))
+}

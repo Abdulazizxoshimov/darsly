@@ -59,11 +59,14 @@ describe('CreateLessonModal (tezkor dars)', () => {
     expect(document.querySelector('input[type="datetime-local"]')).toBeNull()
   })
 
-  it('yozib olish va kutish xonasi DEFAULT YONIQ', () => {
+  // PRODUCT.md: yozib olish YONIQ (o'tib ketgan darsni qaytarib bo'lmaydi),
+  // kutish xonasi esa O'CHIQ (har kirganni qo'lda tasdiqlash tezkor darsda ortiqcha).
+  it('yozib olish DEFAULT YONIQ, kutish xonasi DEFAULT O‘CHIQ', () => {
     setup()
     const switches = screen.getAllByRole('switch')
     expect(switches).toHaveLength(2)
-    for (const s of switches) expect(s).toHaveAttribute('aria-checked', 'true')
+    expect(switches[0]).toHaveAttribute('aria-checked', 'true')
+    expect(switches[1]).toHaveAttribute('aria-checked', 'false')
   })
 
   it('scheduled_at YUBORILMAYDI, bo‘sh parol ham yuborilmaydi', async () => {
@@ -76,7 +79,8 @@ describe('CreateLessonModal (tezkor dars)', () => {
     const body = createLesson.mock.calls[0][0]
     expect(body.title).toBe('Algebra')
     expect(body.is_recording_enabled).toBe(true)
-    expect(body.is_waiting_room_enabled).toBe(true)
+    // Kutish xonasi DEFAULT O'CHIQ (PRODUCT.md) — server default'i bilan bir xil.
+    expect(body.is_waiting_room_enabled).toBe(false)
     expect(body).not.toHaveProperty('scheduled_at')
     expect(body).not.toHaveProperty('description')
     expect(body).not.toHaveProperty('duration_min')

@@ -236,3 +236,46 @@ func TestSetHand_LiveKitOchiqBolsaHamSaqlanadi(t *testing.T) {
 	require.Len(t, st.Hands, 1)
 	require.Empty(t, lk.Sent)
 }
+
+// ⭐ Xona holati ovoz siyosatini ham qaytarishi kerak.
+//
+// Siyosat dars O'RTASIDA o'zgaradi ("Hammani o'chirish" checkbox'i). O'zgarish
+// paytida ulanmagan yoki qayta ulangan o'quvchi uni data-message'dan ololmaydi —
+// bir martalik xabar o'tib ketgan. Xona holati esa aynan "kech kelgan klient
+// shu bilan tiklanadi" uchun bor.
+func TestState_ReturnsAudioPolicy(t *testing.T) {
+	ctx := context.Background()
+	lrepo := testutil.NewFakeLessonRepo()
+	require.NoError(t, lrepo.Create(ctx, &entity.Lesson{
+		ID: lessonID, MentorID: mentorID, Status: entity.LessonStatusLive,
+		MuteOnEntry: true, AllowSelfUnmute: false,
+	}))
+	uc := roomstate.New(lrepo, testutil.NewFakeLiveKit(), testutil.NewFakeCache(), nil, testutil.NewLogger())
+
+	st, err := uc.State(ctx, lessonID)
+	require.NoError(t, err)
+	require.True(t, st.MuteOnEntry)
+	require.False(t, st.AllowSelfUnmute, "unmute taqiqi holatda ko'rinishi kerak")
+
+	// Ustoz siyosatni dars o'rtasida yumshatdi — holat YANGI qiymatni bersin
+	// (kech ulangan klient eski siyosatga tushib qolmasin).
+	l, err := lrepo.GetByID(ctx, lessonID)
+	require.NoError(t, err)
+	l.AllowSelfUnmute = true
+	require.NoError(t, lrepo.Update(ctx, l))
+
+	st, err = uc.State(ctx, lessonID)
+	require.NoError(t, err)
+	require.True(t, st.AllowSelfUnmute, "o'zgargan siyosat holatda aks etishi kerak")
+}
+
+// Dars o'qib bo'lmasa siyosat RUXSAT BERUVCHI bo'lishi kerak: mavjud bo'lmagan
+// taqiqni ko'rsatish (tugma o'chiq, lekin server hech narsani mute qilmaydi)
+// — bu real cheklovsiz real zarar.
+func TestState_UnknownLesson_PermissivePolicy(t *testing.T) {
+	uc, _, _ := setup(t)
+	st, err := uc.State(context.Background(), "22222222-2222-2222-2222-222222222222")
+	require.NoError(t, err)
+	require.True(t, st.AllowSelfUnmute, "dars topilmasa mikrofon tugmasi o'chib qolmasin")
+	require.False(t, st.MuteOnEntry)
+}

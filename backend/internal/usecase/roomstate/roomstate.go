@@ -181,12 +181,16 @@ func (uc *useCase) State(ctx context.Context, lessonID string) (*entity.RoomStat
 	}
 	// Yozuv indikatori — ishtirokchi o'zi yozilayotganini KO'RISHI kerak.
 	rec := uc.recorder != nil && uc.recorder.IsRecording(ctx, lessonID)
+	muteOnEntry, allowSelfUnmute := uc.audioPolicy(ctx, lessonID)
 
 	raw, err := uc.cache.HGetAll(ctx, handsKey(lessonID))
 	if err != nil {
 		// Kalit yo'q — bu XATO EMAS, shunchaki hech kim qo'l ko'tarmagan.
 		// (redisCache.HGetAll bo'sh hash uchun ham xato qaytaradi.)
-		return &entity.RoomState{Hands: []entity.RaisedHand{}, Recording: rec}, nil
+		return &entity.RoomState{
+			Hands: []entity.RaisedHand{}, Recording: rec,
+			MuteOnEntry: muteOnEntry, AllowSelfUnmute: allowSelfUnmute,
+		}, nil
 	}
 
 	hands := make([]entity.RaisedHand, 0, len(raw))
@@ -209,7 +213,27 @@ func (uc *useCase) State(ctx context.Context, lessonID string) (*entity.RoomStat
 		}
 		return hands[i].RaisedAt.Before(hands[j].RaisedAt)
 	})
-	return &entity.RoomState{Hands: hands, Recording: rec}, nil
+	return &entity.RoomState{
+		Hands: hands, Recording: rec,
+		MuteOnEntry: muteOnEntry, AllowSelfUnmute: allowSelfUnmute,
+	}, nil
+}
+
+// audioPolicy — darsning ovoz siyosati (`entity.RoomState` izohiga qara).
+//
+// Dars o'qib bo'lmasa RUXSAT BERUVCHI qiymatlar qaytadi (`allow_self_unmute=true`).
+// Sabab: bu maydonlar faqat UI ko'rsatkichi, chegara emas. DB nosozligida
+// o'quvchining mikrofon tugmasini o'chirib qo'yish — mavjud bo'lmagan taqiqni
+// ko'rsatish, ya'ni real cheklovsiz real zarar. Teskari xato (tugma yoniq, server
+// mute qiladi) esa mavjud xulqdan yomonroq emas.
+func (uc *useCase) audioPolicy(ctx context.Context, lessonID string) (muteOnEntry, allowSelfUnmute bool) {
+	l, err := uc.lessonRepo.GetByID(ctx, lessonID)
+	if err != nil || l == nil {
+		uc.log.Warn(ctx, "roomstate.State: dars o'qilmadi, ovoz siyosati default'da",
+			logger.String("lesson_id", lessonID))
+		return false, true
+	}
+	return l.MuteOnEntry, l.AllowSelfUnmute
 }
 
 func (uc *useCase) Reaction(ctx context.Context, lessonID, identity, name, emoji string) error {

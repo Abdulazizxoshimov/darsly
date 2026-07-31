@@ -21,6 +21,10 @@ type LiveKit interface {
 	MuteParticipant(ctx context.Context, room, identity string, audioOnly bool) error
 	RemoveParticipant(ctx context.Context, room, identity string) error
 	SetParticipantPublish(ctx context.Context, room, identity string, canPublish bool) error
+	// SendData — xonadagi HAMMAGA data-message. Ovoz siyosati o'zgarganini
+	// server tarqatishi uchun (`MuteAll` izohiga qara): avval buni faqat ustoz
+	// KLIENTI yuborardi va mobil ustozda u umuman yo'q edi.
+	SendData(ctx context.Context, room string, data []byte) error
 }
 
 type UseCase interface {

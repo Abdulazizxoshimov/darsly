@@ -230,3 +230,26 @@ func TestJoinEndedLesson(t *testing.T) {
 	require.Empty(t, gjson(body, "data", "request_id"), "kutish so'rovi ham yaratilmasin")
 	require.Equal(t, "ended", gjson(body, "data", "lesson", "status"))
 }
+
+// ⭐ Ovoz siyosati OCHIQ joinlink javobida bo'lishi kerak.
+//
+// O'quvchi mikrofon tugmasini shu qiymatlar bo'yicha chizadi. Avval ular faqat
+// ustoz KLIENTIDAN data-message bilan kelardi va mobil ustoz uni umuman
+// yubormasdi — telefondan o'tilgan darsda tugma yolg'on ko'rsatardi.
+func TestJoinPreview_ReturnsAudioPolicy(t *testing.T) {
+	srv, pg := newTestServer(t)
+	clearRateLimits(t)
+	cl := &httpClient{t: t, base: srv.URL}
+
+	_, _ = mustRegister(t, cl, "Dilnoza", "jpol@darsly.uz", "parol12345")
+	promoteMentor(t, pg, "jpol@darsly.uz")
+	tok := loginToken(t, cl, "jpol@darsly.uz", "parol12345")
+	_, slug := createLesson(t, cl, tok, map[string]any{
+		"title": "Ovoz siyosati", "mute_on_entry": true, "allow_self_unmute": false,
+	})
+
+	code, body := cl.get("/api/v1/joinlink/"+slug, "")
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, true, jsonGet(body, "data", "mute_on_entry"), "preview: %s", body)
+	require.Equal(t, false, jsonGet(body, "data", "allow_self_unmute"), "preview: %s", body)
+}

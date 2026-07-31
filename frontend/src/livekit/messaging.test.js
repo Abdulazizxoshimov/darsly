@@ -7,7 +7,7 @@ import { acceptData, decodeData, encodeData } from './messaging'
 // har paketga uni KIM yuborganini o'zi biriktiradi — soxtalashtirib bo'lmaydi:
 //
 //   participant yo'q → serverdan → ishonchli
-//   participant bor  → klientdan → faqat HOST, faqat `wb` / `poll` / `policy`
+//   participant bor  → klientdan → faqat HOST, faqat `wb` / `poll`
 
 const pack = (obj) => encodeData(obj)
 const HOST = { identity: 'mentor1', name: 'Ustoz', metadata: JSON.stringify({ role: 'host' }) }
@@ -68,6 +68,27 @@ describe('acceptData — kim nima yubora oladi', () => {
   it('MEHMON yuborgan poll_published RAD etiladi', () => {
     const msg = decodeData(pack({ kind: 'poll_published', results: { total: 999 } }))
     expect(acceptData(msg, GUEST)).toBeNull()
+  })
+
+  // Ovoz siyosati — SERVER e'lon qiladi. Avval `policy` host klientidan
+  // kutilardi va serverdan kelgan xabar (`participant` yo'q) jimgina tashlab
+  // yuborilardi: telefondan o'tilgan darsda o'quvchining mikrofon tugmasi
+  // yolg'on ko'rsatardi.
+  it('SERVERDAN kelgan policy QABUL qilinadi', () => {
+    const msg = decodeData(pack({ kind: 'policy', mute_on_entry: true, allow_self_unmute: false }))
+    const out = acceptData(msg, undefined)
+    expect(out).toBeTruthy()
+    expect(out.allow_self_unmute).toBe(false)
+    expect(out.mute_on_entry).toBe(true)
+  })
+
+  it('KLIENTdan kelgan policy RAD etiladi — ustoznikidan ham', () => {
+    const msg = decodeData(pack({ kind: 'policy', allow_self_unmute: true }))
+    expect(acceptData(msg, GUEST)).toBeNull()
+    // Ustoz ham: taqiqni server qo'yadi, u ham e'lon qiladi. Klientdan qabul
+    // qilsak, mehmon "endi ochsa bo'ladi" degan soxta xabar bilan tugmani
+    // yoqib qo'yardi (server esa jimgina qayta mute qilardi).
+    expect(acceptData(msg, HOST)).toBeNull()
   })
 
   it('ustozning doska xabari QABUL qilinadi va muallif qayta yoziladi', () => {

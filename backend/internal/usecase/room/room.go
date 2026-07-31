@@ -2,6 +2,7 @@ package room
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -560,8 +561,46 @@ func (uc *useCase) MuteAll(ctx context.Context, mentorID, lessonID string, allow
 	}
 	_ = g.Wait()
 
+	// Siyosatni SERVER tarqatadi.
+	//
+	// Avval `kind:"policy"` xabarini faqat WEB ustoz klienti yuborardi. Mobil
+	// ustoz hech narsa yubormasdi, ya'ni telefondan o'tilgan darsda o'quvchining
+	// mikrofon tugmasi "yoqish mumkin" deb qolardi va bosilganda server uni
+	// jimgina qayta mute qilardi — foydalanuvchi uchun "tugma ishlamadi".
+	// Endi manba bitta: siyosat qayerda saqlansa (server), o'zgarish ham
+	// o'sha yerdan e'lon qilinadi va HAR QANDAY klient bir xil xabar oladi.
+	uc.broadcastPolicy(ctx, lessonID, l)
+
 	uc.log.Info(ctx, "room: mute all", logger.String("lesson_id", lessonID), logger.Int("count", len(parts)))
 	return nil
+}
+
+// broadcastPolicy — dars ovoz siyosatini xonaga e'lon qiladi.
+//
+// Xabar shakli klient kutayotgani bilan aynan mos
+// (`frontend/src/livekit/messaging.js` → `kind:"policy"`).
+//
+// Tarqatish muvaffaqiyatsiz bo'lsa amal BEKOR QILINMAYDI: siyosat DB'da
+// saqlangan va kech ulangan klient uni `GET /rooms/:lessonID/state` orqali
+// baribir oladi (`entity.RoomState` izohiga qara).
+func (uc *useCase) broadcastPolicy(ctx context.Context, lessonID string, l *entity.Lesson) {
+	if !uc.livekit.Enabled() {
+		return
+	}
+	data, err := json.Marshal(map[string]any{
+		"kind":              "policy",
+		"mute_on_entry":     l.MuteOnEntry,
+		"allow_self_unmute": l.AllowSelfUnmute,
+	})
+	if err != nil {
+		return
+	}
+	sendCtx, cancel := lkCtx(ctx)
+	defer cancel()
+	if err := uc.livekit.SendData(sendCtx, roomName(lessonID), data); err != nil {
+		uc.log.Warn(ctx, "room.broadcastPolicy: tarqatib bo'lmadi",
+			logger.String("lesson_id", lessonID), logger.SafeString("err", err.Error()))
+	}
 }
 
 func (uc *useCase) RemoveParticipant(ctx context.Context, mentorID, lessonID, identity, scope string) error {

@@ -17,6 +17,21 @@ type LessonPublic struct {
 	Status               string     `json:"status"`
 	HasPasscode          bool       `json:"has_passcode"`
 	IsWaitingRoomEnabled bool       `json:"is_waiting_room_enabled"`
+	// Ovoz siyosati — o'quvchi mikrofon tugmasini TO'G'RI ko'rsatishi uchun.
+	//
+	// # Nega SERVERDAN
+	//
+	// Avval o'quvchi `allow_self_unmute` ni faqat USTOZ KLIENTI yuboradigan
+	// data-message'dan bilardi. Mobil ustoz esa uni umuman yubormaydi, ya'ni
+	// telefondan o'tilgan darsda o'quvchining tugmasi "yoqish mumkin" deb
+	// yolg'on ko'rsatardi: bosilganda server jimgina qayta mute qilardi
+	// (`room.EnforceAudioPolicy`) va foydalanuvchi uchun bu "mikrofon buzuq"
+	// bo'lib ko'rinardi. Siyosat serverda saqlanadi — javobda ham serverdan
+	// kelishi kerak, klientlararo kelishuvdan emas.
+	//
+	// Bu FAQAT ko'rsatkich: haqiqiy chegara baribir serverda (webhook).
+	MuteOnEntry     bool `json:"mute_on_entry"`
+	AllowSelfUnmute bool `json:"allow_self_unmute"`
 }
 
 // JoinLessonResp — kirish so'rovi natijasi.

@@ -29,6 +29,20 @@ type RoomState struct {
 	// o'quvchida allaqachon bor (room-token bilan) va u shu endpointni
 	// muntazam so'raydi — qo'shimcha so'rov kerak emas.
 	Recording bool `json:"recording"`
+	// MuteOnEntry / AllowSelfUnmute — darsning ovoz siyosati.
+	//
+	// # Nega xona holatida
+	//
+	// Siyosat dars O'RTASIDA o'zgaradi (ustoz "Hammani o'chirish" dialogidagi
+	// checkbox bilan), va o'zgarish paytida ulanmagan yoki qayta ulangan
+	// o'quvchi bu haqda hech qayerdan bilmasdi: data-message bir martalik,
+	// joinlink javobi esa faqat kirishda o'qiladi. Xona holati esa aynan
+	// "kech kelgan klient shu bilan tiklanadi" uchun mavjud — siyosat ham
+	// shu yerda bo'lishi kerak.
+	//
+	// FAQAT ko'rsatkich: haqiqiy chegara — server (`room.EnforceAudioPolicy`).
+	MuteOnEntry     bool `json:"mute_on_entry"`
+	AllowSelfUnmute bool `json:"allow_self_unmute"`
 }
 
 // ── So'rov turlari ────────────────────────────────────────────────────────────

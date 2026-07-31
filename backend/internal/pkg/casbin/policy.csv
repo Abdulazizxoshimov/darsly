@@ -39,6 +39,9 @@ p, mentor, /api/v1/lessons/:id,           DELETE
 p, mentor, /api/v1/lessons/:id/token,     POST
 p, mentor, /api/v1/lessons/:id/end,       POST
 p, mentor, /api/v1/lessons/:id/waitingroom, GET
+# `keyMatch2` bitta segmentni qamraydi — yuqoridagi qoida `/admit-all` ni
+# QOPLAMAYDI, shuning uchun alohida yozilgan (`/chat/upload` bilan bir xil sabab).
+p, mentor, /api/v1/lessons/:id/waitingroom/admit-all, POST
 p, mentor, /api/v1/lessons/:id/participants, GET
 p, mentor, /api/v1/lessons/:id/mute-all,  POST
 p, mentor, /api/v1/lessons/:id/participants/:identity/mute,   POST

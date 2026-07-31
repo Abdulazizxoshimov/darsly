@@ -153,3 +153,41 @@ func TestRoomState_HandFlow(t *testing.T) {
 	require.Equal(t, http.StatusOK, code)
 	require.NotContains(t, body, "raised_at", "tushirilgan qo'l holatda qolmasligi kerak")
 }
+
+// ⭐ TestRoomState_AudioPolicyLive (LiveKit kerak): xona holati ovoz siyosatini
+// qaytaradi va u dars O'RTASIDAGI o'zgarishdan keyin YANGILANADI.
+//
+// Bu kech ulangan/qayta ulangan o'quvchi uchun yagona ishonchli manba:
+// `mute-all` bilan yuborilgan data-message bir martalik, uni o'tkazib yuborgan
+// klient siyosatni boshqa hech qayerdan bila olmasdi.
+func TestRoomState_AudioPolicyLive(t *testing.T) {
+	if !liveKitAvailable() {
+		t.Skip("TEST_LIVEKIT yo'q — room-token bilan holat oqimi skip")
+	}
+	srv, pg := newTestServer(t)
+	cl := &httpClient{t: t, base: srv.URL}
+
+	mentorTok := registerMentor(t, cl, pg, "RS Policy", "rs_policy@darsly.uz")
+	lessonID, _ := createLesson(t, cl, mentorTok, map[string]any{
+		"title": "Ovoz", "mute_on_entry": true, "allow_self_unmute": true,
+	})
+
+	code, body := cl.post("/api/v1/lessons/"+lessonID+"/token", mentorTok, nil)
+	require.Equal(t, http.StatusOK, code, "host token: %s", body)
+	roomToken := gjson(body, "data", "token")
+
+	code, body = cl.get("/api/v1/rooms/"+lessonID+"/state?token="+roomToken, "")
+	require.Equal(t, http.StatusOK, code, "state: %s", body)
+	require.Equal(t, true, jsonGet(body, "data", "mute_on_entry"), "state: %s", body)
+	require.Equal(t, true, jsonGet(body, "data", "allow_self_unmute"), "state: %s", body)
+
+	// Ustoz dars o'rtasida "hammani o'chirish + o'zi ocholmasin" qiladi.
+	code, body = cl.post("/api/v1/lessons/"+lessonID+"/mute-all", mentorTok,
+		map[string]any{"allow_self_unmute": false})
+	require.Equal(t, http.StatusNoContent, code, "mute-all: %s", body)
+
+	code, body = cl.get("/api/v1/rooms/"+lessonID+"/state?token="+roomToken, "")
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, false, jsonGet(body, "data", "allow_self_unmute"),
+		"o'zgargan siyosat holatda ko'rinishi kerak: %s", body)
+}
