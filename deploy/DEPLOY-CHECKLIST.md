@@ -28,8 +28,24 @@ cd frontend && npm ci && npm run build && rsync -a --delete dist/ ../deploy/serv
 # "path /opt/backend not found" bilan yiqilardi (2026-07-31 da ko'rindi).
 cd .. && rsync -a --delete --exclude .git --exclude node_modules \
   backend root@169.58.104.245:/opt/darsly/
-rsync -a --delete --exclude .git \
+
+# ⚠️ deploy/server uchun --delete BILAN EHTIYOT BO'LING: serverda GENERATSIYA
+# QILINGAN va git'da YO'Q fayllar bor — ular o'chib ketadi:
+#   .env (barcha sirlar!) · livekit.yaml · dl/*.apk · observability/metrics_token
+# 2026-08-01 da aynan shu bo'ldi: .env o'chdi. Tiklash mumkin bo'ldi
+# (qiymatlar ishlab turgan konteynerdan olindi), lekin konteynerlar ham
+# o'chgan bo'lsa sirlar butunlay yo'qolardi va DB parolini bilmay qolardik.
+rsync -a --exclude .git --exclude '.env' --exclude 'livekit.yaml' \
+  --exclude 'dl/' --exclude 'observability/metrics_token' \
   deploy/server root@169.58.104.245:/opt/darsly/deploy/
+```
+
+**Sirlarni tiklash (agar .env yo'qolsa):**
+```bash
+ssh root@169.58.104.245 'cd /opt/darsly/deploy/server && \
+  docker inspect darsly-backend --format "{{range .Config.Env}}{{println .}}{{end}}" \
+  | grep -vE "^(PATH|HOSTNAME|HOME|TERM)=" | grep "=" > .env'
+# Keyin: SERVER_IP=... ./remote-setup.sh  (yetishmagan kalitlarni qo'shadi)
 ```
 
 ## 2. Sirlar va konfiguratsiya
