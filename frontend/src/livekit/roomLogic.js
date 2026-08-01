@@ -148,6 +148,24 @@ export function rateLimiter(minIntervalMs, now = Date.now) {
  * Holatlar: 'idle' (yopiq) · 'open' · 'dismissed' (ustoz yopgan — tegmaymiz)
  * Hodisalar: 'share_start' · 'share_stop' · 'user_close' · 'user_open'
  */
+/**
+ * "Chat ustozning KO'Z OLDIDAMI?" — o'qilmagan sanog'i shu javobga bog'liq.
+ *
+ * Ekran ulashilayotganda ustoz odatda brauzerda EMAS (PDF/kod/slayd oynasida),
+ * ya'ni asosiy oynadagi ochiq chat paneli hech narsani ko'rsatmaydi. Shuning
+ * uchun suzuvchi oyna ochiq bo'lsa yagona haqiqiy manba — o'sha oynadagi chat.
+ *
+ * Aks holda ikki xato bo'lardi:
+ *   · PiP ochiq, asosiy panel ham 'chat' → badge umuman o'smaydi va ustoz
+ *     yangi savolni butunlay o'tkazib yuboradi;
+ *   · PiP chati ochiq turib badge o'sib borsa → ko'z oldidagi xabar uchun
+ *     "o'qimadingiz" degan yolg'on signal.
+ */
+export function isChatVisible({ panel, pipOpen, pipChatOpen }) {
+  if (pipOpen) return !!pipChatOpen
+  return panel === 'chat'
+}
+
 export function nextPipState(state, event) {
   switch (event) {
     case 'share_start':

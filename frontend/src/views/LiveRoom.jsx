@@ -19,8 +19,8 @@ import { errorText } from '../api/api'
 import { useRoom } from '../livekit/useRoom'
 import { acceptData, decodeData, encodeData } from '../livekit/messaging'
 import * as roomstateApi from '../api/roomstate'
-import { applyHandEvent, linkView, nextPipState, rateLimiter } from '../livekit/roomLogic'
-import { PIP_SUPPORTED, PresenterPanel, PresenterPip } from '../livekit/PresenterPip'
+import { applyHandEvent, isChatVisible, linkView, nextPipState, rateLimiter } from '../livekit/roomLogic'
+import { PIP_SUPPORTED, PresenterPanel, PresenterPip, pipWindowSize } from '../livekit/PresenterPip'
 import { Stage } from '../livekit/Stage'
 import { Whiteboard } from '../livekit/Whiteboard'
 import { RoomRail } from '../livekit/RoomRail'
@@ -240,7 +240,19 @@ function RoomStage({ isHost, lessonId, slug, title, lesson, roomToken, onLeave }
   const [allowSelfUnmute, setAllowSelfUnmute] = useState(lesson?.allow_self_unmute !== false)
   // Suzuvchi oyna holati — mantiq `roomLogic.nextPipState` da (testlar ostida).
   const [pipState, setPipState] = useState('idle')
+  // Suzuvchi oyna ICHIDAGI ikki mustaqil ochilish: chat paneli va qo'l ro'yxati.
+  // Ular bu yerda (pastda emas) — chunki aynan shu ikkisi OYNA O'LCHAMINI
+  // belgilaydi, o'lchamni esa `PresenterPip` ga prop sifatida uzatamiz.
+  const [pipChatOpen, setPipChatOpen] = useState(false)
+  const [pipHandsOpen, setPipHandsOpen] = useState(false)
+  // Brauzer suzuvchi oynani qo'llab-quvvatlamasa ko'rsatiladigan tushuntirish
+  // (Firefox/Safari) — ustoz "nega ochilmadi" deb qolmasin.
+  const [pipHintOff, setPipHintOff] = useState(false)
   const chatIds = useRef(new Set())
+  // `addChat` (data-channel hodisasi) suzuvchi oyna holatini RENDER'siz o'qishi
+  // kerak — `panelRef` bilan bir xil sabab (aks holda obuna qayta o'rnatilardi).
+  const pipOpenRef = useRef(false)
+  const pipChatRef = useRef(false)
   // Joriy panel — `addChat` (data-channel hodisasi) uni render'siz o'qishi
   // kerak, aks holda har panel almashuvida qayta yaratilardi va u bilan birga
   // butun hodisa obunasi qayta o'rnatilardi.
@@ -294,14 +306,20 @@ function RoomStage({ isHost, lessonId, slug, title, lesson, roomToken, onLeave }
     [localId],
   )
 
-  // O'qilmagan sanog'i chat paneli YOPIQ bo'lgandagina o'sadi: ochiq panelda
-  // xabar allaqachon ko'z oldida turadi va tugmadagi badge o'sib borishi
-  // "o'qimagan xabaringiz bor" degan yolg'on signal bo'lardi.
+  // O'qilmagan sanog'i chat KO'RINMAYOTGANDA o'sadi. "Ko'rinish" qoidasi
+  // `roomLogic.isChatVisible` da (test ostida): ekran ulashilayotganda ustoz
+  // brauzerda emas, shuning uchun suzuvchi oyna ochiq bo'lsa haqiqat manbai —
+  // o'sha oynadagi chat, asosiy paneldagisi emas.
   const addChat = useCallback((e) => {
     if (chatIds.current.has(e.id)) return
     chatIds.current.add(e.id)
     setChat((prev) => [...prev, e])
-    if (!e.self && panelRef.current !== 'chat') setUnreadChat((n) => n + 1)
+    const visible = isChatVisible({
+      panel: panelRef.current,
+      pipOpen: pipOpenRef.current,
+      pipChatOpen: pipChatRef.current,
+    })
+    if (!e.self && !visible) setUnreadChat((n) => n + 1)
   }, [])
 
   // Moderatsiya: xabar ro'yxatdan olib tashlanadi, LEKIN ID `chatIds` da
@@ -591,7 +609,19 @@ function RoomStage({ isHost, lessonId, slug, title, lesson, roomToken, onLeave }
   useEffect(() => {
     if (!PIP_SUPPORTED) return
     setPipState((st) => nextPipState(st, sharing ? 'share_start' : 'share_stop'))
+    // Ulashish tugadi — oyna KOMPAKT holatga qaytadi: keyingi ulashish
+    // ustozning ish ekranini darrov chorak ekranlik panel bilan yopmasin.
+    if (!sharing) {
+      pipChatRef.current = false
+      setPipChatOpen(false)
+      setPipHandsOpen(false)
+    }
   }, [sharing])
+
+  // Suzuvchi oyna ochiqligini ref'ga ko'chiramiz (`addChat` uni render'siz o'qiydi).
+  useEffect(() => {
+    pipOpenRef.current = pipState === 'open'
+  }, [pipState])
 
   const publish = useCallback(
     (msg, identities) => {
@@ -914,8 +944,28 @@ function RoomStage({ isHost, lessonId, slug, title, lesson, roomToken, onLeave }
     [raisedHands, localId],
   )
 
-  // PiP uchun oxirgi xabarlar — oyna kichik, to'liq tarix asosiy oynada qoladi.
-  const pipChat = useMemo(() => chat.slice(-8), [chat])
+  // PiP uchun oxirgi xabarlar. Panel ochilganda ekranning ~1/4 ini egallaydi,
+  // ya'ni 8 ta xabar juda oz edi; to'liq tarix baribir asosiy oynada qoladi.
+  const pipChat = useMemo(() => chat.slice(-50), [chat])
+
+  // Suzuvchi oynadagi chat: ochilganda o'qilmagan sanog'i NOLGA tushadi (xabar
+  // endi ko'z oldida). Qo'l ro'yxati esa yopiladi — ikkalasi birga ochilsa
+  // kichik oynada ikki ro'yxat bir-birini siqib qo'yardi.
+  const togglePipChat = useCallback(() => {
+    const next = !pipChatRef.current
+    pipChatRef.current = next
+    setPipChatOpen(next)
+    if (next) {
+      setUnreadChat(0)
+      setPipHandsOpen(false)
+    }
+  }, [])
+
+  // Qo'l ro'yxati: badge SANOG'IGA tegmaydi — qo'l "o'qilmagan xabar" emas,
+  // HOLAT. U faqat qo'l tushirilganda (yoki egasi tushirganda) kamayadi.
+  const togglePipHands = useCallback(() => {
+    setPipHandsOpen((v) => !v)
+  }, [])
 
   const stopShare = useCallback(() => {
     room?.localParticipant.setScreenShareEnabled(false).catch(() => {})
@@ -930,6 +980,12 @@ function RoomStage({ isHost, lessonId, slug, title, lesson, roomToken, onLeave }
   const raisedHandsCount = useMemo(
     () => [...raisedHands.keys()].filter((id) => id !== localId).length,
     [raisedHands, localId],
+  )
+
+  // Suzuvchi oyna o'lchami — sof funksiya (`pipWindowSize`, test ostida).
+  const pipSize = useMemo(
+    () => pipWindowSize({ chatOpen: pipChatOpen, handsOpen: pipHandsOpen, handCount: handQueue.length }),
+    [pipChatOpen, pipHandsOpen, handQueue.length],
   )
 
   if (!room) {
@@ -1041,6 +1097,20 @@ function RoomStage({ isHost, lessonId, slug, title, lesson, roomToken, onLeave }
         </div>
       )}
 
+      {/* Suzuvchi oyna Chrome/Edge xususiyati. Firefox/Safari'da u YO'Q — bu
+          "xato" emas, lekin ustoz sababini bilmasa uni bizning nosozligimiz deb
+          o'ylaydi. Shuning uchun ulashish boshlanganda bir marta tushuntiramiz. */}
+      {sharing && !PIP_SUPPORTED && !pipHintOff && (
+        <div className="speak-banner speak-banner--warn">
+          <PictureInPicture2 size={16} />
+          <span className="grow">
+            Bu brauzer suzuvchi oynani qo‘llab-quvvatlamaydi — chat va qo‘l signallari faqat shu oynada
+            ko‘rinadi. Chrome yoki Edge’da ular boshqa ilova ustida ham turadi.
+          </span>
+          <button className="icon-btn" onClick={() => setPipHintOff(true)} aria-label="Yopish">×</button>
+        </div>
+      )}
+
       <div className="room__body">
         <div className="stage">
           {wbOn ? (
@@ -1111,13 +1181,26 @@ function RoomStage({ isHost, lessonId, slug, title, lesson, roomToken, onLeave }
 
       <PresenterPip
         open={pipState === 'open'}
+        width={pipSize.width}
+        height={pipSize.height}
         onClose={() => setPipState((st) => nextPipState(st, 'user_close'))}
-        onOpenFailed={() => setPipState((st) => nextPipState(st, 'user_close'))}
+        onOpenFailed={() => {
+          setPipState((st) => nextPipState(st, 'user_close'))
+          // Document PiP foydalanuvchi harakatini talab qiladi va ekran tanlash
+          // oynasidan keyin bu "ruxsat" sarflangan bo'lishi mumkin. Jim qolish
+          // ustozni "signal oynasi qani?" degan savol bilan qoldirardi.
+          toast.info('Suzuvchi oyna avtomatik ochilmadi — yuqoridagi «Suzuvchi oyna» tugmasini bosing')
+        }}
       >
         <PresenterPanel
           hands={handQueue}
           reactions={reactions}
           chat={pipChat}
+          unread={unreadChat}
+          chatOpen={pipChatOpen}
+          handsOpen={pipHandsOpen}
+          onToggleChat={togglePipChat}
+          onToggleHands={togglePipHands}
           micOn={!!local?.micOn}
           onToggleMic={toggleMicQuick}
           onStopShare={stopShare}

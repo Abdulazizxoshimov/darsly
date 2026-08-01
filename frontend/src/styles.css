@@ -1718,41 +1718,90 @@ h1, h2, h3 { margin: 0; letter-spacing: -0.02em; }
 }
 
 /* ── Suzuvchi oyna (Document PiP) ─────────────────────────────────────────────
-   Bu uslublar PiP hujjatiga NUSXALANADI (PresenterPip.copyStyles). Oyna kichik
-   (300×400) va ustozning diqqati ulashilayotgan kontentda — shuning uchun
-   zichlik yuqori, shrift kichik, ortiqcha bezak yo'q. */
+   Bu uslublar PiP hujjatiga NUSXALANADI (PresenterPip.copyStyles) — shu yerga
+   qo'shilgan har bir klass PiP oynasida ham ishlaydi.
+
+   Sukut holati KOMPAKT (~236×96): oyna ustozning ish ekranini to'sadi, shuning
+   uchun u faqat ikki SIGNAL ko'rsatadi (chat sanog'i va qo'l sanog'i). Chat
+   paneli ochilganda oyna kengayadi. Zichlik yuqori, shrift kichik, bezak yo'q. */
 .pip-body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
   font-family: inherit;
+  overflow: hidden;
 }
 .pip {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100vh;
-  padding: 10px;
-  gap: 10px;
+  padding: 8px;
+  gap: 6px;
   box-sizing: border-box;
 }
-.pip__section {
-  background: var(--card);
-  border: 1px solid var(--border-subtle);
-  border-radius: 12px;
-  padding: 8px 10px;
-  overflow: hidden;
-}
-.pip__section--grow { flex: 1; overflow-y: auto; }
-.pip__title {
-  display: flex;
+.pip--wide { padding: 10px; gap: 8px; }
+
+/* Ikki mustaqil signal tugmasi — bitta qatorda, teng kenglikda. */
+.pip__bar { display: flex; gap: 6px; flex: none; }
+.pip__sig {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
   align-items: center;
-  gap: 5px;
-  font-size: 11px;
+  justify-content: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 6px;
+  border-radius: 12px;
+  border: 1px solid var(--border-strong);
+  background: var(--elevated);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
   font-weight: 700;
-  color: var(--text-3);
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-  margin-bottom: 6px;
+  cursor: pointer;
+}
+.pip__sig:hover { background: var(--hover); }
+.pip__sig--on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-light); }
+.pip__sig-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Sanoq — NUQTA emas, RAQAM: "xabar bor" bilan "12 ta xabar bor" ustoz uchun
+   ikki xil qaror (birida chatga kirmasa ham bo'ladi, ikkinchisida shart). */
+.pip__count {
+  position: absolute;
+  top: -7px;
+  right: -5px;
+  min-width: 19px;
+  height: 19px;
+  padding: 0 5px;
+  border-radius: var(--r-full);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 19px;
+  text-align: center;
+}
+.pip__count--hand { background: var(--live); color: #fff; }
+/* Yangi qo'l ko'tarildi — qisqa puls. Neon QOIDASI buzilmaydi: bu doimiy
+   glow emas, 1.4 soniyalik jonli-efir signali (yangi qo'l = jonli hodisa). */
+.pip__sig--pulse { animation: pip-hand-pulse 0.7s ease-out 2; }
+@keyframes pip-hand-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(255, 45, 85, 0.55); border-color: var(--live); }
+  70% { box-shadow: 0 0 0 8px rgba(255, 45, 85, 0); border-color: var(--live); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 45, 85, 0); }
+}
+
+/* Qo'l ro'yxati — overlay'ning O'ZIDA, chat panelidan MUSTAQIL. */
+.pip__drop {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--card);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  padding: 6px 8px;
 }
 .pip__empty { margin: 0; font-size: 12px; color: var(--text-3); }
 .pip__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
@@ -1768,25 +1817,41 @@ h1, h2, h3 { margin: 0; letter-spacing: -0.02em; }
   padding: 0 4px;
 }
 .pip__x:hover { color: var(--danger); }
-.pip__reactions { display: flex; flex-wrap: wrap; gap: 6px; }
+/* Reaksiyalar — SUZUVCHI qatlam: ular 3.4s da o'zi yo'qoladi va kompakt
+   oynaning balandligini o'zgartirmasligi kerak (aks holda har emoji oynani
+   sakratardi). Bosishni to'smaydi. */
+.pip__reactions {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 46px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+  pointer-events: none;
+}
 .pip__reaction {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   max-width: 100%;
   background: var(--elevated);
-  border-radius: 999px;
-  padding: 3px 8px;
-  font-size: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-full);
+  padding: 2px 8px;
+  font-size: 11px;
 }
-.pip__actions { display: flex; gap: 8px; }
+.pip__actions { display: flex; gap: 6px; flex: none; }
 .pip__btn {
   flex: 1;
+  min-width: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 5px;
-  padding: 9px 8px;
+  height: 34px;
+  padding: 0 8px;
   border-radius: 12px;
   border: 1px solid var(--border-strong);
   background: var(--elevated);
@@ -1811,7 +1876,7 @@ h1, h2, h3 { margin: 0; letter-spacing: -0.02em; }
   50% { border-color: rgba(239, 68, 68, 0.45); }
 }
 
-.pip__chat { display: flex; flex-direction: column; min-height: 0; }
+.pip__chat { flex: 1; display: flex; flex-direction: column; min-height: 0; gap: 6px; }
 .pip__msgs {
   flex: 1;
   min-height: 0;

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { ConnectionQuality } from 'livekit-client'
 import {
   applyHandEvent,
+  isChatVisible,
   galleryOrder,
   galleryPage,
   GALLERY_PAGE_SIZE,
@@ -240,6 +241,26 @@ describe('nextPipState', () => {
 
   it('notanish hodisa holatni o‘zgartirmaydi', () => {
     expect(nextPipState('open', 'nimadir')).toBe('open')
+  })
+})
+
+// O'qilmagan badge'ining butun ma'nosi shu funksiyada: u "chat ustozning ko'z
+// oldidami?" degan savolga javob beradi, "panel ochiqmi?" ga emas.
+describe('isChatVisible — o‘qilmagan sanog‘i qoidasi', () => {
+  it('suzuvchi oyna yopiq: asosiy panel hal qiladi', () => {
+    expect(isChatVisible({ panel: 'chat', pipOpen: false, pipChatOpen: false })).toBe(true)
+    expect(isChatVisible({ panel: 'participants', pipOpen: false, pipChatOpen: false })).toBe(false)
+    expect(isChatVisible({ panel: 'none', pipOpen: false, pipChatOpen: false })).toBe(false)
+  })
+
+  it('suzuvchi oyna ochiq: asosiy oynadagi chat HISOBGA OLINMAYDI', () => {
+    // Ustoz ekran ulashyapti va PDF oynasida — brauzerdagi ochiq panel
+    // unga hech narsa ko'rsatmayapti, ya'ni xabar O'QILMAGAN.
+    expect(isChatVisible({ panel: 'chat', pipOpen: true, pipChatOpen: false })).toBe(false)
+  })
+
+  it('suzuvchi oynadagi chat ochiq bo‘lsa xabar o‘qilgan hisoblanadi', () => {
+    expect(isChatVisible({ panel: 'none', pipOpen: true, pipChatOpen: true })).toBe(true)
   })
 })
 
