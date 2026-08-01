@@ -4,6 +4,11 @@ import { chromium } from '@playwright/test'
 
 const BASE = process.env.SWEEP_BASE || 'http://localhost:3000'
 const API = process.env.SWEEP_API || 'http://localhost:8087'
+// Serverga qarshi yurgizish uchun (parol deploy paytida generatsiya qilinadi):
+//   SWEEP_BASE=https://app.<ip>.sslip.io SWEEP_API=$SWEEP_BASE \
+//   SWEEP_EMAIL=admin@darsly.uz SWEEP_PASSWORD=... node final-sweep.mjs
+const EMAIL = process.env.SWEEP_EMAIL || 'admin@darsly.uz'
+const PASSWORD = process.env.SWEEP_PASSWORD || 'Admin12345'
 const res = []
 const ok = (n) => { res.push(`PASS  ${n}`); console.log(`PASS  ${n}`) }
 const bad = (n, e) => { res.push(`FAIL  ${n} — ${String(e).slice(0, 160)}`); console.log(`FAIL  ${n} — ${String(e).slice(0, 160)}`) }
@@ -30,10 +35,13 @@ const mCtx = await browser.newContext({ permissions: ['camera', 'microphone'] })
 const mentor = await mCtx.newPage()
 await step('mentor login (web)', async () => {
   await mentor.goto(`${BASE}/auth`, { waitUntil: 'networkidle' })
-  await mentor.locator('input').first().fill('admin@darsly.uz')
-  await mentor.locator('input[type="password"]').fill('Admin12345')
+  await mentor.locator('input').first().fill(EMAIL)
+  await mentor.locator('input[type="password"]').fill(PASSWORD)
   await mentor.getByRole('button', { name: /^kirish$/i }).click()
-  await mentor.waitForURL('**/app**', { timeout: 15000 })
+  // ⚠️ URL shabloni EMAS: server hosti `app.<ip>.sslip.io` bo'lgani uchun
+  // `**/app**` hostga ham mos kelib, login muvaffaqiyatsiz bo'lsa ham
+  // "o'tdi" deb hisoblanardi (2026-07-31, serverga birinchi sinovda).
+  await mentor.waitForFunction(() => location.pathname.startsWith('/app'), null, { timeout: 20000 })
 })
 const TOKEN = await mentor.evaluate(() => localStorage.getItem('darsly.access'))
 if (!TOKEN) { console.log('FAIL  sessiya tokeni olinmadi'); process.exit(1) }
@@ -63,7 +71,7 @@ for (const name of ['Talaba Bir', 'Talaba Ikki']) {
     await p.goto(`${BASE}/r/${slug}`, { waitUntil: 'networkidle' })
     await p.locator('input').first().fill(name)
     await p.getByRole('button', { name: /qo'shilish/i }).click()
-    await p.waitForURL('**/room**', { timeout: 20000 })
+    await p.waitForFunction(() => location.pathname.includes('/room'), null, { timeout: 25000 })
     await p.waitForTimeout(8000)
   })
   students.push({ name, page: p })
@@ -148,10 +156,10 @@ await step('yozuvda expires_at bor (30 kunlik retention)', async () => {
 // qora ro'yxatdagi «Talaba Bir» keyingi yurishni buzdi).
 let CLEAN_TOKEN = TOKEN
 await step('bitta faol sessiya: ikkinchi login eskisini chiqaradi', async () => {
-  const first = await api('/auth/login', { method: 'POST', body: { email: 'admin@darsly.uz', password: 'Admin12345' } })
+  const first = await api('/auth/login', { method: 'POST', body: { email: EMAIL, password: PASSWORD } })
   const oldRefresh = first.json?.data?.refresh_token
   if (!oldRefresh) throw new Error('birinchi login refresh bermadi')
-  const second = await api('/auth/login', { method: 'POST', body: { email: 'admin@darsly.uz', password: 'Admin12345' } })
+  const second = await api('/auth/login', { method: 'POST', body: { email: EMAIL, password: PASSWORD } })
   CLEAN_TOKEN = second.json?.data?.access_token || TOKEN
   const r = await api('/auth/refresh', { method: 'POST', body: { refresh_token: oldRefresh } })
   if (r.status !== 401) throw new Error('eski refresh hali ishlayapti: ' + r.status)

@@ -48,6 +48,48 @@ class MediaTuningTest {
     }
 
     @Test
+    fun `narvonda UCH pogona bor — orada boshliq qolmaydi`() {
+        // ⭐ Bu test bitta aniq nosozlikni qo'riqlaydi: 200 kbps va 1.5 Mbps
+        // orasida hech narsa bo'lmasa, 600 kbps li o'quvchi yuqori qatlamni
+        // ko'tara olmay TO'G'RIDAN-TO'G'RI eng pastkisiga tushadi va kanalining
+        // uchdan ikki qismi ishlatilmay qoladi. SDK ikkita qo'shimcha presetni
+        // qabul qiladi (jami uch pog'ona) — bittasi qolib ketsa bo'shliq qaytadi.
+        val layers = MediaTuning.screenSharePublish().simulcastLayers!!
+        assertEquals(2, layers.size)
+        assertTrue(MediaTuning.SCREEN_MID in layers)
+    }
+
+    @Test
+    fun `orta qatlam past va yuqori orasida — bitreyt ham, olcham ham`() {
+        val low = MediaTuning.SCREEN_LOW
+        val mid = MediaTuning.SCREEN_MID
+        val high = MediaTuning.SCREEN_HIGH
+        assertTrue(
+            "o'rta qatlam bitreyti past va yuqori orasida bo'lsin",
+            low.encoding.maxBitrate < mid.encoding.maxBitrate &&
+                mid.encoding.maxBitrate < high.encoding.maxBitrate,
+        )
+        assertTrue(
+            "o'rta qatlam o'lchami past va yuqori orasida bo'lsin",
+            low.capture.width < mid.capture.width && mid.capture.width < high.capture.width,
+        )
+    }
+
+    @Test
+    fun `har pogonada fps kamayadi — matn uchun piksel kadrdan muhimroq`() {
+        // Mahsulot qoidasi raqamda: kanal torayganda AVVAL kadr chastotasi
+        // tushadi. O'lchov (web, bir xil ~750 kbps): 1280×720@15 → qirra
+        // energiyasi 0.42; 1920×1080@8 → 0.93. Ya'ni "kamroq kadr, ko'proq
+        // piksel" matnni ikki barobardan ko'p yaxshilaydi.
+        assertTrue(
+            MediaTuning.SCREEN_LOW.encoding.maxFps < MediaTuning.SCREEN_MID.encoding.maxFps,
+        )
+        assertTrue(
+            MediaTuning.SCREEN_MID.encoding.maxFps < MediaTuning.SCREEN_HIGH.encoding.maxFps,
+        )
+    }
+
+    @Test
     fun `yuqori qatlam TEGILMAGAN — yaxshi internetda sifat pasaymaydi`() {
         // Simulcast qo'shish yaxshi kanaldagi o'quvchining sifatini
         // PASAYTIRMASLIGI kerak, aks holda muammoni ko'chirgan bo'lardik.

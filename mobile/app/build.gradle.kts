@@ -31,7 +31,8 @@ fun localProp(key: String, default: String = "") = localProps.getProperty(key) ?
 //   3) default — staging (hozircha yagona ishlaydigan muhit)
 //
 // Real domen paydo bo'lganda default shu yerda BIR JOYDA o'zgaradi.
-val stagingBase = "https://app.194.163.139.242.sslip.io"
+// 2026-07-31: eski Contabo (194.163.139.242) to'lov tugab o'chdi, yangi server olindi.
+val stagingBase = "https://app.169.58.104.245.sslip.io"
 fun envUrl(gradleKey: String, localKey: String): String =
     (project.findProperty(gradleKey) as String?)
         ?: localProps.getProperty(localKey)

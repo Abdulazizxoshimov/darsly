@@ -90,6 +90,18 @@ export default [
     },
   },
 
+  // Playwright HAYDOVCHILARI — Node skripti, lekin ularning ichidagi
+  // `page.evaluate(() => window…)` funksiyalari BRAUZERDA bajariladi. Ular
+  // manba faylida oddiy funksiya ko'rinadi, shuning uchun bu fayllarga ikkala
+  // global to'plam ham kerak (aks holda `window`/`location` "aniqlanmagan"
+  // deb belgilanadi va lint CI'ni bloklaydi).
+  {
+    files: ['tools/**/*.mjs', 'final-sweep.mjs'],
+    languageOptions: {
+      globals: { ...globals.node, ...globals.browser },
+    },
+  },
+
   // Testlar va Playwright/Vitest konfiguratsiyasi — Node + test globallari.
   {
     files: [

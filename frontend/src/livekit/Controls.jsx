@@ -16,7 +16,10 @@ import {
   Zap,
 } from 'lucide-react'
 import { toast } from '../lib/toast'
-import { SCREEN_CAPTURE } from './mediaTuning'
+import { CAMERA_PUBLISH, SCREEN_CAPTURE, SCREEN_PUBLISH } from './mediaTuning'
+import { Modal } from '../components/Modal'
+import { Button } from '../components/Button'
+import { isTipMuted, muteTip, SHARE_WINDOW_TIP } from '../lib/uiPrefs'
 
 const REACTIONS = ['👍', '👏', '❤️', '😂', '😮', '🎉', '✋']
 
@@ -61,6 +64,9 @@ export const Controls = memo(function Controls({
   selfUnmuteBlocked = false,
 }) {
   const [reactOpen, setReactOpen] = useState(false)
+  // «Butun ekranni emas, bitta oynani ulashing» eslatmasi (asoschi talabi).
+  const [tipOpen, setTipOpen] = useState(false)
+  const [tipMute, setTipMute] = useState(false)
   const lp = room.localParticipant
   const canPublish = local?.canPublish ?? isHost
   const micOn = !!local?.micOn
@@ -105,28 +111,52 @@ export const Controls = memo(function Controls({
   async function toggleCam() {
     if (!canPublish) return toast.info('Ustoz kamera uchun ruxsat bermagan')
     try {
-      await lp.setCameraEnabled(!camOn)
+      // CAMERA_PUBLISH: kamerada `balanced` degradatsiya (mobil bilan bir xil).
+      // Busiz xona darajasidagi `maintain-resolution` kameraga ham tushib,
+      // zaif tarmoqda yuzni kichraytirish o'rniga MUZLATIB qo'yardi.
+      await lp.setCameraEnabled(!camOn, undefined, CAMERA_PUBLISH)
     } catch (e) {
       toast.error(mediaFailText('Kamera', e))
     }
   }
-  async function toggleScreen() {
-    if (!canPublish) return toast.info('Ustoz ekran ulashishga ruxsat bermagan')
-    // Android/iOS brauzerlari getDisplayMedia'ni bermaydi YOKI bersa ham rad etadi (NotAllowedError) —
-    // ekran ulashish telefon/planshetda umuman ishlamaydi (platforma cheklovi). Doskadan foydalaning.
-    const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
-    if (!screenOn && (isMobile || !navigator.mediaDevices?.getDisplayMedia)) {
-      return toast.error("Ekran ulashish telefon/planshetda ishlamaydi — kompyuterda oching yoki 'Doska'dan foydalaning")
-    }
+  async function setScreen(on) {
     try {
       // SCREEN_CAPTURE: ovoz bilan + `contentHint: 'text'` (matn keskinligi uchun).
-      // Sifat/qatlam sozlamalari `PUBLISH_DEFAULTS` da — ikkalasi `mediaTuning.js` da.
-      await lp.setScreenShareEnabled(!screenOn, screenOn ? undefined : SCREEN_CAPTURE)
+      // Sifat/qatlam sozlamalari `PUBLISH_DEFAULTS` da, degradatsiya siyosati esa
+      // trek turiga bog'liq (`SCREEN_PUBLISH`) — hammasi `mediaTuning.js` da.
+      await lp.setScreenShareEnabled(on, on ? SCREEN_CAPTURE : undefined, SCREEN_PUBLISH)
     } catch (e) {
       // Foydalanuvchi tanlash oynasini bekor qilsa — bu xato emas, jim o'tamiz.
       if (e?.name === 'NotAllowedError' || /permission|denied|cancel/i.test(e?.message || '')) return
       toast.error('Ekranni ulashib bo‘lmadi')
     }
+  }
+
+  function toggleScreen() {
+    if (!canPublish) return toast.info('Ustoz ekran ulashishga ruxsat bermagan')
+    if (screenOn) return setScreen(false)
+    // Android/iOS brauzerlari getDisplayMedia'ni bermaydi YOKI bersa ham rad etadi (NotAllowedError) —
+    // ekran ulashish telefon/planshetda umuman ishlamaydi (platforma cheklovi). Doskadan foydalaning.
+    const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+    if (isMobile || !navigator.mediaDevices?.getDisplayMedia) {
+      return toast.error("Ekran ulashish telefon/planshetda ishlamaydi — kompyuterda oching yoki 'Doska'dan foydalaning")
+    }
+    // ⭐ Brauzer tanlash oynasidan OLDIN eslatma.
+    //
+    // «Butun ekran» tanlansa suzuvchi chat oynasi ham EFIRGA tushadi: o'quvchilar
+    // ustoz o'qiyotgan shaxsiy xabarlarni va qo'l ro'yxatini ko'radi. Buni hech
+    // qanday web-kod to'sa olmaydi (OS darajasidagi cheklov) — yagona yechim
+    // oldindan tushuntirish. Ustoz «boshqa eslatilmasin» desa, u qaytmaydi.
+    if (isTipMuted(SHARE_WINDOW_TIP)) return setScreen(true)
+    setTipOpen(true)
+  }
+
+  function confirmShare() {
+    if (tipMute) muteTip(SHARE_WINDOW_TIP)
+    setTipOpen(false)
+    // Modal tugmasini bosish — foydalanuvchi harakati, ya'ni getDisplayMedia
+    // (va undan keyingi Document PiP) uchun kerakli "ruxsat" shu zanjirda qoladi.
+    void setScreen(true)
   }
 
   function togglePanel(p) {
@@ -224,6 +254,27 @@ export const Controls = memo(function Controls({
       <button className="leave-btn" onClick={onLeave}>
         <PhoneOff size={20} /> {isHost ? 'Yakunlash' : 'Chiqish'}
       </button>
+
+      <Modal open={tipOpen} onClose={() => setTipOpen(false)} title="Bitta oynani ulashing" width={460}>
+        <p className="text-2" style={{ fontSize: 14, marginBottom: 12 }}>
+          Keyingi oynada <b>«Butun ekran»</b> emas, <b>bitta oyna yoki brauzer tabini</b> tanlang.
+        </p>
+        <p className="text-2" style={{ fontSize: 14, marginBottom: 16 }}>
+          Butun ekran ulashilsa, chat va qo‘l signallari turgan suzuvchi oyna ham efirga tushadi —
+          o‘quvchilar shaxsiy xabarlarni ko‘rib qoladi. Bitta oyna ulashsangiz, suzuvchi oyna faqat
+          sizga ko‘rinadi.
+        </p>
+        <label className="row gap-2" style={{ fontSize: 13, cursor: 'pointer', marginBottom: 20 }}>
+          <input type="checkbox" checked={tipMute} onChange={(e) => setTipMute(e.target.checked)} />
+          Boshqa eslatilmasin
+        </label>
+        <div className="row gap-3" style={{ justifyContent: 'flex-end' }}>
+          <Button variant="ghost" onClick={() => setTipOpen(false)}>
+            Bekor qilish
+          </Button>
+          <Button onClick={confirmShare}>Tushunarli, davom etish</Button>
+        </div>
+      </Modal>
     </div>
   )
 })

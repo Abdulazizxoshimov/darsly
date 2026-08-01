@@ -18,6 +18,28 @@ turn:
   enabled: true
   udp_port: 3478
 
+# ── KECHIKISH: jitter-buferni cheklash (o'lchov bilan) ───────────────────────
+# LiveKit `playout-delay` RTP kengaytmasini yuboradi; Chrome uni hurmat qiladi va
+# jitter-buferini shu chegaralar ichida ushlaydi. Busiz Chrome buferni O'ZI
+# tanlaydi va ekran-ulashishda (past fps, katta kadrlar) uni juda kattalashtiradi.
+#
+# `frontend/tools/media-probe` bilan o'lchandi (lokal, bir xil sozlama, faqat shu
+# blok qo'shildi) — "shishadan-shishagacha" kechikish, p50/p95:
+#
+#   qatlam        | oldin           | keyin           | jitter-bufer
+#   yuqori 1080p  | 154 / 180 ms    |  85 / 127 ms    | 72 ms → 6 ms
+#   o'rta  1080p  |  68 / 104 ms    |  63 / 158 ms    |  5 ms → 6 ms
+#   past   1080p  | 288 / 1118 ms   | 171 / 267 ms    | 113 ms → 103 ms
+#
+# Sifat (PSNR va matn keskinligi) O'ZGARMADI — ya'ni bu sof yutuq.
+# `max: 500` ATAYLAB 250 emas: yaxshi tarmoqda natija bir xil (o'lchandi), lekin
+# yomon tarmoqda buferga joy qoladi va `min: 0` sabab uzilib qolmaydi.
+room:
+  playout_delay:
+    enabled: true
+    min: 0
+    max: 500
+
 keys:
   devkey: secret_at_least_32_characters_long_000000
 

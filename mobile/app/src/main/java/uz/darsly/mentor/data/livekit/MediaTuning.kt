@@ -2,7 +2,10 @@ package uz.darsly.mentor.data.livekit
 
 import io.livekit.android.room.participant.AudioTrackPublishDefaults
 import io.livekit.android.room.participant.VideoTrackPublishDefaults
+import io.livekit.android.room.track.CustomVideoPreset
 import io.livekit.android.room.track.ScreenSharePresets
+import io.livekit.android.room.track.VideoCaptureParameter
+import io.livekit.android.room.track.VideoEncoding
 import io.livekit.android.room.track.VideoPreset169
 import livekit.org.webrtc.RtpParameters
 
@@ -41,6 +44,44 @@ object MediaTuning {
     val SCREEN_LOW: ScreenSharePresets = ScreenSharePresets.H360_FPS3
 
     /**
+     * ⭐ O'RTA qatlam — narvondagi YETISHMAYOTGAN pog'ona.
+     *
+     * ## Muammo raqamlar bilan (`frontend/tools/media-probe` o'lchovi)
+     * Avval ikki qatlam bor edi: 200 kbps va 1.5 Mbps. Oraliqda **hech narsa
+     * yo'q**. SFU o'quvchiga sig'adigan eng yuqori qatlamni beradi, ya'ni
+     * 600 kbps li o'quvchi 1.5 Mbps ni ko'tara olmay to'g'ridan-to'g'ri eng
+     * pastki pog'onaga tushardi — kanalining uchdan ikki qismi ishlatilmay,
+     * matn esa o'qilmay qolardi. Web'da o'lchangan farq:
+     *
+     * | qatlam | PSNR | qirra energiyasi (1.0 = asl) |
+     * |---|---|---|
+     * | yuqori | 38.3 dB | 0.96 |
+     * | **o'rta (yangi)** | **33.7 dB** | **0.93** |
+     * | past | 28.9 dB | 0.83 |
+     *
+     * ## Nega 960×540, web'da esa manba o'lchamining o'zi
+     * Android SDK simulcast qatlamini `scaleDownBy == 1.0` bo'lsa **tashlab
+     * yuboradi** (`LocalParticipant.computeVideoEncodings`, 2.27.0 — o'qib
+     * tekshirilgan: "Discarding duplicate encoding with a scale down == 1.0").
+     * Web SDK'da bunday cheklov yo'q, shuning uchun u yerda uchala qatlam ham
+     * manba o'lchamida ketadi. Bu — SDK farqi, mahsulot qarori emas; siyosat
+     * ikkala platformada bir xil: **avval kadr chastotasi qurbon bo'ladi,
+     * o'lcham esa imkon qadar saqlanadi**.
+     *
+     * 1280×720 manbadan 960×540 — atigi 1.33× kichraytirish (eski yagona
+     * muqobil 640×360 esa 2× edi).
+     *
+     * ## Bitreyt web bilan bir xil (800 kbps) — ATAYLAB
+     * 540p uchun bu saxiy, lekin VP8 kerak bo'lmagan bitreytni OLMAYDI
+     * (o'lchangan: 1.5 Mbps ruxsatdan 346 kbps ishlatdi). Ikki platformada
+     * bir xil raqam esa SFU tomonda narvonni bir xil qiladi.
+     */
+    val SCREEN_MID: CustomVideoPreset = CustomVideoPreset(
+        capture = VideoCaptureParameter(960, 540, 8),
+        encoding = VideoEncoding(maxBitrate = 800_000, maxFps = 8),
+    )
+
+    /**
      * ⭐ EKRAN ULASHISH — endi SIMULCAST bilan.
      *
      * ## Nima muammo edi
@@ -73,7 +114,9 @@ object MediaTuning {
     fun screenSharePublish(): VideoTrackPublishDefaults = VideoTrackPublishDefaults(
         videoEncoding = SCREEN_HIGH.encoding,
         simulcast = true,
-        simulcastLayers = listOf(SCREEN_LOW),
+        // IKKI qo'shimcha qatlam → jami UCH pog'ona. Bittasi berilsa SDK faqat
+        // ikki pog'ona yasaydi va yuqoridagi bo'shliq qaytib keladi.
+        simulcastLayers = listOf(SCREEN_LOW, SCREEN_MID),
         degradationPreference = RtpParameters.DegradationPreference.MAINTAIN_RESOLUTION,
     )
 

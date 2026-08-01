@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { ConnectionState, DisconnectReason, Room, RoomEvent, Track } from 'livekit-client'
-import { PUBLISH_DEFAULTS } from './mediaTuning'
+import { CAMERA_PUBLISH, PUBLISH_DEFAULTS } from './mediaTuning'
 import { localSignature, participantSignature, qualityLabel } from './roomLogic'
 import { isHostParticipant } from './messaging'
 
@@ -240,7 +240,9 @@ export function useRoom({ wsUrl, token, publish, retryKey = 0 }) {
           let camFailed = false
           let micFailed = false
           try {
-            await r.localParticipant.setCameraEnabled(true)
+            // `CAMERA_PUBLISH` — kamerada `balanced` degradatsiya (mobil bilan
+            // bir xil). Sabab `mediaTuning.js` da.
+            await r.localParticipant.setCameraEnabled(true, undefined, CAMERA_PUBLISH)
           } catch {
             camFailed = true
           }
