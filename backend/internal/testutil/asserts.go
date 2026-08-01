@@ -4,6 +4,7 @@ import (
 	"github.com/zoom/darsly/internal/infrastructure/minio"
 	"github.com/zoom/darsly/internal/infrastructure/redis"
 	"github.com/zoom/darsly/internal/infrastructure/repository"
+	"github.com/zoom/darsly/internal/infrastructure/telegram"
 	"github.com/zoom/darsly/internal/pkg/token"
 	"github.com/zoom/darsly/internal/usecase/chat"
 	"github.com/zoom/darsly/internal/usecase/recording"
@@ -27,4 +28,9 @@ var (
 	_ room.LiveKit                      = (*FakeLiveKit)(nil)
 	_ chat.LiveKit                      = (*FakeLiveKit)(nil)
 	_ recording.LiveKit                 = (*FakeLiveKit)(nil)
+	_ repository.TelegramRepository     = (*FakeTelegramRepo)(nil)
+	// FakeTelegram BUTUN `telegram.Client` sirtini qoplaydi — shu bilan bot
+	// ishchisini ham, `recording.Telegram` (tiklash) ni ham sinash mumkin.
+	_ telegram.Client    = (*FakeTelegram)(nil)
+	_ recording.Telegram = (*FakeTelegram)(nil)
 )

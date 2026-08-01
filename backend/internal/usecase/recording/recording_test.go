@@ -26,15 +26,32 @@ const (
 // testRetention — yozuv saqlash muddati (`expires_at` hisoblanadigan maydon).
 const testRetention = 30 * 24 * time.Hour
 
+// testCacheTTL — Telegramdan tiklangan nusxa qancha turadi.
+const testCacheTTL = 24 * time.Hour
+
 func setup(t *testing.T) (recording.UseCase, *testutil.FakeRecordingRepo, *testutil.FakeLessonRepo, *testutil.FakeLiveKit) {
+	uc, rrepo, lrepo, lk, _, _ := setupFull(t)
+	return uc, rrepo, lrepo, lk
+}
+
+// setupFull — Telegram va MinIO faqe'lariga ham kirish beradi (arxiv/tiklash
+// testlari uchun). `setup` — uning qisqa ko'rinishi, mavjud testlar
+// o'zgarishsiz qolsin.
+func setupFull(t *testing.T) (
+	recording.UseCase, *testutil.FakeRecordingRepo, *testutil.FakeLessonRepo,
+	*testutil.FakeLiveKit, *testutil.FakeTelegram, *testutil.FakeMinio,
+) {
 	t.Helper()
 	rrepo := testutil.NewFakeRecordingRepo()
 	lrepo := testutil.NewFakeLessonRepo()
 	// Default: yozib olish YONIQ (dars yaratishda shunday keladi).
 	require.NoError(t, lrepo.Create(context.Background(), &entity.Lesson{ID: testLessonID, MentorID: "mentor1", Status: entity.LessonStatusLive, IsRecordingEnabled: true}))
 	lk := testutil.NewFakeLiveKit() // enabled mock — egress chaqiruvlarini assert qilamiz
-	uc := recording.New(rrepo, lrepo, lk, testutil.NewFakeMinio(), livekit.S3Config{}, testutil.NewFakeCache(), testRetention, testutil.NewLogger())
-	return uc, rrepo, lrepo, lk
+	tgFake := testutil.NewFakeTelegram()
+	mc := testutil.NewFakeMinio()
+	uc := recording.New(rrepo, lrepo, lk, mc, livekit.S3Config{}, testutil.NewFakeCache(),
+		testRetention, tgFake, testCacheTTL, testutil.NewLogger())
+	return uc, rrepo, lrepo, lk, tgFake, mc
 }
 
 func seedRecording(t *testing.T, rrepo *testutil.FakeRecordingRepo, status string) *entity.Recording {
@@ -326,9 +343,14 @@ func TestListByLesson_SetsExpiresAt(t *testing.T) {
 	ctx := context.Background()
 	uc, rrepo, _, _ := setup(t)
 	ended := time.Now().UTC().Add(-2 * 24 * time.Hour)
+	// `telegram_sent_at` TO'LDIRILGAN: Telegram arxivi yoqilganda faqat
+	// arxivda tasdiqlangan yozuvning muddati bor. Tasdiqlanmagani esa
+	// umuman o'chirilmaydi — `TestListByLesson_NoExpiryUntilArchived` ga qara.
+	sent := ended.Add(time.Minute)
 	require.NoError(t, rrepo.Create(ctx, &entity.Recording{
 		ID: testRecordingID, LessonID: testLessonID, EgressID: "EG-ready",
 		Status: entity.RecordingStatusReady, EndedAt: &ended, CreatedAt: ended,
+		TelegramSentAt: &sent,
 	}))
 	require.NoError(t, rrepo.Create(ctx, &entity.Recording{
 		ID: "33333333-3333-4333-8333-333333333333", LessonID: testLessonID, EgressID: "EG-live",

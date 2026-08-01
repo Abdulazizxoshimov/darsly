@@ -24,6 +24,7 @@ import (
 	"github.com/zoom/darsly/internal/infrastructure/rabbitmq"
 	"github.com/zoom/darsly/internal/infrastructure/redis"
 	"github.com/zoom/darsly/internal/infrastructure/repository"
+	"github.com/zoom/darsly/internal/infrastructure/telegram"
 	"github.com/zoom/darsly/internal/infrastructure/websocket"
 	"github.com/zoom/darsly/internal/pkg/casbin"
 	"github.com/zoom/darsly/internal/pkg/config"
@@ -178,6 +179,41 @@ func Run(cfg *config.Config) error {
 		Bucket:    cfg.Minio.Bucket,
 	}
 
+	// ── Telegram arxivi (PRODUCT.md, 2026-08-01) ────────────────────────────
+	//
+	// Sozlanmagan bo'lsa JIMGINA O'CHIQ: `telegram.New` nop klient qaytaradi,
+	// hech bir Telegram ishchisi ishga tushmaydi va yozib olish avvalgidek
+	// ishlayveradi. Sentry (`SENTRY_DSN`) bilan bir xil naqsh.
+	tgClient := telegram.New(telegram.Config{
+		BotToken:       cfg.Telegram.BotToken,
+		APIURL:         cfg.Telegram.APIURL,
+		ArchiveChatID:  cfg.Telegram.ArchiveChatID,
+		MaxUploadBytes: cfg.Telegram.UploadMaxBytes,
+		FileRoot:       cfg.Telegram.FileRoot,
+	})
+	if tgClient.Enabled() {
+		// `getMe` — token haqiqiyligini tekshiradi va bot username'ini keshlaydi
+		// (deep-link `t.me/<bot>?start=<kod>` uchun SHART).
+		ictx, icancel := context.WithTimeout(ctx, 10*time.Second)
+		if err := tgClient.Init(ictx); err != nil {
+			// Ishga tushishni TO'XTATMAYMIZ: noto'g'ri token butun platformani
+			// yiqitmasligi kerak — darslar Telegramsiz ham o'tadi. Lekin
+			// integratsiya o'chiriladi, aks holda har yozuv uchun bekorga
+			// urinilardi.
+			log.Error(ctx, "telegram: bot tokeni tekshirilmadi — integratsiya o'chirildi",
+				logger.SafeString("err", err.Error()))
+			tgClient = telegram.NewNop()
+		} else {
+			log.Info(ctx, "telegram configured",
+				logger.String("bot", tgClient.BotUsername()),
+				logger.String("local_api", strconv.FormatBool(tgClient.Local())),
+				logger.String("archive_chat", strconv.FormatInt(cfg.Telegram.ArchiveChatID, 10)))
+		}
+		icancel()
+	} else {
+		log.Info(ctx, "telegram not configured — dars arxivi o'chiq (TELEGRAM_BOT_TOKEN)")
+	}
+
 	tokenMaker := token.NewJWTMaker(
 		[]byte(cfg.JWT.Secret),
 		cfg.JWT.AccessTTL,
@@ -231,6 +267,8 @@ func Run(cfg *config.Config) error {
 		FrontendBaseURL: cfg.App.FrontendBaseURL,
 		// Yozuvlar ro'yxatida `expires_at` shu muddatdan hisoblanadi (PRODUCT.md №5).
 		RecordingRetention: cfg.Recording.Retention,
+		Telegram:           tgClient,
+		RecordingCacheTTL:  cfg.Recording.CacheTTL,
 	})
 
 	h := BuildHandler(uc, hub, lkClient, cfg)
@@ -269,6 +307,10 @@ func Run(cfg *config.Config) error {
 		WarnBefore: cfg.Recording.WarnBefore,
 		Interval:   cfg.Recording.SweepInterval,
 		BatchLimit: worker.DefaultRetentionConfig().BatchLimit,
+		// ⭐ Telegram yoqilgan bo'lsa retention MA'NOSI o'zgaradi: fayl
+		// o'chirilmaydi, `archived` bo'ladi va faqat Telegramda tasdiqlangani
+		// o'chadi. O'chiq bo'lsa eski xulq (`expired`) saqlanadi.
+		TelegramArchive: tgClient.Enabled(),
 	}
 	workersWG.Add(1)
 	go func() {
@@ -298,6 +340,40 @@ func Run(cfg *config.Config) error {
 		defer workersWG.Done()
 		worker.NewTranscodeWorker(store.Recording, minioClient, log, tcCfg).Run(workerCtx)
 	}()
+
+	// ── Telegram arxivi ─────────────────────────────────────────────────────
+	//
+	// Uch ishchi, va ular BIR-BIRIGA BOG'LIQ tartibda yasaladi:
+	//   bot   → mentordan «qaysi guruhga?» so'raydi (TelegramPrompter);
+	//   upload→ yozuvni arxiv guruhiga yuboradi va tugagach bot'dan so'rashni
+	//           iltimos qiladi;
+	//   restore→ `restoring` yozuvlarni Telegramdan qaytaradi.
+	//
+	// Klient o'chiq bo'lsa uchalasi ham darhol chiqib ketadi (`Run` ichida
+	// tekshiruv) — shu sababli bu yerda shartli wiring yo'q va kod tarmoqlanmaydi.
+	botWorker := worker.NewTelegramBotWorker(
+		tgClient, uc.Telegram, store.Recording, store.Lesson, cache,
+		worker.NewChatTranscript(store.Chat), log,
+	)
+	workersWG.Add(1)
+	go func() { defer workersWG.Done(); botWorker.Run(workerCtx) }()
+
+	workersWG.Add(1)
+	go func() {
+		defer workersWG.Done()
+		worker.NewTelegramUploadWorker(
+			store.Recording, store.Lesson, minioClient, tgClient,
+			uc.Notification, botWorker, worker.DefaultTelegramUploadConfig(), log,
+		).Run(workerCtx)
+	}()
+
+	if tgClient.Enabled() {
+		workersWG.Add(1)
+		go func() {
+			defer workersWG.Done()
+			worker.NewRestoreWorker(store.Recording, uc.Recording, log).Run(workerCtx)
+		}()
+	}
 
 	// ── Server ──────────────────────────────────────────────────────────────
 	readyFn := func() error {

@@ -22,6 +22,70 @@ type Recording struct {
 	// ustunga yozib qo'yilsa eski qatorlar eski muddat bilan qotib qolardi.
 	// Faqat `ready` yozuvlarda to'ldiriladi (qolganlarida o'chiriladigan narsa yo'q).
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+
+	// ── Telegram arxivi (PRODUCT.md «Dars arxivi va Telegram saqlash») ───────
+	//
+	// `TelegramSentAt` — eng muhim maydon: server nusxasi FAQAT u to'lgan
+	// bo'lsa o'chiriladi. Ya'ni video Telegramda tasdiqlanmaguncha diskda
+	// qolaveradi (30 kun o'tgan bo'lsa ham).
+
+	// TelegramFileID — Telegram fayl identifikatori. Yozuvni qaytarib olish
+	// (restore) AYNAN shu orqali: `getFile` → yuklab olish → MinIO.
+	TelegramFileID *string `json:"-"`
+	// TelegramMessageID/TelegramChatID — arxiv guruhidagi xabar manzili
+	// (mentorga «qayerda saqlangan» deb ko'rsatish va keyinchalik forward uchun).
+	TelegramMessageID *int64     `json:"telegram_message_id,omitempty"`
+	TelegramChatID    *int64     `json:"-"`
+	TelegramSentAt    *time.Time `json:"telegram_sent_at,omitempty"`
+	// TelegramError — oxirgi urinishdagi xato (mentorga ko'rsatiladi: nega
+	// hali arxivda yo'q). Butun xato matni emas, qisqartirilgan.
+	TelegramError *string `json:"telegram_error,omitempty"`
+	// TelegramAttempts — nechta urinish bo'lgan (3 dan keyin to'xtaydi va
+	// mentorga bildirishnoma ketadi).
+	TelegramAttempts int `json:"telegram_attempts,omitempty"`
+	// CachedUntil — Telegramdan TIKLANGAN nusxa qachongacha MinIO'da turadi.
+	// nil → asl nusxa (kesh emas).
+	CachedUntil *time.Time `json:"cached_until,omitempty"`
+}
+
+// InTelegram — yozuv Telegramda tasdiqlanganmi (server nusxasini o'chirish sharti).
+func (r *Recording) InTelegram() bool { return r != nil && r.TelegramSentAt != nil }
+
+// ServerExpiry — yozuv qachon SERVERDAN o'chadi (klientga ko'rsatiladigan sana).
+//
+// ## Nega alohida sof funksiya
+// Bu hisob ilgari IKKI joyda takrorlangan edi — `recording` va `arxiv`
+// usecase'larida — va ular allaqachon ajralib ketgan: arxiv Telegram shartini
+// ham, kesh nusxasini ham bilmasdi va tiklangan yozuvga O'TMISHDAGI sanani
+// qaytarardi. Bunday takror har doim shu tarzda tugaydi, shuning uchun qoida
+// endi bitta joyda va test ostida.
+//
+// Qoidalar:
+//   - faqat `ready` yozuvda ma'no bor (boshqasida ko'rsatiladigan sana yo'q);
+//   - `retention <= 0` → cheksiz saqlash, sana yo'q;
+//   - Telegram YOQILGAN va yozuv u yerda TASDIQLANMAGAN bo'lsa sana yo'q:
+//     bunday yozuv muddat bo'yicha o'chirilmaydi (kafolat), «X kundan keyin
+//     o'chadi» deyish esa mentorni bekorga shoshirardi;
+//   - Telegramdan TIKLANGAN nusxa `cached_until` bilan boshqariladi.
+func ServerExpiry(r *Recording, retention time.Duration, telegramEnabled bool) *time.Time {
+	if r == nil || retention <= 0 || r.Status != RecordingStatusReady {
+		return nil
+	}
+	if telegramEnabled && !r.InTelegram() {
+		return nil
+	}
+	if r.CachedUntil != nil {
+		return r.CachedUntil
+	}
+	// Tugash vaqti noma'lum bo'lsa yaratilish vaqti — retention ishchisidagi
+	// `COALESCE(ended_at, created_at)` bilan bir xil, aks holda UI va ishchi
+	// turli sanalarni ko'rsatardi.
+	base := r.CreatedAt
+	if r.EndedAt != nil {
+		base = *r.EndedAt
+	}
+	exp := base.Add(retention)
+	return &exp
 }
 
 // Yozuv statuslari
@@ -30,9 +94,24 @@ const (
 	RecordingStatusProcessing = "processing" // to'xtatildi, yuklanmoqda
 	RecordingStatusReady      = "ready"      // MinIO'da tayyor
 	RecordingStatusFailed     = "failed"
-	// RecordingStatusExpired — saqlash muddati (retention) tugagan: MinIO'dagi
-	// fayl o'chirilgan, qator esa tarix uchun qoldirilgan.
+	// RecordingStatusExpired — yozuv BUTUNLAY yo'qolgan: MinIO'dagi fayl
+	// o'chirilgan va Telegramda ham nusxasi yo'q.
+	//
+	// ⚠️ Telegram arxivi joriy etilgandan keyin bu holatga YO'L QO'YILMAYDI:
+	// retention faqat `telegram_sent_at` to'lgan yozuvni o'chiradi va u
+	// `archived` bo'ladi. `expired` faqat eski qatorlar uchun qoldi.
 	RecordingStatusExpired = "expired"
+	// RecordingStatusArchived — serverda YO'Q, Telegramda BOR.
+	//
+	// Mentor uchun bu «yo'qolgan» emas: `POST /recordings/:id/restore` bilan
+	// qaytarib olinadi (30-60 s) va bir kun keshda turadi.
+	RecordingStatusArchived = "archived"
+	// RecordingStatusRestoring — hozir Telegramdan yuklab olinmoqda.
+	//
+	// Alohida holat kerak, chunki tiklash uzoq: endpoint darhol 202 qaytaradi
+	// va klient shu statusni poll qiladi. `archived` da qoldirilsa klient
+	// «bosdim, hech narsa bo'lmadi» deb yana bosaverardi.
+	RecordingStatusRestoring = "restoring"
 )
 
 // Qayta kodlash (CRF) holatlari — `recordings.transcode_status`.

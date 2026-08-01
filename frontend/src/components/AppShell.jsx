@@ -26,6 +26,9 @@ const EXTRA_NAV = [
 ]
 
 function pageTitle(pathname, isAdmin) {
+  // Arxiv sahifasi sidebar bo'limi EMAS (unga dars qatoridan kiriladi), lekin
+  // topbar sarlavhasiz qolmasin.
+  if (pathname.endsWith('/archive')) return 'Dars arxivi'
   const all = [...NAV, ...(isAdmin ? ADMIN_NAV : []), ...EXTRA_NAV]
   // Eng aniq (uzun) mos kelgan yo'l g'olib — '/app' hammaga mos kelmasin.
   const hit = all

@@ -24,6 +24,10 @@ volumes:
   darsly_prometheus:
   darsly_grafana:
   darsly_loki:
+  # Telegram Local Bot API Server fayllari. Backend bilan ULASHILADI: yozuvni
+  # arxivdan tiklashda fayl HTTP orqali qayta yuklanmasdan, to'g'ridan-to'g'ri
+  # shu volume'dan o'qiladi (1 GB video uchun daqiqalar farqi).
+  darsly_tgapi:
 
 services:
   postgres:
@@ -94,6 +98,10 @@ services:
       minio: {condition: service_healthy}
     networks: [darsly_net]
     expose: ["8080"]
+    volumes:
+      # Telegram arxivi: tiklashda fayllar shu yerdan O'QILADI (faqat o'qish).
+      # Telegram o'chiq bo'lsa volume bo'sh turadi — hech narsaga xalaqit qilmaydi.
+      - darsly_tgapi:/var/lib/telegram-bot-api:ro
     # Backend YAGONA healthcheck'siz servis edi: konteyner "up" ko'rinardi,
     # lekin ichida migratsiya yiqilgan yoki DB'ga ulanmagan bo'lishi mumkin edi.
     # `/ready` aynan bog'liqliklarni (PG/Redis) tekshiradi, `/health` esa faqat
@@ -178,6 +186,45 @@ services:
       - SYS_ADMIN
     # Chrome headless /dev/shm ni to'ldiradi → tab crash. 1G yetarli.
     shm_size: "1gb"
+
+  # ── Telegram Local Bot API Server (dars arxivi) ─────────────────────────────
+  #
+  # PROFIL ORTIDA: `--profile telegram` bo'lmasa ishga tushmaydi.
+  #
+  # Sabab: servis `api_id`/`api_hash` ni TALAB qiladi va ular hali yo'q
+  # bo'lgan serverda butun stack'ni yiqitib qo'yardi. Telegram esa ixtiyoriy
+  # integratsiya — usiz platforma to'liq ishlaydi (yozuvlar shunchaki
+  # serverda qoladi).
+  #
+  # Yoqish:
+  #   1) .env ga TELEGRAM_API_ID / TELEGRAM_API_HASH / TELEGRAM_BOT_TOKEN /
+  #      TELEGRAM_ARCHIVE_CHAT_ID qo'shing (remote-setup.sh bo'sh qoldiradi);
+  #   2) docker compose --profile telegram up -d
+  #
+  # ⚠️ TASHQARIGA PORT OCHILMAYDI. Bu server bot tokenini URL yo'lida qabul
+  # qiladi (`/bot<token>/sendVideo`) — internetga chiqarilsa token har
+  # so'rovda ochiq ketardi. Faqat darsly_net ichida, `telegram-bot-api:8081`.
+  telegram-bot-api:
+    image: aiogram/telegram-bot-api:latest
+    container_name: darsly-telegram-bot-api
+    restart: unless-stopped
+    profiles: ["telegram"]
+    environment:
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID:?my.telegram.org dan api_id kerak (docs/telegram-setup.md)}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:?my.telegram.org dan api_hash kerak (docs/telegram-setup.md)}
+      # --local: 2 GB chegara + `getFile` absolyut lokal yo'l qaytaradi.
+      TELEGRAM_LOCAL: "true"
+      TELEGRAM_STAT: "false"
+    volumes:
+      - darsly_tgapi:/var/lib/telegram-bot-api
+    networks: [darsly_net]
+    expose: ["8081"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8081/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
   # ── Kuzatuv (M16) ───────────────────────────────────────────────────────────
   #

@@ -56,6 +56,9 @@ p, mentor, /api/v1/lessons/:id/chat, POST
 # shuning uchun `/chat` qoidasi bu ikkisini QOPLAMAYDI — alohida yozilgan.
 p, mentor, /api/v1/lessons/:id/chat/upload, POST
 p, mentor, /api/v1/lessons/:id/chat/:messageID, DELETE
+# Chat transkripti (№21) va dars arxivi (№20) — o'tgan darsni ko'rish.
+p, mentor, /api/v1/lessons/:id/chat/transcript, GET
+p, mentor, /api/v1/lessons/:id/archive, GET
 p, mentor, /api/v1/lessons/:id/polls, GET
 p, mentor, /api/v1/lessons/:id/polls, POST
 p, mentor, /api/v1/lessons/:id/polls/:pollID/publish, POST
@@ -74,3 +77,12 @@ p, mentor, /api/v1/lessons/:id/recording/start, POST
 p, mentor, /api/v1/lessons/:id/recordings,      GET
 p, mentor, /api/v1/recordings/:id/stop,         POST
 p, mentor, /api/v1/recordings/:id/download,     GET
+p, mentor, /api/v1/recordings/:id,              GET
+p, mentor, /api/v1/recordings/:id/restore,      POST
+
+# ─── mentor — Telegram arxivi (bog'lash oqimi) ───────────────────────────────
+# Faqat mentor: arxiv va guruhga tarqatish butunlay mentorning ishi
+# (o'quvchi ilovada yozuvni umuman ko'rmaydi).
+p, mentor, /api/v1/me/telegram,      GET
+p, mentor, /api/v1/me/telegram,      DELETE
+p, mentor, /api/v1/me/telegram/link, POST

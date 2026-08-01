@@ -22,6 +22,21 @@ type ChatRepository interface {
 	// SQL'da, xuddi shu sababdan.
 	ListByLesson(ctx context.Context, lessonID, viewerIdentity string, before *time.Time, limit int) ([]*entity.ChatMessage, error)
 
+	// ListAllByLesson — darsning TO'LIQ chat tarixi, ESKIDAN YANGIGA (created_at ASC).
+	//
+	// [ListByLesson] dan farqi ataylab: u JONLI chat uchun (eng yangisi birinchi,
+	// kursor bilan orqaga varaqlanadi), bu esa ARXIV uchun — transkript va dars
+	// arxivi suhbatni boshidan oxirigacha o'qiydi. Tartibni chaqiruvchida
+	// teskarilash mumkin edi, lekin u holda "oxirgi 50 ta" kursor mantig'i ham
+	// birga kelardi va arxiv jimgina chala chiqardi.
+	//
+	// Ko'rinuvchanlik va o'chirilgan xabar filtri [ListByLesson] bilan AYNAN bir
+	// xil va bir xil sababdan SQL'da qo'llanadi.
+	//
+	// max — himoya chegarasi (0 → repozitoriy default'i). Uzun darsning butun
+	// chati bir o'qishda xotiraga keladi, shuning uchun yuqori, lekin CHEKLI.
+	ListAllByLesson(ctx context.Context, lessonID, viewerIdentity string, max int) ([]*entity.ChatMessage, error)
+
 	// SoftDelete — mentor moderatsiyasi (№6): xabarni tarixdan yashiradi.
 	//
 	// ATOMIK: `WHERE id=… AND lesson_id=… AND deleted_at IS NULL` + RETURNING.

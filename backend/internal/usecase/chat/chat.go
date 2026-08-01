@@ -224,6 +224,65 @@ func (uc *useCase) History(ctx context.Context, mentorID, lessonID string, befor
 	return uc.signAll(ctx, items), nil
 }
 
+// Transcript — chat eksporti (ish №21). Interfeys izohida sabab.
+//
+// Bu yerda faqat SIMLASH bor: egalik, ma'lumot yig'ish va format tanlash.
+// Butun formatlash mantig'i `transcript.go` dagi sof funksiyalarda —
+// shuning uchun "vaqt mintaqasi to'g'rimi", "XSS escape qilinganmi" degan
+// savollar DB'siz va HTTP'siz sinaladi.
+func (uc *useCase) Transcript(ctx context.Context, mentorID, lessonID, format string) (*entity.ChatTranscript, error) {
+	if format == "" {
+		format = FormatTXT
+	}
+	if format != FormatTXT && format != FormatHTML {
+		return nil, apperr.BadRequest("format must be txt or html")
+	}
+	l, err := shared.OwnedLesson(ctx, uc.lessonRepo, mentorID, lessonID)
+	if err != nil {
+		return nil, err
+	}
+	// Ko'rinuvchanlik `History` bilan bir xil (mentorID = host identity).
+	msgs, err := uc.repo.ListAllByLesson(ctx, lessonID, mentorID, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	data := TranscriptData{
+		LessonTitle:  l.Title,
+		LessonDate:   lessonDate(l),
+		MentorName:   uc.hostName(ctx, mentorID),
+		HostIdentity: mentorID,
+		Messages:     msgs,
+	}
+	body, ctype := RenderTXT(data), "text/plain; charset=utf-8"
+	if format == FormatHTML {
+		body, ctype = RenderHTML(data), "text/html; charset=utf-8"
+	}
+	uc.log.Info(ctx, "chat transcript exported",
+		logger.String("lesson_id", lessonID), logger.String("format", format))
+	return &entity.ChatTranscript{
+		Filename:    safeFilename(l.Title, data.LessonDate, format),
+		ContentType: ctype,
+		Body:        []byte(body),
+	}, nil
+}
+
+// lessonDate — transkript sarlavhasidagi «Sana».
+//
+// Tanlov tartibi: haqiqatan boshlangan vaqt → rejalashtirilgan vaqt →
+// yaratilgan vaqt. Birinchisi eng to'g'ri, lekin dars jonli bo'lmagan bo'lsa
+// (bekor qilingan, faqat chat yozilgan) u bo'sh — shunda ham sarlavhada
+// "01.01.0001" chiqmasligi kerak.
+func lessonDate(l *entity.Lesson) time.Time {
+	if l.StartedAt != nil {
+		return *l.StartedAt
+	}
+	if l.ScheduledAt != nil {
+		return *l.ScheduledAt
+	}
+	return l.CreatedAt
+}
+
 // Delete — moderatsiya (№6). Interfeys izohida sabab.
 func (uc *useCase) Delete(ctx context.Context, mentorID, lessonID, messageID string) error {
 	if _, err := shared.OwnedLesson(ctx, uc.lessonRepo, mentorID, lessonID); err != nil {

@@ -2,6 +2,7 @@ package v1
 
 import (
 	"mime/multipart"
+	"net/http"
 	"strconv"
 	"time"
 
@@ -80,6 +81,36 @@ func ChatHistory(h *handlers.Handler) gin.HandlerFunc {
 			return
 		}
 		hs.Success(c, items)
+	}
+}
+
+// ChatTranscript godoc
+// @Summary      Chat transkriptini yuklab olish (host) — TXT yoki HTML
+// @Description  Zoom uslubidagi chat fayli: vaqt belgilari Toshkent vaqtida,
+// @Description  shaxsiy xabarlar va fayl ilovalari belgilangan. HTML varianti
+// @Description  bir faylli va offline ochiladi (tashqi resurs yo'q).
+// @Tags         chat
+// @Produce      plain
+// @Security     BearerAuth
+// @Param        id      path   string  true   "Lesson ID"
+// @Param        format  query  string  false  "txt (default) yoki html"
+// @Success      200  {string}  string  "fayl (Content-Disposition: attachment)"
+// @Router       /api/v1/lessons/{id}/chat/transcript [get]
+func ChatTranscript(h *handlers.Handler) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		mentorID := c.GetString(middleware.CtxUserID)
+		t, err := h.Chat.Transcript(c.Request.Context(), mentorID, c.Param("id"), c.Query("format"))
+		if err != nil {
+			hs.Error(c, err)
+			return
+		}
+		// Fayl nomi usecase'da tozalangan (faqat ASCII harf/raqam/tire) —
+		// `entity.ChatTranscript` izohida sabab. Shuning uchun bu yerda uni
+		// qo'shtirnoq ichiga qo'yish xavfsiz.
+		c.Header("Content-Disposition", `attachment; filename="`+t.Filename+`"`)
+		// Transkript o'zgarishi mumkin (yangi xabar, moderatsiya) — keshlanmasin.
+		c.Header("Cache-Control", "no-store")
+		c.Data(http.StatusOK, t.ContentType, t.Body)
 	}
 }
 

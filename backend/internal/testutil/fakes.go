@@ -1042,6 +1042,9 @@ type FakeRecordingRepo struct {
 	// warned — `retention_warned_at` kuzatuvi (entity'da maydon yo'q, xuddi
 	// FakeLessonRepo.reminded kabi).
 	warned map[string]bool
+	// tgNext — `telegram_next_attempt_at` (Telegram yuklash navbati). Entity'da
+	// yo'q, chunki u sof ichki navbat maydoni va klientga chiqmaydi.
+	tgNext map[string]time.Time
 }
 
 func NewFakeRecordingRepo() *FakeRecordingRepo {
@@ -1050,6 +1053,7 @@ func NewFakeRecordingRepo() *FakeRecordingRepo {
 		transcode:    map[string]string{},
 		originalSize: map[string]int64{},
 		warned:       map[string]bool{},
+		tgNext:       map[string]time.Time{},
 	}
 }
 
@@ -1070,6 +1074,40 @@ func (r *FakeRecordingRepo) ListExpired(_ context.Context, endedBefore time.Time
 	var out []*entity.Recording
 	for _, rec := range r.byID {
 		if rec.Status == entity.RecordingStatusReady && !recordingEnd(rec).After(endedBefore) {
+			cp := *rec
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
+// ListArchivable — postgres bilan bir xil: Telegramda TASDIQLANGAN va kesh
+// BO'LMAGAN yozuvlar.
+//
+// Filtrni fake'da ham takrorlash SHART: aks holda test «tasdiqlanmagan yozuv
+// o'chmaydi» degan asosiy kafolatni tekshira olmasdi — fake hammasini
+// qaytarib, ishchi ularni o'chirib yuborardi va test baribir yashil bo'lardi.
+func (r *FakeRecordingRepo) ListArchivable(_ context.Context, endedBefore time.Time, _ uint64) ([]*entity.Recording, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []*entity.Recording
+	for _, rec := range r.byID {
+		if rec.Status == entity.RecordingStatusReady && rec.TelegramSentAt != nil &&
+			rec.CachedUntil == nil && !recordingEnd(rec).After(endedBefore) {
+			cp := *rec
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
+func (r *FakeRecordingRepo) ListExpiredUnconfirmed(_ context.Context, endedBefore time.Time, _ uint64) ([]*entity.Recording, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []*entity.Recording
+	for _, rec := range r.byID {
+		if rec.Status == entity.RecordingStatusReady && rec.TelegramSentAt == nil &&
+			rec.CachedUntil == nil && !recordingEnd(rec).After(endedBefore) {
 			cp := *rec
 			out = append(out, &cp)
 		}
@@ -1100,6 +1138,175 @@ func (r *FakeRecordingRepo) ClaimExpire(_ context.Context, id string, _ time.Tim
 		return false, nil
 	}
 	rec.Status = entity.RecordingStatusExpired
+	return true, nil
+}
+
+// ClaimArchive — `ready → archived`, FAQAT Telegramda tasdiqlangan bo'lsa
+// (postgres'dagi WHERE sharti bilan bir xil).
+func (r *FakeRecordingRepo) ClaimArchive(_ context.Context, id string, _ time.Time) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec, ok := r.byID[id]
+	if !ok || rec.Status != entity.RecordingStatusReady || rec.TelegramSentAt == nil {
+		return false, nil
+	}
+	rec.Status = entity.RecordingStatusArchived
+	return true, nil
+}
+
+// ─── Telegram arxivi ─────────────────────────────────────────────────────────
+
+func (r *FakeRecordingRepo) EnqueueTelegram(_ context.Context, egressID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := time.Now().UTC()
+	for _, rec := range r.byID {
+		if rec.EgressID == egressID && rec.Status == entity.RecordingStatusReady && rec.TelegramSentAt == nil {
+			r.tgNext[rec.ID] = now
+		}
+	}
+	return nil
+}
+
+func (r *FakeRecordingRepo) ClaimTelegramUpload(_ context.Context, now time.Time, maxAttempts int) (*entity.Recording, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	// Barqaror tartib — `ClaimTranscode` bilan bir xil sabab.
+	ids := make([]string, 0, len(r.tgNext))
+	for id, at := range r.tgNext {
+		rec, ok := r.byID[id]
+		if !ok || rec.Status != entity.RecordingStatusReady || rec.TelegramSentAt != nil {
+			continue
+		}
+		if rec.TelegramAttempts >= maxAttempts || at.After(now) {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	sort.Strings(ids)
+	rec := r.byID[ids[0]]
+	rec.TelegramAttempts++
+	r.tgNext[rec.ID] = now.Add(30 * time.Minute)
+	cp := *rec
+	// Chaqiruvchi (`handleFailure`) urinish tartibini `TelegramAttempts + 1`
+	// deb hisoblaydi, ya'ni unga SO'ROVDAN OLDINGI qiymat kerak.
+	cp.TelegramAttempts = rec.TelegramAttempts - 1
+	return &cp, nil
+}
+
+func (r *FakeRecordingRepo) MarkTelegramSent(_ context.Context, id string, chatID, messageID int64, fileID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec, ok := r.byID[id]
+	if !ok {
+		return nil
+	}
+	now := time.Now().UTC()
+	rec.TelegramChatID = &chatID
+	rec.TelegramMessageID = &messageID
+	rec.TelegramFileID = &fileID
+	rec.TelegramSentAt = &now
+	rec.TelegramError = nil
+	delete(r.tgNext, id)
+	return nil
+}
+
+func (r *FakeRecordingRepo) MarkTelegramFailed(_ context.Context, id, errMsg string, nextAttempt *time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec, ok := r.byID[id]
+	if !ok {
+		return nil
+	}
+	msg := errMsg
+	rec.TelegramError = &msg
+	if nextAttempt == nil {
+		delete(r.tgNext, id)
+	} else {
+		r.tgNext[id] = *nextAttempt
+	}
+	return nil
+}
+
+// ─── Tiklash ─────────────────────────────────────────────────────────────────
+
+func (r *FakeRecordingRepo) ClaimRestore(_ context.Context, id string) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec, ok := r.byID[id]
+	if !ok || rec.Status != entity.RecordingStatusArchived || rec.TelegramFileID == nil {
+		return false, nil
+	}
+	rec.Status = entity.RecordingStatusRestoring
+	return true, nil
+}
+
+func (r *FakeRecordingRepo) FinishRestore(_ context.Context, id, objectKey string, cachedUntil time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec, ok := r.byID[id]
+	if !ok || rec.Status != entity.RecordingStatusRestoring {
+		return nil
+	}
+	rec.Status = entity.RecordingStatusReady
+	rec.ObjectKey = objectKey
+	rec.CachedUntil = &cachedUntil
+	return nil
+}
+
+func (r *FakeRecordingRepo) FailRestore(_ context.Context, id, errMsg string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec, ok := r.byID[id]
+	if !ok || rec.Status != entity.RecordingStatusRestoring {
+		return nil
+	}
+	rec.Status = entity.RecordingStatusArchived
+	msg := errMsg
+	rec.TelegramError = &msg
+	return nil
+}
+
+func (r *FakeRecordingRepo) ListByStatus(_ context.Context, status string, _ uint64) ([]*entity.Recording, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []*entity.Recording
+	for _, rec := range r.byID {
+		if rec.Status == status {
+			cp := *rec
+			out = append(out, &cp)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+func (r *FakeRecordingRepo) ListCacheExpired(_ context.Context, now time.Time, _ uint64) ([]*entity.Recording, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []*entity.Recording
+	for _, rec := range r.byID {
+		if rec.Status == entity.RecordingStatusReady && rec.CachedUntil != nil && rec.CachedUntil.Before(now) {
+			cp := *rec
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
+
+func (r *FakeRecordingRepo) ClaimCacheEvict(_ context.Context, id string) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec, ok := r.byID[id]
+	if !ok || rec.Status != entity.RecordingStatusReady || rec.CachedUntil == nil ||
+		!rec.CachedUntil.Before(time.Now().UTC()) {
+		return false, nil
+	}
+	rec.Status = entity.RecordingStatusArchived
+	rec.CachedUntil = nil
 	return true, nil
 }
 
@@ -1343,6 +1550,43 @@ func (r *FakeChatRepo) ListByLesson(_ context.Context, lessonID, viewerIdentity 
 		if len(out) >= limit {
 			break
 		}
+	}
+	return out, nil
+}
+
+// ListAllByLesson — ESKIDAN YANGIGA, kursorsiz (arxiv/transkript yo'li).
+// Ko'rinuvchanlik va o'chirilgan filtri `ListByLesson` bilan bir xil bo'lishi
+// SHART — haqiqiy repozitoriyda ular bitta `chatVisible` dan keladi.
+func (r *FakeChatRepo) ListAllByLesson(_ context.Context, lessonID, viewerIdentity string, max int) ([]*entity.ChatMessage, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if max <= 0 {
+		max = 10000
+	}
+	var out []*entity.ChatMessage
+	for _, m := range r.items {
+		if m.LessonID != lessonID {
+			continue
+		}
+		if _, gone := r.deleted[m.ID]; gone {
+			continue
+		}
+		if m.ToIdentity != nil {
+			if viewerIdentity == "" {
+				continue
+			}
+			if *m.ToIdentity != viewerIdentity && m.SenderIdentity != viewerIdentity {
+				continue
+			}
+		}
+		cp := *m
+		out = append(out, &cp)
+	}
+	// `created_at ASC` — haqiqiy repo tartibi. Fake qo'shilish tartibini
+	// qaytarganda "vaqt bo'yicha saralash" testlari yolg'on o'tib ketardi.
+	sort.SliceStable(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
+	if len(out) > max {
+		out = out[:max]
 	}
 	return out, nil
 }

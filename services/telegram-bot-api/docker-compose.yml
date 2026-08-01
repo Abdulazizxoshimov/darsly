@@ -1,0 +1,62 @@
+# Telegram Local Bot API Server — dars yozuvlarini Telegramga saqlash uchun.
+#
+# ## NEGA KERAK
+#
+# Oddiy bot `sendVideo` bilan **50 MB** gacha yubora oladi. 1 soatlik dars
+# yozuvi ~75-250 MB, 2.5 soatliki ~1 GB. Ya'ni rasmiy api.telegram.org bilan
+# dars yozuvlarining KO'PCHILIGI umuman yuborilmaydi.
+#
+# Local Bot API Server — Telegram'ning O'Z dasturi (ochiq kodli). U bilan
+# chegara **2000 MB** bo'ladi. Bu yagona qonuniy yechim; fayl bo'lakka
+# bo'lish yoki qayta kodlash sifatni yo'qotardi.
+#
+# ## ISHGA TUSHIRISH (lokal dev)
+#
+#   1) my.telegram.org → API development tools → api_id va api_hash oling
+#   2) .env fayl yasang (SHU katalogda):
+#        TELEGRAM_API_ID=1234567
+#        TELEGRAM_API_HASH=abcdef...
+#   3) docker compose up -d
+#   4) backend .env ga: TELEGRAM_API_URL=http://localhost:8081
+#
+# Batafsil qadamlar (bot yaratish, arxiv guruhi): `docs/telegram-setup.md`.
+#
+# ## api_id/api_hash BO'LMASA
+#
+# Servis ATAYLAB ishga tushmaydi (`:?` bilan majburiy o'zgaruvchi):
+# ularsiz server startda jimgina yiqilib, "nega ishlamayapti" degan
+# tushunarsiz holat qolardi. Xato matni to'g'ridan-to'g'ri nima qilish
+# kerakligini aytadi.
+
+name: darsly-tgapi
+
+volumes:
+  # Yuklangan va yuklab olingan fayllar. Backend TIKLASH paytida shu
+  # volume'dan fayllarni TO'G'RIDAN-TO'G'RI o'qiydi (HTTP orqali qayta
+  # yuklab olish o'rniga) — 1 GB video uchun bu daqiqalar farqi.
+  darsly_tgapi_data:
+
+services:
+  telegram-bot-api:
+    image: aiogram/telegram-bot-api:latest
+    container_name: darsly-telegram-bot-api
+    restart: unless-stopped
+    environment:
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID:?my.telegram.org dan api_id oling va .env ga yozing}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:?my.telegram.org dan api_hash oling va .env ga yozing}
+      # --local rejimi: 2 GB chegara + `getFile` absolyut lokal yo'l qaytaradi.
+      TELEGRAM_LOCAL: "true"
+      TELEGRAM_STAT: "false"
+    volumes:
+      - darsly_tgapi_data:/var/lib/telegram-bot-api
+    ports:
+      # Lokal dev'da backend konteynerdan TASHQARIDA (go run) ishlaydi,
+      # shuning uchun port ochiladi — lekin FAQAT loopback'ga: bu server
+      # bot tokenini URL'da qabul qiladi va internetga ochilmasligi kerak.
+      - "127.0.0.1:8081:8081"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8081/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s

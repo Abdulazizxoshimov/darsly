@@ -3,6 +3,8 @@ package recording
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/google/uuid"
@@ -32,7 +34,13 @@ type useCase struct {
 	// retention — yozuv qancha saqlanadi (RECORDING_RETENTION_DAYS). 0 → cheksiz
 	// (o'chirish o'chirilgan); bu holda `expires_at` ham qaytarilmaydi.
 	retention time.Duration
-	log       logger.Logger
+	// telegram — arxivdan tiklash uchun. nil yoki o'chiq bo'lsa `archived`
+	// yozuvni qaytarib bo'lmaydi va mentorga aniq sabab aytiladi.
+	telegram Telegram
+	// cacheTTL — Telegramdan tiklangan nusxa MinIO'da qancha turadi
+	// (RECORDING_CACHE_TTL_HOURS). 0 → default 24 soat.
+	cacheTTL time.Duration
+	log      logger.Logger
 }
 
 func New(
@@ -43,28 +51,33 @@ func New(
 	s3 livekit.S3Config,
 	cache redis.Cache,
 	retention time.Duration,
+	tgc Telegram,
+	cacheTTL time.Duration,
 	log logger.Logger,
 ) UseCase {
-	return &useCase{repo: repo, lessonRepo: lessonRepo, livekit: lk, minio: mc, s3: s3, cache: cache, retention: retention, log: log}
+	if cacheTTL <= 0 {
+		cacheTTL = 24 * time.Hour
+	}
+	return &useCase{
+		repo: repo, lessonRepo: lessonRepo, livekit: lk, minio: mc, s3: s3,
+		cache: cache, retention: retention, telegram: tgc, cacheTTL: cacheTTL, log: log,
+	}
 }
+
+// telegramEnabled — arxiv integratsiyasi ishlaydimi.
+func (uc *useCase) telegramEnabled() bool { return uc.telegram != nil && uc.telegram.Enabled() }
 
 // withExpiry — `ready` yozuvga hisoblangan `expires_at` ni qo'yadi.
 //
 // Klient («X kundan keyin o'chadi») shu maydonga tayanadi. Hisoblanadigan
 // bo'lishining sababi `entity.Recording.ExpiresAt` izohida.
 func (uc *useCase) withExpiry(rec *entity.Recording) *entity.Recording {
-	if rec == nil || uc.retention <= 0 || rec.Status != entity.RecordingStatusReady {
+	if rec == nil {
 		return rec
 	}
-	base := rec.EndedAt
-	if base == nil {
-		// Tugash vaqti noma'lum — retention hisobi repo'dagi bilan bir xil
-		// (`COALESCE(ended_at, created_at)`), aks holda UI va ishchi turli
-		// sanalarni ko'rsatardi.
-		base = &rec.CreatedAt
-	}
-	exp := base.Add(uc.retention)
-	rec.ExpiresAt = &exp
+	// Qoida `entity.ServerExpiry` da (sof, test ostida) — arxiv usecase ham
+	// AYNI o'shani chaqiradi, shuning uchun ikki joy ajralib keta olmaydi.
+	rec.ExpiresAt = entity.ServerExpiry(rec, uc.retention, uc.telegramEnabled())
 	return rec
 }
 
@@ -330,7 +343,21 @@ func (uc *useCase) ListByLesson(ctx context.Context, mentorID, lessonID string) 
 	return recs, nil
 }
 
-func (uc *useCase) DownloadURL(ctx context.Context, mentorID, recordingID string) (*entity.RecordingDownload, error) {
+// Get — bitta yozuv (egalik tekshiruvi bilan). Izohni [UseCase.Get] da qara.
+func (uc *useCase) Get(ctx context.Context, mentorID, recordingID string) (*entity.Recording, error) {
+	rec, err := uc.owned(ctx, mentorID, recordingID)
+	if err != nil {
+		return nil, err
+	}
+	return uc.withExpiry(rec), nil
+}
+
+// owned — ID validatsiyasi + yozuvni o'qish + dars egaligini tekshirish.
+//
+// Uch metod (`Get`, `Restore`, `DownloadURL`) aynan shu uchlikni bajaradi.
+// Nusxalanganda ulardan birida egalik tekshiruvi tushib qolishi mumkin edi —
+// bu esa begona dars yozuvini yuklab olish (IDOR) degani.
+func (uc *useCase) owned(ctx context.Context, mentorID, recordingID string) (*entity.Recording, error) {
 	if err := shared.ValidateID(recordingID, "recording"); err != nil {
 		return nil, err
 	}
@@ -341,12 +368,164 @@ func (uc *useCase) DownloadURL(ctx context.Context, mentorID, recordingID string
 	if _, err := shared.OwnedLesson(ctx, uc.lessonRepo, mentorID, rec.LessonID); err != nil {
 		return nil, err
 	}
-	// Muddati o'tgan yozuvning fayli MinIO'da yo'q — presigned havola 404
-	// beradigan "ishlaydigan" URL qaytarish o'rniga sababni aniq aytamiz.
-	if rec.Status == entity.RecordingStatusExpired {
-		return nil, apperr.BadRequest("recording has expired and was deleted")
+	return rec, nil
+}
+
+// Restore — arxivdan qaytarib olishni boshlaydi. Izohni [UseCase.Restore] da qara.
+func (uc *useCase) Restore(ctx context.Context, mentorID, recordingID string) (*entity.RecordingRestore, error) {
+	rec, err := uc.owned(ctx, mentorID, recordingID)
+	if err != nil {
+		return nil, err
 	}
-	if rec.Status != entity.RecordingStatusReady {
+	switch rec.Status {
+	case entity.RecordingStatusReady:
+		// Allaqachon serverda — tiklashning hojati yo'q. Xato emas: klient
+		// «tiklash» tugmasini eski holat bilan bosgan bo'lishi mumkin.
+		return &entity.RecordingRestore{Status: entity.RecordingStatusReady}, nil
+	case entity.RecordingStatusRestoring:
+		// Ish allaqachon ketmoqda (idempotentlik).
+		return &entity.RecordingRestore{Status: entity.RecordingStatusRestoring, PollAfterS: restorePollAfterS}, nil
+	case entity.RecordingStatusArchived:
+		// asosiy yo'l — pastda
+	default:
+		return nil, apperr.BadRequest("recording cannot be restored")
+	}
+	if !uc.telegramEnabled() {
+		return nil, apperr.BadRequest("telegram archive is not configured")
+	}
+	if rec.TelegramFileID == nil || *rec.TelegramFileID == "" {
+		return nil, apperr.BadRequest("recording has no telegram copy")
+	}
+
+	claimed, err := uc.repo.ClaimRestore(ctx, rec.ID)
+	if err != nil {
+		return nil, err
+	}
+	if !claimed {
+		// Poyga: boshqa so'rov (yoki instans) ulgurdi. Bu ham muvaffaqiyat —
+		// klient uchun natija bir xil.
+		return &entity.RecordingRestore{Status: entity.RecordingStatusRestoring, PollAfterS: restorePollAfterS}, nil
+	}
+	audit.Record(ctx, uc.log, "recording.restore", mentorID, logger.String("recording_id", rec.ID))
+	return &entity.RecordingRestore{Status: entity.RecordingStatusRestoring, PollAfterS: restorePollAfterS}, nil
+}
+
+// restorePollAfterS — klient qancha kutib qayta so'rasin.
+//
+// 5 soniya: tiklash 30-60 s davom etadi, ya'ni ~10 so'rov. Tezroq poll
+// qilish serverga foydasiz yuk, sekinroq esa "tayyor bo'ldi, lekin UI hali
+// eski" degan noqulaylik.
+const restorePollAfterS = 5
+
+// RunRestore — Telegram → vaqtinchalik fayl → MinIO. Izohni [UseCase.RunRestore] da.
+func (uc *useCase) RunRestore(ctx context.Context, recordingID string) error {
+	rec, err := uc.repo.GetByID(ctx, recordingID)
+	if err != nil {
+		return err
+	}
+	if rec.Status != entity.RecordingStatusRestoring {
+		// Boshqa ishchi tugatgan yoki bekor qilingan — qilinadigan ish yo'q.
+		return nil
+	}
+	if !uc.telegramEnabled() || rec.TelegramFileID == nil {
+		uc.failRestore(ctx, rec.ID, "telegram archive is not available")
+		return apperr.BadRequest("telegram archive is not available")
+	}
+
+	if err := uc.restoreObject(ctx, rec); err != nil {
+		uc.log.Error(ctx, "recording.Restore: tiklab bo'lmadi",
+			logger.String("recording_id", rec.ID), logger.SafeString("err", err.Error()))
+		uc.failRestore(ctx, rec.ID, err.Error())
+		return err
+	}
+
+	cachedUntil := time.Now().UTC().Add(uc.cacheTTL)
+	if err := uc.repo.FinishRestore(ctx, rec.ID, rec.ObjectKey, cachedUntil); err != nil {
+		return err
+	}
+	uc.log.Info(ctx, "recording restored from telegram",
+		logger.String("recording_id", rec.ID),
+		logger.String("cached_until", cachedUntil.Format(time.RFC3339)))
+	return nil
+}
+
+// restoreObject — faylni Telegramdan olib MinIO'ga qo'yadi.
+func (uc *useCase) restoreObject(ctx context.Context, rec *entity.Recording) error {
+	f, err := uc.telegram.GetFile(ctx, *rec.TelegramFileID)
+	if err != nil {
+		return fmt.Errorf("getFile: %w", err)
+	}
+	dir, err := os.MkdirTemp("", "darsly-restore-")
+	if err != nil {
+		return fmt.Errorf("temp dir: %w", err)
+	}
+	// Katta fayl (1 GB gacha) diskda qolib ketmasin — hatto xato yo'lida ham.
+	defer os.RemoveAll(dir)
+
+	local := filepath.Join(dir, "restored.mp4")
+	if err := uc.telegram.DownloadFile(ctx, f, local); err != nil {
+		return fmt.Errorf("download: %w", err)
+	}
+	st, err := os.Stat(local)
+	if err != nil {
+		return fmt.Errorf("stat: %w", err)
+	}
+	fh, err := os.Open(local)
+	if err != nil {
+		return fmt.Errorf("open: %w", err)
+	}
+	defer fh.Close()
+
+	// AYNI `object_key` ga qaytariladi: yozuvning ichki manzili o'zgarmaydi va
+	// tarixdagi havolalar (agar keshda bo'lsa) ishlayveradi.
+	if _, err := uc.minio.Upload(ctx, rec.ObjectKey, "video/mp4", fh, st.Size()); err != nil {
+		return fmt.Errorf("upload: %w", err)
+	}
+	return nil
+}
+
+// failRestore — holatni `archived` ga qaytaradi (Telegramdagi nusxa joyida).
+//
+// Kontekst BEKOR bo'lgan bo'lishi mumkin (klient uzildi, shutdown), shuning
+// uchun yozuv alohida kontekstda — aks holda yozuv abadiy `restoring` da
+// qotib qolardi va mentor qayta urina olmasdi.
+func (uc *useCase) failRestore(ctx context.Context, id, msg string) {
+	fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	if err := uc.repo.FailRestore(fctx, id, truncate(msg, 500)); err != nil {
+		uc.log.Error(fctx, "recording.Restore: holatni qaytarib bo'lmadi",
+			logger.String("recording_id", id), logger.SafeString("err", err.Error()))
+	}
+}
+
+// truncate — xato matnini DB ustuni va UI uchun qisqartiradi.
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
+}
+
+func (uc *useCase) DownloadURL(ctx context.Context, mentorID, recordingID string) (*entity.RecordingDownload, error) {
+	rec, err := uc.owned(ctx, mentorID, recordingID)
+	if err != nil {
+		return nil, err
+	}
+	// Serverda fayl yo'q — presigned havola 404 beradigan "ishlaydigan" URL
+	// qaytarish o'rniga sababni aniq aytamiz.
+	switch rec.Status {
+	case entity.RecordingStatusExpired:
+		return nil, apperr.BadRequest("recording has expired and was deleted")
+	case entity.RecordingStatusArchived:
+		// Yozuv YO'QOLMAGAN — Telegramda. Klient `POST /recordings/:id/restore`
+		// ga yo'naltiriladi. Ataylab avtomatik boshlanmaydi: tiklash bir
+		// necha yuz megabayt trafik va mentor buni bilib turib boshlasin.
+		return nil, apperr.BadRequest("recording is archived — restore it first")
+	case entity.RecordingStatusRestoring:
+		return nil, apperr.BadRequest("recording is being restored — try again shortly")
+	case entity.RecordingStatusReady:
+		// asosiy yo'l
+	default:
 		return nil, apperr.BadRequest("recording is not ready yet")
 	}
 
@@ -402,6 +581,24 @@ func (uc *useCase) HandleEgress(ctx context.Context, egressID string, completed 
 	if err := uc.repo.EnqueueTranscode(ctx, egressID); err != nil {
 		uc.log.Warn(ctx, "recording: enqueue transcode failed",
 			logger.String("recording_id", rec.ID), logger.SafeString("err", err.Error()))
+	}
+
+	// Telegram arxivi navbatiga (PRODUCT.md «Dars arxivi va Telegram saqlash»).
+	//
+	// Xato JIM yutiladi — transkodlash bilan bir xil sabab: yozuv allaqachon
+	// tayyor, `err` qaytarish LiveKit'ni webhook'ni qayta yuborishga majburlab,
+	// tayyor yozuv ustidan ikkinchi `MarkReady` ishlatardi. Navbatga tushmagan
+	// yozuvni retention ham o'chirmaydi (`telegram_sent_at` bo'sh) — ya'ni
+	// eng yomon holat "arxivlanmagan", "yo'qolgan" emas.
+	//
+	// Integratsiya o'chiq bo'lsa navbatga umuman qo'yilmaydi: aks holda hech
+	// kim olmaydigan ishlar to'planib, `ClaimTelegramUpload` har tick'da
+	// bo'sh aylanardi.
+	if uc.telegramEnabled() {
+		if err := uc.repo.EnqueueTelegram(ctx, egressID); err != nil {
+			uc.log.Warn(ctx, "recording: enqueue telegram failed",
+				logger.String("recording_id", rec.ID), logger.SafeString("err", err.Error()))
+		}
 	}
 	return nil
 }

@@ -47,6 +47,11 @@
   --glow-live: 0 0 14px rgba(255, 45, 85, 0.35);
   --glow-accent: 0 0 18px rgba(25, 211, 162, 0.25);
 
+  /* Video letterbox — sof qora, ATAYLAB `--bg` (#05080c) EMAS: yon chiziqlar
+     kadrning o'z qora foniga qo'shilib ketishi kerak, aks holda kadr chetida
+     sezilarli chegara ko'rinadi. Pleyer bor joyda faqat shu ishlatiladi. */
+  --video-bg: #000;
+
   /* Ichkariga "botgan" yuza — pufak ichidagi kartochka (chat fayli) uchun.
      Fon EMAS, balki ustidagi qatlamdan quyuqroq: pufak rangi o'zgarsa ham
      (ommaviy/shaxsiy/o'zimniki) kartochka ajralib turadi. */
@@ -1962,4 +1967,405 @@ h1, h2, h3 { margin: 0; letter-spacing: -0.02em; }
   padding: 3px 10px;
   border-radius: 0 0 8px 8px;
   letter-spacing: 0.3px;
+}
+
+/* ── Dars arxivi (video + chat + materiallar) ────────────────────────────────
+   Asoschi tanlovi: video va chat YONMA-YON. Chatdagi vaqtni bosganda video
+   sakraydi, shuning uchun ikkalasi bir ekranda ko'rinishi shart — modal yoki
+   alohida tab bu bog'lanishni yo'q qilardi.
+   Keng ekranda ~70/30; 1024px dan tor ekranda video tepada, chat pastda. */
+.page--wide { max-width: 1440px; }
+
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 14px;
+  font-size: 13px;
+  color: var(--text-2);
+  text-decoration: none;
+}
+.back-link:hover { color: var(--text); }
+
+.arch-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+.arch-head__meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.arch-head__dot {
+  width: 3px;
+  height: 3px;
+  border-radius: var(--r-full);
+  background: var(--text-3);
+}
+
+/* Chat transkripti — TXT/HTML. Ikkita format ochiq turadi: yashirin
+   ochiluvchi menyudan ko'ra bir bosish kam va tanlov ko'rinib turadi. */
+.arch-dl { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.arch-dl__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.arch-dl__opts {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  overflow: hidden;
+  background: var(--card);
+}
+.arch-dl__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 14px;
+  border: none;
+  background: transparent;
+  color: var(--text-bright);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+}
+.arch-dl__btn + .arch-dl__btn { border-left: 1px solid var(--border); }
+.arch-dl__btn:hover:not(:disabled) { background: var(--hover); color: var(--accent-light); }
+.arch-dl__btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.arch-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(300px, 3fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.arch-video {
+  border-radius: var(--r-xl);
+  overflow: hidden;
+  background: var(--card);
+  border: 1px solid var(--border);
+}
+.arch-video__player {
+  display: block;
+  width: 100%;
+  /* Yozuvlar 16:9 — qora fon bilan letterbox boshqa nisbatda ham chiroyli. */
+  aspect-ratio: 16 / 9;
+  max-height: 68vh;
+  background: var(--video-bg);
+}
+.arch-video__note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border-subtle);
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+
+/* Video o'rnidagi holat kartochkalari (tayyorlanmoqda / arxivda / xato) */
+.arch-notice {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  min-height: 320px;
+  padding: 36px 28px;
+  aspect-ratio: 16 / 9;
+}
+.arch-notice__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  margin-bottom: 14px;
+  border-radius: var(--r-full);
+  background: var(--elevated);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+}
+.arch-notice__body { font-size: 13.5px; line-height: 1.55; max-width: 460px; }
+.arch-notice--wait .arch-notice__icon { border-color: var(--accent); color: var(--accent-light); }
+.arch-notice--bad .arch-notice__icon { border-color: var(--danger); color: var(--danger); }
+
+/* Tiklash progressi — foiz YO'Q (Telegram uni bermaydi), faqat harakat + vaqt */
+.arch-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  max-width: 300px;
+  margin: 16px auto 0;
+}
+.arch-progress__bar {
+  position: relative;
+  flex: 1;
+  height: 4px;
+  border-radius: var(--r-full);
+  background: var(--elevated);
+  overflow: hidden;
+}
+.arch-progress__fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 35%;
+  height: 100%;
+  border-radius: var(--r-full);
+  background: var(--accent-grad);
+  animation: archSlide 1.4s ease-in-out infinite;
+}
+.arch-progress__time {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+}
+@keyframes archSlide {
+  0% { left: -35%; }
+  100% { left: 100%; }
+}
+
+/* Chat ustuni */
+.arch-chat {
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--r-xl);
+  background: var(--card);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  max-height: 76vh;
+}
+.arch-chat__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text-bright);
+}
+.arch-chat__head svg { color: var(--accent-light); }
+.arch-chat__count {
+  padding: 1px 8px;
+  border-radius: var(--r-full);
+  background: var(--elevated);
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--text-2);
+}
+.arch-chat__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 40px 20px;
+}
+.arch-chat__list {
+  list-style: none;
+  margin: 0;
+  padding: 8px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.arch-msg {
+  position: relative;
+  padding: 8px 10px;
+  border-radius: var(--r-md);
+  border-left: 2px solid transparent;
+}
+.arch-msg:hover { background: var(--elevated); }
+/* Ijro etilayotgan daqiqaga mos xabar. Glow YO'Q (brend qoidasi: neon faqat
+   jonli efir va asosiy harakatda) — chap chiziq + yumshoq fon yetarli. */
+.arch-msg.is-active {
+  background: var(--accent-soft);
+  border-left-color: var(--accent);
+}
+.arch-msg__head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.arch-msg__time {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--elevated);
+  color: var(--accent-light);
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.arch-msg__time:hover:not(:disabled) { border-color: var(--accent); background: var(--accent-soft); }
+.arch-msg__time:disabled { color: var(--text-3); cursor: default; }
+.arch-msg__name { font-size: 12px; color: var(--text-2); min-width: 0; }
+.arch-msg__del {
+  margin-left: auto;
+  flex-shrink: 0;
+  display: flex;
+  padding: 3px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.arch-msg:hover .arch-msg__del,
+.arch-msg__del:focus-visible { opacity: 1; }
+.arch-msg__del:hover { color: var(--danger); background: var(--danger-soft); }
+@media (hover: none) {
+  .arch-msg__del { opacity: 0.7; }
+}
+.arch-msg__body {
+  margin: 4px 0 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.arch-msg__confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  background: var(--danger-soft);
+  font-size: 12px;
+  color: var(--text-bright);
+}
+.arch-msg__confirm button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border-muted);
+  background: transparent;
+  color: var(--text-bright);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+/* Umumiy `.arch-msg__confirm button` qoidasidan KEYIN va undan xususiyroq —
+   shuning uchun `!important` kerak emas. */
+.arch-msg__confirm button.arch-msg__confirm-yes { border-color: var(--danger); color: var(--danger); }
+.arch-msg__confirm button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Materiallar — video holatidan MUSTAQIL, har doim ko'rinadi */
+.arch-materials {
+  margin-top: 20px;
+  padding: 20px;
+  border-radius: var(--r-xl);
+  background: var(--card);
+  border: 1px solid var(--border);
+}
+.arch-materials__head { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+.arch-materials__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 8px;
+}
+.arch-material {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: var(--elevated);
+  color: var(--text);
+  text-decoration: none;
+}
+.arch-material:hover { border-color: var(--border-muted); background: var(--hover); }
+/* Havolasi imzolanmagan material — bosilmaydi, lekin nomi va sababi ko'rinadi
+   (fayl bor, faqat vaqtinchalik havola olinmagan). */
+.arch-material--dead { opacity: 0.6; cursor: default; }
+.arch-material--dead:hover { border-color: var(--border); background: var(--elevated); }
+.arch-material__name { font-size: 13px; font-weight: 600; flex: 1; min-width: 0; }
+.arch-material__meta { flex-shrink: 0; font-size: 11.5px; color: var(--text-3); }
+.arch-material svg { flex-shrink: 0; color: var(--text-3); }
+
+@media (max-width: 1024px) {
+  .arch-grid { grid-template-columns: 1fr; }
+  .arch-chat { max-height: 460px; }
+  .arch-video__player { max-height: none; }
+}
+
+/* ── Telegram bog'lanishi (profil) ───────────────────────────────────────── */
+.tg-linked { display: flex; flex-direction: column; gap: 14px; align-items: flex-start; }
+.tg-linked__row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.tg-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: var(--r-full);
+  background: var(--success-soft);
+  color: var(--success);
+  font-size: 12px;
+  font-weight: 700;
+}
+.tg-chats { display: flex; flex-direction: column; gap: 6px; }
+.tg-chats__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.tg-chats__list li {
+  max-width: 220px;
+  padding: 4px 10px;
+  border-radius: var(--r-full);
+  border: 1px solid var(--border);
+  background: var(--elevated);
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+.tg-code { display: flex; flex-direction: column; align-items: flex-start; }
+.tg-code__box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 10px 14px;
+  border-radius: var(--r-md);
+  border: 1px dashed var(--border-muted);
+  background: var(--elevated);
+}
+.tg-code__box code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--accent-light);
 }

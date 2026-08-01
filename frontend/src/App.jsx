@@ -12,6 +12,7 @@ import { WaitingRoom } from './views/WaitingRoom'
 import { Dashboard } from './views/Dashboard'
 import { Schedule } from './views/Schedule'
 import { Recordings } from './views/Recordings'
+import { LessonArchive } from './views/LessonArchive'
 import { Notifications } from './views/Notifications'
 import { Profile } from './views/Profile'
 import { UsersView } from './views/Users'
@@ -49,6 +50,9 @@ export default function App() {
           <Route index element={<Dashboard />} />
           <Route path="schedule" element={<Schedule />} />
           <Route path="recordings" element={<Recordings />} />
+          {/* O'tgan dars sahifasi: video + chat + materiallar. Shell ICHIDA —
+              bu ko'rish sahifasi, jonli xona emas. */}
+          <Route path="lesson/:id/archive" element={<LessonArchive />} />
           <Route path="blocklist" element={<Blocklist />} />
           <Route path="notifications" element={<Notifications />} />
           <Route path="profile" element={<Profile />} />

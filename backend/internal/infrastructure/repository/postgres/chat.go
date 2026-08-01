@@ -86,14 +86,14 @@ func (r *chatRepo) Create(ctx context.Context, m *entity.ChatMessage) error {
 	return nil
 }
 
-func (r *chatRepo) ListByLesson(ctx context.Context, lessonID, viewerIdentity string, before *time.Time, limit int) ([]*entity.ChatMessage, error) {
-	if limit <= 0 || limit > 100 {
-		limit = 50
-	}
-	q := r.builder.
-		Select(chatColumns...).
-		From("chat_messages").
-		Where(sq.Eq{"lesson_id": lessonID}).
+// chatVisible — dars, moderatsiya va ko'rinuvchanlik filtrlari.
+//
+// Bitta joyda: `ListByLesson` va `ListAllByLesson` AYNAN bir xil ko'rinuvchanlik
+// qoidasiga bo'ysunishi shart. Ikki nusxa bo'lganda biriga qo'shilgan shart
+// ikkinchisiga qo'shilmay qolishi — ya'ni begona shaxsiy yozishma arxiv orqali
+// sizib chiqishi — vaqt masalasi edi.
+func chatVisible(q sq.SelectBuilder, lessonID, viewerIdentity string) sq.SelectBuilder {
+	q = q.Where(sq.Eq{"lesson_id": lessonID}).
 		// MODERATSIYA (№6): o'chirilgan xabar hech kimga qaytmaydi — mentorga ham.
 		// Qator DB'da qoladi (moderatsiya izi), lekin API uni ko'rsatmaydi.
 		Where(sq.Eq{"deleted_at": nil})
@@ -101,14 +101,34 @@ func (r *chatRepo) ListByLesson(ctx context.Context, lessonID, viewerIdentity st
 	// KO'RINUVCHANLIK. Shaxsiy xabarni faqat ikki tomon ko'radi va bu shart SQL'da
 	// qo'llanadi — begona DM jarayon xotirasiga umuman kelmasin.
 	if viewerIdentity == "" {
-		q = q.Where(sq.Eq{"to_identity": nil}) // faqat ommaviy
-	} else {
-		q = q.Where(sq.Or{
-			sq.Eq{"to_identity": nil},
-			sq.Eq{"to_identity": viewerIdentity},
-			sq.Eq{"sender_identity": viewerIdentity},
-		})
+		return q.Where(sq.Eq{"to_identity": nil}) // faqat ommaviy
 	}
+	return q.Where(sq.Or{
+		sq.Eq{"to_identity": nil},
+		sq.Eq{"to_identity": viewerIdentity},
+		sq.Eq{"sender_identity": viewerIdentity},
+	})
+}
+
+// scanChatRows — natija qatorlarini entity ro'yxatiga o'giradi.
+func scanChatRows(rows pgx.Rows) ([]*entity.ChatMessage, error) {
+	defer rows.Close()
+	var out []*entity.ChatMessage
+	for rows.Next() {
+		m, err := scanChat(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+func (r *chatRepo) ListByLesson(ctx context.Context, lessonID, viewerIdentity string, before *time.Time, limit int) ([]*entity.ChatMessage, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	q := chatVisible(r.builder.Select(chatColumns...).From("chat_messages"), lessonID, viewerIdentity)
 
 	if before != nil {
 		q = q.Where(sq.Lt{"created_at": *before}) // kursor: faqat undan eski xabarlar
@@ -122,17 +142,31 @@ func (r *chatRepo) ListByLesson(ctx context.Context, lessonID, viewerIdentity st
 	if err != nil {
 		return nil, fmt.Errorf("chatRepo.ListByLesson: %w", err)
 	}
-	defer rows.Close()
+	return scanChatRows(rows)
+}
 
-	var out []*entity.ChatMessage
-	for rows.Next() {
-		m, err := scanChat(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, m)
+// maxExportMessages — arxiv/transkript bir o'qishda oladigan eng ko'p xabar.
+//
+// 4 soatlik dars (texnik limit) uchun ham yetarlicha katta, lekin CHEKSIZ EMAS:
+// chegarasiz `SELECT` bitta buzg'unchi dars butun jarayon xotirasini yeb
+// qo'yishiga yo'l ochardi.
+const maxExportMessages = 10000
+
+func (r *chatRepo) ListAllByLesson(ctx context.Context, lessonID, viewerIdentity string, max int) ([]*entity.ChatMessage, error) {
+	if max <= 0 || max > maxExportMessages {
+		max = maxExportMessages
 	}
-	return out, rows.Err()
+	q := chatVisible(r.builder.Select(chatColumns...).From("chat_messages"), lessonID, viewerIdentity)
+	// ESKIDAN YANGIGA — transkript suhbat tartibida o'qiladi (interfeys izohiga qara).
+	sql, args, err := q.OrderBy("created_at ASC").Limit(uint64(max)).ToSql()
+	if err != nil {
+		return nil, fmt.Errorf("chatRepo.ListAllByLesson: %w", err)
+	}
+	rows, err := r.db.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, fmt.Errorf("chatRepo.ListAllByLesson: %w", err)
+	}
+	return scanChatRows(rows)
 }
 
 func (r *chatRepo) SoftDelete(ctx context.Context, lessonID, messageID, deletedBy string) (*entity.ChatMessage, error) {

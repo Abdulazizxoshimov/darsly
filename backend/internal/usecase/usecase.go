@@ -7,11 +7,13 @@ import (
 	"github.com/zoom/darsly/internal/infrastructure/livekit"
 	"github.com/zoom/darsly/internal/infrastructure/minio"
 	"github.com/zoom/darsly/internal/infrastructure/redis"
+	tgc "github.com/zoom/darsly/internal/infrastructure/telegram"
 	ws "github.com/zoom/darsly/internal/infrastructure/websocket"
 	"github.com/zoom/darsly/internal/pkg/hasher"
 	"github.com/zoom/darsly/internal/pkg/logger"
 	"github.com/zoom/darsly/internal/pkg/token"
 	"github.com/zoom/darsly/internal/storage"
+	"github.com/zoom/darsly/internal/usecase/archive"
 	"github.com/zoom/darsly/internal/usecase/auth"
 	"github.com/zoom/darsly/internal/usecase/chat"
 	"github.com/zoom/darsly/internal/usecase/joinlink"
@@ -21,6 +23,7 @@ import (
 	"github.com/zoom/darsly/internal/usecase/recording"
 	"github.com/zoom/darsly/internal/usecase/room"
 	"github.com/zoom/darsly/internal/usecase/roomstate"
+	"github.com/zoom/darsly/internal/usecase/telegram"
 	"github.com/zoom/darsly/internal/usecase/user"
 	"github.com/zoom/darsly/internal/usecase/waitingroom"
 )
@@ -39,6 +42,12 @@ type UseCases struct {
 	Chat         chat.UseCase
 	Poll         poll.UseCase
 	JoinLink     joinlink.UseCase
+	// Archive — o'tgan dars sahifasi (video + chat + materiallar), faqat o'qish.
+	Archive archive.UseCase
+	// Telegram — dars arxivi integratsiyasi (bog'lash oqimi, guruhlar).
+	// Bot sozlanmagan bo'lsa ham NIL EMAS: metodlari "integratsiya o'chiq"
+	// degan aniq javob beradi va chaqiruvchilarda nil-tekshiruv tarqalmaydi.
+	Telegram telegram.UseCase
 }
 
 // Deps — UseCases uchun tashqi bog'liqliklar.
@@ -58,13 +67,26 @@ type Deps struct {
 	// RecordingRetention — yozuv saqlash muddati (`expires_at` hisoblash uchun).
 	// 0 → cheksiz saqlash (klientga `expires_at` qaytmaydi).
 	RecordingRetention time.Duration
+	// Telegram — Bot API klienti. Sozlanmagan bo'lsa `telegram.NewNop()`
+	// (nil emas): shunda `Enabled()` false qaytadi va arxivlash jimgina
+	// o'chiq bo'ladi.
+	Telegram tgc.Client
+	// RecordingCacheTTL — Telegramdan tiklangan nusxa serverda qancha turadi.
+	// 0 → 24 soat (default).
+	RecordingCacheTTL time.Duration
 }
 
 func New(d Deps) *UseCases {
 	// Tartib muhim: `recording` `room`ga bog'liq emas, `room` esa majburiy
 	// yozib olish uchun unga bog'liq (room.Recorder). Shuning uchun avval
 	// recording yasaladi va room'ga uzatiladi.
-	recordingUC := recording.New(d.Store.Recording, d.Store.Lesson, d.LiveKit, d.Minio, d.RecordingS3, d.Cache, d.RecordingRetention, d.Log)
+	// Telegram klienti nil bo'lmasin: `recording` uni faqat `Enabled()`
+	// orqali tekshiradi va nop klient hamma joyda xavfsiz.
+	tgClient := d.Telegram
+	if tgClient == nil {
+		tgClient = tgc.NewNop()
+	}
+	recordingUC := recording.New(d.Store.Recording, d.Store.Lesson, d.LiveKit, d.Minio, d.RecordingS3, d.Cache, d.RecordingRetention, tgClient, d.RecordingCacheTTL, d.Log)
 	// roomstate `room`dan OLDIN yasaladi: `room` unga bog'liq (ruxsat berilganda
 	// qo'lni tushirish, dars tugaganda tozalash), teskarisi esa yo'q.
 	roomStateUC := roomstate.New(d.Store.Lesson, d.LiveKit, d.Cache, recordingUC, d.Log)
@@ -82,5 +104,7 @@ func New(d Deps) *UseCases {
 		Chat:         chat.New(d.Store.Chat, d.Store.Lesson, d.Store.User, d.LiveKit, d.Minio, d.Cache, d.Log),
 		Poll:         poll.New(d.Store.Poll, d.Store.Lesson, d.LiveKit, d.Cache, d.Log),
 		JoinLink:     joinlink.New(d.Store.Lesson, d.Store.User, d.Hasher, d.Cache, roomUC, waitingUC, d.Store.Blocklist, d.Log),
+		Archive:      archive.New(d.Store.Lesson, d.Store.Chat, d.Store.Recording, d.Minio, d.RecordingRetention, tgClient.Enabled(), d.Log),
+		Telegram:     telegram.New(d.Store.Telegram, tgClient, d.Cache, d.Log),
 	}
 }

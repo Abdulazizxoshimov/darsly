@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { api, setUnauthorizedHandler, tokenStore } from './api'
+import { api, filenameFromDisposition, setUnauthorizedHandler, tokenStore } from './api'
 import { consumeLogoutReason, setLogoutReason } from '../lib/logoutReason'
 
 // SESSIYA BEKOR QILINISHI (`SESSION_REVOKED`) — bitta akkaunt = bitta faol
@@ -88,5 +88,54 @@ describe('logoutReason kanali', () => {
   it('noma’lum sabab saqlanmaydi (bo‘sh banner chiqmasin)', () => {
     setLogoutReason('nimadir')
     expect(consumeLogoutReason()).toBeNull()
+  })
+})
+
+// ── Fayl javobi (chat transkripti) ──────────────────────────────────────────
+//
+// Transkript endpoint'i JWT talab qiladi, ya'ni uni oddiy `<a href>` bilan
+// ochib bo'lmaydi. Fayl `api.blob` orqali — 401/refresh zanjiri bilan BIR XIL
+// yo'ldan — olinadi, nomini esa SERVER aytadi.
+describe('api.blob — himoyalangan fayl yuklab olish', () => {
+  it('blob va Content-Disposition’dagi fayl nomini qaytaradi', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response('salom', {
+          status: 200,
+          headers: {
+            'Content-Type': 'text/plain; charset=utf-8',
+            'Content-Disposition': 'attachment; filename="algebra-chat-2026-08-01.txt"',
+          },
+        }),
+      ),
+    )
+    const res = await api.blob('/lessons/l1/chat/transcript?format=txt')
+    expect(res.filename).toBe('algebra-chat-2026-08-01.txt')
+    expect(await res.blob.text()).toBe('salom')
+  })
+
+  // Header o'qilmasa nom BO'SH qaytadi — chaqiruvchi o'zining mazmunli
+  // zaxira nomini qo'ya olsin (`'fayl'` truthy bo'lib uni bo'g'ib qo'yardi).
+  it('Content-Disposition yo‘q bo‘lsa nom bo‘sh qaytadi', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('x', { status: 200 })))
+    const res = await api.blob('/lessons/l1/chat/transcript')
+    expect(res.filename).toBe('')
+  })
+
+  it('RFC 5987 (filename*=UTF-8) shaklini ham o‘qiydi', () => {
+    expect(
+      filenameFromDisposition("attachment; filename*=UTF-8''dars%2Dchat.txt"),
+    ).toBe('dars-chat.txt')
+  })
+
+  it('xato javobda fayl emas, ApiError beradi', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(json({ code: 'BAD_REQUEST', message: 'format must be txt or html' }, 400)),
+    )
+    await expect(api.blob('/lessons/l1/chat/transcript?format=pdf')).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    })
   })
 })

@@ -50,6 +50,15 @@ func Created(c *gin.Context, data any) {
 	c.JSON(http.StatusCreated, successResponse{Data: jsonData(data)})
 }
 
+// Accepted sends a 202 JSON response: ish QABUL QILINDI, lekin hali tugamagan.
+//
+// Uzoq fon ishlari uchun (yozuvni Telegram arxividan tiklash — 30-60 s).
+// 200 ishlatilsa klient natijani tayyor deb hisoblab, darhol yuklab olishga
+// urinardi va xato olardi; 202 esa "poll qilib turing" degan aniq shartnoma.
+func Accepted(c *gin.Context, data any) {
+	c.JSON(http.StatusAccepted, successResponse{Data: jsonData(data)})
+}
+
 // NoContent sends a 204 response with no body.
 func NoContent(c *gin.Context) {
 	c.Status(http.StatusNoContent)

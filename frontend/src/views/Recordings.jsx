@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { AlertTriangle, Download, Film, Loader2, Trash2 } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { AlertTriangle, Download, Film, Loader2, PlayCircle, Send, Trash2 } from 'lucide-react'
 import { useLessons, useRecordings } from '../store/data'
 import { downloadRecording } from '../api/recordings'
 import { errorText } from '../api/api'
@@ -121,7 +122,11 @@ function RecordingRow({ rec, lessonTitle }) {
   // o'chirilgan — yuklab olish 400 beradi. Tugmani ko'rsatib, so'ng xato
   // chiqarish yolg'on va'da bo'lardi, shuning uchun u umuman ko'rsatilmaydi.
   const expired = rec.status === 'expired'
-  const inProgress = rec.status === 'recording' || rec.status === 'processing'
+  // `archived` — `expired` dan BUTUNLAY boshqacha: fayl serverdan ketgan,
+  // lekin Telegramda turibdi va qaytarib olinadi. Tiklash arxiv sahifasida
+  // bo'ladi (u yerda progress ko'rinadi va tayyor bo'lgach pleyer ochiladi).
+  const archived = rec.status === 'archived'
+  const inProgress = rec.status === 'recording' || rec.status === 'processing' || rec.status === 'restoring'
 
   const days = ready ? expiresInDays(rec.expires_at) : null
   const expiryText = ready ? formatExpiry(rec.expires_at) : null
@@ -140,6 +145,8 @@ function RecordingRow({ rec, lessonTitle }) {
       <td>
         {expired ? (
           <span className="expiry expiry--gone">O‘chirilgan</span>
+        ) : archived ? (
+          <span className="expiry">Telegramda saqlangan</span>
         ) : expiryText ? (
           <span className={`expiry ${soon ? 'expiry--soon' : ''}`}>
             {soon && <AlertTriangle size={13} />}
@@ -159,7 +166,10 @@ function RecordingRow({ rec, lessonTitle }) {
           }}
         >
           {rec.status === 'recording' && <span className="rec-dot" />}
-          {rec.status === 'processing' && <Loader2 size={14} style={{ animation: 'spin 0.7s linear infinite' }} />}
+          {(rec.status === 'processing' || rec.status === 'restoring') && (
+            <Loader2 size={14} style={{ animation: 'spin 0.7s linear infinite' }} />
+          )}
+          {archived && <Send size={14} />}
           {expired && <Trash2 size={14} />}
           {RECORDING_STATUS_UZ[rec.status] || rec.status}
         </span>
@@ -167,14 +177,27 @@ function RecordingRow({ rec, lessonTitle }) {
       <td>
         <div className="row-actions">
           {ready ? (
-            <button className="btn btn--secondary btn--sm" onClick={download} disabled={downloading}>
-              {downloading ? (
-                <Loader2 size={15} style={{ animation: 'spin 0.7s linear infinite' }} />
-              ) : (
-                <Download size={15} />
-              )}
-              Yuklab olish
-            </button>
+            <>
+              {/* Arxivda video chat bilan yonma-yon ko'riladi — yuklab olishdan
+                  ko'ra ko'p ishlatiladigan harakat, shuning uchun oldinda. */}
+              <Link className="btn btn--secondary btn--sm" to={`/app/lesson/${rec.lesson_id}/archive`}>
+                <PlayCircle size={15} /> Ko‘rish
+              </Link>
+              <button className="btn btn--ghost btn--sm" onClick={download} disabled={downloading}>
+                {downloading ? (
+                  <Loader2 size={15} style={{ animation: 'spin 0.7s linear infinite' }} />
+                ) : (
+                  <Download size={15} />
+                )}
+                Yuklab olish
+              </button>
+            </>
+          ) : archived ? (
+            // Tiklash SHU YERDA boshlanmaydi: u yuzlab megabayt trafik va
+            // 30-60 soniya kutish — arxiv sahifasida progress bilan ko'rsatiladi.
+            <Link className="btn btn--secondary btn--sm" to={`/app/lesson/${rec.lesson_id}/archive`}>
+              <Send size={15} /> Arxivdan tiklash
+            </Link>
           ) : expired ? (
             <span className="muted" style={{ fontSize: 13 }}>Muddati tugagan — fayl o‘chirilgan</span>
           ) : (

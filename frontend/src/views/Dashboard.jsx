@@ -208,11 +208,20 @@ function LessonRow({ lesson, isMentor, onEdit, onChat }) {
             <>
               {/*
                 Yakunlangan dars xonani OCHMAYDI: server `lesson is not active` (400)
-                qaytaradi — o'rniga yozuvlar sahifasi.
+                qaytaradi — o'rniga SHU darsning arxivi.
+
+                Avval bu yerda ikkita o'xshash kirish nuqtasi bor edi: «Yozuvlar»
+                (umumiy ro'yxatga olib borardi — ustoz o'z darsini yana qidirishi
+                kerak edi) va alohida chat ikonkasi. Arxiv sahifasi ikkalasini
+                ham o'z ichiga oladi: video, chat va materiallar bir joyda.
               */}
               {lesson.status === 'ended' ? (
-                <Button size="sm" variant="secondary" onClick={() => navigate('/app/recordings')}>
-                  <Film size={15} /> Yozuvlar
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => navigate(`/app/lesson/${lesson.id}/archive`)}
+                >
+                  <Film size={15} /> Arxiv
                 </Button>
               ) : lesson.status === 'cancelled' ? (
                 <Button size="sm" variant="secondary" disabled>
@@ -229,9 +238,15 @@ function LessonRow({ lesson, isMentor, onEdit, onChat }) {
               <button className="tbl-btn" onClick={copyLink} title="Havolani nusxalash" aria-label="Havolani nusxalash">
                 <Copy size={15} />
               </button>
-              <button className="tbl-btn" onClick={onChat} title="Chat tarixi" aria-label="Chat tarixi">
-                <MessageSquare size={15} />
-              </button>
+              {/* Yakunlangan darsda chat ARXIV sahifasida (video bilan yonma-yon
+                  va vaqt bo'yicha bog'langan holda) — bu yerda takrorlanmaydi.
+                  Davom etayotgan/rejadagi darsda esa arxiv hali yo'q, chat
+                  tarixi va moderatsiya faqat shu modal orqali ochiladi. */}
+              {lesson.status !== 'ended' && (
+                <button className="tbl-btn" onClick={onChat} title="Chat tarixi" aria-label="Chat tarixi">
+                  <MessageSquare size={15} />
+                </button>
+              )}
               <button className="tbl-btn" onClick={onEdit} title="Tahrirlash" aria-label="Tahrirlash">
                 <Pencil size={15} />
               </button>

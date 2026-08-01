@@ -41,6 +41,18 @@ export function formatDuration(sec) {
   return Math.round((sec || 0) / 60) + ' daq'
 }
 
+// Pleyer vaqt belgisi: 125 → «2:05», 3725 → «1:02:05».
+// Chat xabari yonidagi tugmada shu ko'rinishda chiqadi — foydalanuvchi uni
+// videoning shkalasidagi vaqt bilan bir qarashda solishtiradi.
+export function formatOffset(sec) {
+  const t = Math.max(0, Math.floor(Number(sec) || 0))
+  const h = Math.floor(t / 3600)
+  const m = Math.floor((t % 3600) / 60)
+  const s = t % 60
+  const pad = (n) => String(n).padStart(2, '0')
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`
+}
+
 // Chat fayllari uchun — `formatSize` dan farqi: kichik fayl «0.0 MB» emas,
 // «84 KB» bo'lib chiqadi (rasm/hujjatlar odatda megabaytdan kichik).
 export function formatBytes(bytes) {
@@ -92,6 +104,11 @@ export const RECORDING_STATUS_UZ = {
   failed: 'Xatolik',
   // Saqlash muddati (30 kun) tugagan — fayl o'chirilgan, qator tarix uchun qoladi.
   expired: 'Muddati tugagan',
+  // Telegram arxivi YOQILGAN bo'lsa 30 kundan keyin `expired` emas, `archived`
+  // bo'ladi: fayl serverdan ketgan, lekin Telegramda turibdi va qaytarib
+  // olinadi. Foydalanuvchi uchun bu «yo'qolgan» EMAS, «uzoqroqda».
+  archived: 'Telegram arxivida',
+  restoring: 'Tiklanmoqda…',
 }
 
 // Rol nomlari. Backend xom qiymat qaytaradi (`mentor`/`student`/`admin`) va u

@@ -5,7 +5,18 @@ import (
 
 	"github.com/zoom/darsly/internal/entity"
 	"github.com/zoom/darsly/internal/infrastructure/livekit"
+	tg "github.com/zoom/darsly/internal/infrastructure/telegram"
 )
+
+// Telegram — `recording` usecase talab qiladigan Telegram operatsiyalari (DIP).
+//
+// To'liq `telegram.Client` emas, faqat TIKLASH uchun keragi: yozuv usecase'i
+// xabar yubormaydi va tugma chizmaydi — u ishlar yuklash ishchisida.
+type Telegram interface {
+	Enabled() bool
+	GetFile(ctx context.Context, fileID string) (*tg.File, error)
+	DownloadFile(ctx context.Context, f *tg.File, dst string) error
+}
 
 // LiveKit — recording usecase talab qiladigan LiveKit operatsiyalari (DIP).
 type LiveKit interface {
@@ -86,6 +97,28 @@ type UseCase interface {
 	StopRecording(ctx context.Context, mentorID, recordingID string) error
 	// ListByLesson — dars yozuvlari (mentor).
 	ListByLesson(ctx context.Context, mentorID, lessonID string) ([]*entity.Recording, error)
+	// Get — bitta yozuv (mentor).
+	//
+	// Klient tiklash holatini AYNAN shu orqali poll qiladi: `restoring` →
+	// `ready`. Alohida endpoint kerak, chunki `ListByLesson` butun ro'yxatni
+	// qaytaradi va uni har 5 soniyada so'rash isrof bo'lardi.
+	Get(ctx context.Context, mentorID, recordingID string) (*entity.Recording, error)
+	// Restore — Telegramdagi arxivdan server nusxasini qaytarib olishni
+	// BOSHLAYDI (fon ishi) va darhol qaytadi.
+	//
+	// Yuklab olish 30-60 soniya davom etadi — HTTP so'rovini shuncha ushlab
+	// turish mumkin emas (proxy timeout, mobil tarmoq). Shuning uchun bu yerda
+	// faqat holat `restoring` ga o'tadi; ishni [UseCase.RunRestore] bajaradi.
+	//
+	// IDEMPOTENT: ikki marta bosilsa ikkinchisi ham 202 oladi, lekin ikkinchi
+	// yuklab olish boshlanmaydi (atomik `ClaimRestore`).
+	Restore(ctx context.Context, mentorID, recordingID string) (*entity.RecordingRestore, error)
+	// RunRestore — tiklashning O'ZI (Telegram → MinIO). Fon ishchisi chaqiradi.
+	//
+	// Alohida metod, chunki uni HTTP so'rovi kontekstida bajarib bo'lmaydi:
+	// klient uzilsa kontekst bekor bo'lardi va yozuv abadiy `restoring` da
+	// qolardi.
+	RunRestore(ctx context.Context, recordingID string) error
 	// DownloadURL — tayyor yozuv uchun vaqtinchalik MinIO presigned havolasi.
 	DownloadURL(ctx context.Context, mentorID, recordingID string) (*entity.RecordingDownload, error)
 	// HandleEgress — LiveKit Egress webhook'idan kelgan yakuniy holatni qayta ishlaydi.

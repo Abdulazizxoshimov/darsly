@@ -146,9 +146,11 @@ TIRIK sessiya ichida ishlaydi, tugatilgan sessiyani tiriltirmaydi.
 | POST | `/lessons/:id/chat` | `{body,to?}` | 201 `ChatMessage` |
 | POST | `/lessons/:id/chat/upload` | `multipart: file,body?,to?` | 201 `ChatMessage` |
 | DELETE | `/lessons/:id/chat/:messageID` | — | 204 |
+| GET | `/lessons/:id/chat/transcript?format=txt\|html` | — | fayl (`Content-Disposition: attachment`) |
 
 Backend host chat'ni data-channel'ga ham broadcast qiladi (`ChatMessage` shakli).
 Ishtirokchi yo'li — pastdagi «Chat — ishtirokchi yo'li» bo'limida.
+Transkript — «Chat transkripti (№21)» bo'limida.
 
 ## Polls
 | GET | `/lessons/:id/polls` | auth(mentor) | `[Poll]` |
@@ -163,18 +165,61 @@ Ishtirokchi yo'li — pastdagi «Chat — ishtirokchi yo'li» bo'limida.
 | GET | `/lessons/:id/recordings` | — | `[Recording]` |
 | POST | `/recordings/:id/stop` | — | 204 |
 | GET | `/recordings/:id/download` | — | `RecordingDownload` (presigned, 1h) |
+| GET | `/recordings/:id` | — | `Recording` (tiklash holatini poll qilish) |
+| POST | `/recordings/:id/restore` | — | **202** `RecordingRestore` |
 
 ### Retention — 30 kun (PRODUCT.md №5)
 `ready` yozuv `expires_at` maydoni bilan qaytadi (hisoblanadigan:
-`ended_at + RECORDING_RETENTION_DAYS`) — klient «X kundan keyin o'chadi» deb
-ko'rsatadi. Muddat o'tgach fon ishchisi faylni MinIO'dan o'chiradi va status
-`expired` bo'ladi (qator tarix uchun qoladi, `expires_at` endi qaytmaydi).
+`ended_at + RECORDING_SERVER_RETENTION_DAYS`) — klient «X kundan keyin
+o'chadi» deb ko'rsatadi.
 
 - O'chishga 3 kun qolganda mentor bildirishnoma oladi:
   `type:"recording_expiring"`, `lesson_id` to'ldirilgan. Bir yozuv uchun BIR marta.
-- `GET /recordings/:id/download` status `expired` bo'lsa **400 `BAD_REQUEST`**
-  (`"recording has expired and was deleted"`) — presigned havola berilmaydi.
-- `RECORDING_RETENTION_DAYS=0` bo'lsa o'chirish o'chirilgan va `expires_at` qaytmaydi.
+- `RECORDING_SERVER_RETENTION_DAYS=0` bo'lsa o'chirish o'chirilgan va
+  `expires_at` qaytmaydi.
+
+**Telegram arxivi O'CHIQ bo'lsa** (default): muddat o'tgach fayl MinIO'dan
+o'chadi va status `expired` bo'ladi (qator tarix uchun qoladi).
+`GET /recordings/:id/download` bunda **400 `BAD_REQUEST`**
+(`"recording has expired and was deleted"`).
+
+### Telegram arxivi — `archived` va tiklash (PRODUCT.md 2026-08-01)
+`TELEGRAM_BOT_TOKEN` sozlangan bo'lsa retention MA'NOSI o'zgaradi:
+
+- Fayl **faqat** Telegramda tasdiqlangan bo'lsa o'chiriladi (`telegram_sent_at`
+  to'lgan) va status **`archived`** bo'ladi — yozuv YO'QOLMAGAN.
+- Tasdiqlanmagan yozuv **o'chirilmaydi** (serverda qoladi), `expires_at`
+  qaytmaydi va mentor `type:"telegram_upload_failed"` bildirishnoma oladi.
+- `archived` bo'lganda mentor `type:"recording_archived"` bildirishnoma oladi.
+
+**Tiklash oqimi** (klient shu ketma-ketlikni bajaradi):
+
+1. `GET /recordings/:id/download` → status `archived` bo'lsa **400**
+   (`"recording is archived — restore it first"`). Avtomatik boshlanmaydi:
+   tiklash yuzlab megabayt trafik va mentor buni bilib turib boshlasin.
+2. `POST /recordings/:id/restore` → **202** `{"status":"restoring","poll_after_s":5}`.
+   Idempotent: ikki marta bosilsa ham bitta yuklab olish ketadi.
+   Yozuv allaqachon serverda bo'lsa `{"status":"ready"}` (xato emas).
+3. Klient `GET /recordings/:id` ni `poll_after_s` oralig'ida so'raydi.
+   `status` `restoring` → `ready` bo'lganda `download` ishlaydi.
+   Yiqilsa `archived` ga qaytadi va `telegram_error` to'ladi.
+4. Tiklangan nusxa `cached_until` gacha turadi (`RECORDING_CACHE_TTL_HOURS`,
+   default 24s), keyin yana `archived` bo'ladi.
+
+`restoring` holatida `download` → **400** (`"recording is being restored"`).
+
+## Telegram (himoyalangan, mentor)
+| GET | `/me/telegram` | — | `TelegramLinkStatus` |
+| POST | `/me/telegram/link` | — | 201 `TelegramLink` |
+| DELETE | `/me/telegram` | — | 204 |
+
+- `GET /me/telegram` → `enabled:false` bo'lsa serverda integratsiya
+  sozlanmagan: klient «Telegram bilan bog'lash» bo'limini **ko'rsatmasin**
+  (DB'ga ham borilmaydi).
+- `POST /me/telegram/link` bir martalik kod beradi (15 daqiqa). Mentor botga
+  `/start <kod>` yuboradi; `deep_link` bosilsa Telegram buni o'zi qiladi.
+  Integratsiya o'chiq bo'lsa **400 `BAD_REQUEST`**.
+- Kod BIR MARTALIK: ikkinchi urinish **400**.
 
 ## Notifications (himoyalangan)
 | GET | `/notifications?unread=&page=&limit=` | — | `[Notification]` (list) |
@@ -213,9 +258,17 @@ ko'rsatadi. Muddat o'tgach fon ishchisi faylni MinIO'dan o'chiradi va status
 - **ChatFile** (`ChatMessage.file`): `{name,size,mime,url,expires_in_s}` — `url` presigned (1 soat), HAR javobda qayta imzolanadi (bazada saqlanmaydi)
 - **Poll**: `{id,lesson_id,question,options[],is_active,created_at,closed_at?,results_visibility,results_published_at?}`; `results_visibility`: `mentor_only|public`
 - **PollResults**: `{poll:Poll,counts[],total}`
-- **Recording**: `{id,lesson_id,egress_id,status:"recording"|"processing"|"ready"|"failed"|"expired",duration_sec,size_bytes,started_at,ended_at?,created_at,expires_at?}` — `expires_at` faqat `ready` yozuvda
+- **Recording**: `{id,lesson_id,egress_id,status:"recording"|"processing"|"ready"|"failed"|"expired"|"archived"|"restoring",duration_sec,size_bytes,started_at,ended_at?,created_at,expires_at?,telegram_sent_at?,telegram_message_id?,telegram_error?,telegram_attempts?,cached_until?}` — `expires_at` faqat `ready` va Telegramda tasdiqlangan yozuvda; `telegram_file_id`/`telegram_chat_id` TASHQARIGA CHIQMAYDI
 - **RecordingDownload**: `{url,expires_in_s,duration_sec,size_bytes}`
-- **Notification**: `{id,user_id,type:"lesson_reminder"|"waiting_room"|"system"|"recording_expiring",title,body,lesson_id?,read_at?,created_at}`
+- **RecordingRestore**: `{status:"restoring"|"ready",poll_after_s}`
+- **TelegramLink**: `{code,deep_link?,expires_in_s}` — `deep_link` bot username ma'lum bo'lsa
+- **TelegramLinkStatus**: `{enabled,linked,telegram_username?,linked_at?,chats?:[TelegramChat]}`
+- **TelegramChat**: `{chat_id,title,type,is_active,added_at,updated_at}`
+- **Notification**: `{id,user_id,type:"lesson_reminder"|"waiting_room"|"system"|"recording_expiring"|"telegram_upload_failed"|"recording_archived",title,body,lesson_id?,read_at?,created_at}`
+- **LessonArchive**: `{lesson:Lesson,recording:ArchiveRecording|null,chat:[ArchiveChatMessage],materials:[ArchiveMaterial]}`
+- **ArchiveRecording**: `{id,status,duration_sec,size_bytes,url:string|null,expires_at:string|null}` — `url` faqat `status="ready"` da
+- **ArchiveChatMessage**: `{id,sender_identity,sender_name,body,to_identity,file,created_at,offset_sec}` — `to_identity`/`file` yo'q bo'lsa `null` (omitempty EMAS)
+- **ArchiveMaterial**: `{name,size,mime,url,created_at}`
 
 ## Xona holati (roomstate) — qo'l ko'tarish va reaksiyalar
 
@@ -364,3 +417,89 @@ natijani ochmaydi.
 Natijaning O'ZI ham yuboriladi — 300 kishilik xonada har biri alohida so'rov
 yuborsa bu 300 ta ortiqcha so'rov bo'lardi.
 
+## Dars arxivi (№20) va chat transkripti (№21)
+
+PRODUCT.md «Dars arxivi va Telegram saqlash» (2026-08-01). Ikkalasi ham
+**mentor + dars egasi**; begona mentor → **403**, yo'q dars → **404**,
+yaroqsiz UUID → **404** (mavjud bo'lmagan UUID bilan bir xil javob — loyihadagi
+umumiy qoida).
+
+### `GET /api/v1/lessons/:id/archive`
+
+O'tgan dars sahifasi uchun **bitta so'rov**: video, chat va materiallar.
+Uch alohida so'rov emas, chunki `offset_sec` chat bilan videoni bog'laydi va
+ikkalasi bir xil `started_at` o'qishidan kelishi shart.
+
+```jsonc
+{"data":{
+  "lesson": { /* Lesson (yuqoridagi shakl) */ },
+  "recording": {
+    "id":"a1b2…", "status":"ready", "duration_sec":3600, "size_bytes":128374912,
+    "url":"https://minio…/rec/….mp4?X-Amz-…",   // presigned 1 soat; ready BO'LMASA null
+    "expires_at":"2026-08-31T10:30:00Z"          // faqat ready da; retention=0 → null
+  },
+  "chat": [
+    {"id":"…","sender_identity":"guest_a","sender_name":"Ali Valiyev",
+     "body":"Ustoz, savol bor","to_identity":null,"file":null,
+     "created_at":"2026-08-01T09:32:05Z","offset_sec":125}
+  ],
+  "materials": [
+    {"name":"masala.pdf","size":12345,"mime":"application/pdf",
+     "url":"https://minio…?X-Amz-…","created_at":"2026-08-01T09:40:03Z"}
+  ]
+}}
+```
+
+- **`recording: null`** — bu dars uchun yozuv umuman yo'q (xato emas; klient
+  «yozuv yo'q» deb ko'rsatadi). Bir nechta yozuv bo'lsa ustuvorlik:
+  `ready` → `expired` → `recording`/`processing` → `failed`, teng bo'lsa eng yangisi.
+- **`recording.url`** faqat `status="ready"` da to'ldiriladi. `expired` da status
+  **shundayligicha** qoladi va `url: null` — Telegramdan qaytarib olish oqimi
+  (PRODUCT.md, 30 kun + 1 kunlik kesh) aynan shu statusga tayanadi.
+- **`offset_sec`** — xabar dars boshidan necha soniyada yozilgani
+  (`created_at − lesson.started_at`). Pleyerda vaqtni bosganda sakrash uchun.
+  Hech qachon manfiy emas (kutish xonasidagi xabar → `0`). `started_at` bo'lmasa
+  yozuvning `started_at` iga tushadi; ikkalasi ham bo'lmasa hammasi `0`.
+- **`chat`** — eskidan yangiga, `deleted_at IS NULL` (moderatsiya qilingan xabar
+  yo'q). Ko'rinuvchanlik `GET /lessons/:id/chat` bilan bir xil: ommaviy xabarlar
+  + ustozning **o'z** shaxsiy yozishmalari (o'quvchilarning bir-biriga yozgani EMAS).
+- **`materials`** — chatdagi fayl xabarlaridan yig'iladi (presigned havola bilan).
+- Javob `Cache-Control: no-store` bilan keladi (ichida vaqtinchalik havolalar bor).
+
+### `GET /api/v1/lessons/:id/chat/transcript?format=txt|html`
+
+Zoom kabi — dars oxirida chat fayli. Javob **JSON emas**, faylning o'zi:
+
+```
+Content-Type: text/plain; charset=utf-8      (html → text/html; charset=utf-8)
+Content-Disposition: attachment; filename="algebra-chat-2026-08-01.txt"
+Cache-Control: no-store
+```
+
+- `format` berilmasa **`txt`**. Boshqa qiymat → **400** `format must be txt or html`.
+- Fayl nomi dars sarlavhasidan yasaladi, lekin **faqat ASCII harf/raqam/tire**
+  qoldiriladi (sarlavha in'yeksiyasining oldi olinadi); ASCII qolmasa `dars-chat-<sana>.<ext>`.
+- Barcha vaqtlar **Asia/Tashkent (UTC+5)** da — DB UTC saqlaydi, hujjatni esa odam o'qiydi.
+
+**TXT namunasi:**
+```
+Dars: Matematika 5-sinf
+Sana: 01.08.2026 14:30
+Mentor: Dilnoza Karimova
+─────────────────────────────
+14:32:05  Ali Valiyev: Ustoz, savol bor
+14:32:40  Siz: Marhamat
+14:35:12  Dilnoza (shaxsiy): rahmat, tushundim
+14:40:03  Ali Valiyev: 📎 masala.pdf
+```
+Ustozning o'z xabarlari **`Siz`**, shaxsiy xabar **`(shaxsiy)`**, fayl **`📎 nom`**
+(izoh bo'lsa `📎 nom — izoh`). Chat bo'sh bo'lsa `(Chatda xabar bo'lmagan)`.
+Ko'p qatorli xabarning davomi 10 bo'sh joyga suriladi — o'quvchi tanasiga soxta
+`HH:MM:SS  Ustoz: …` qatori yozib transkriptni qalbakilashtira olmasin.
+
+**HTML** — bir faylli, inline CSS, Jonly brendida (qora fon + `#19d3a2`).
+Tashqi resurs **yo'q**: internetsiz, Telegram ilovasidan ochiladi. Ism, matn,
+fayl nomi va dars sarlavhasi HTML-escape qilinadi (hujjat brauzerda ochiladi,
+mazmuni esa o'quvchi yozgan). Fayllarga havola **qo'yilmaydi** — presigned
+havola bir soatda o'ladi va faylni butunlay yo'qolgandek ko'rsatardi;
+materiallar ilovada (`/archive`) qoladi.

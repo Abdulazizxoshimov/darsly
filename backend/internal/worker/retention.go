@@ -28,6 +28,18 @@ type RetentionConfig struct {
 	// obyekt o'chirish diskni va tarmoqni cho'ktirardi. Qolganlari keyingi
 	// tick'da — retention shoshilinch amal emas.
 	BatchLimit uint64
+	// TelegramArchive — Telegram arxivi yoqilganmi.
+	//
+	// ⭐ BU BAYROQ RETENTION MA'NOSINI TUBDAN O'ZGARTIRADI:
+	//   false → eski xulq: muddat o'tsa fayl o'chadi va yozuv `expired`
+	//           (butunlay yo'qoladi);
+	//   true  → yangi qoida: fayl FAQAT Telegramda tasdiqlangan bo'lsa
+	//           o'chadi va yozuv `archived` bo'ladi (Telegramdan qaytariladi).
+	//           Tasdiqlanmagani esa DISKDA QOLADI va mentor ogohlantiriladi.
+	//
+	// Ya'ni Telegram sozlanmagan serverda hech narsa o'zgarmaydi, sozlanganida
+	// esa «video hech qachon yo'qolmaydi» kafolati kuchga kiradi.
+	TelegramArchive bool
 }
 
 // DefaultRetentionConfig — PRODUCT.md dagi qiymatlar.
@@ -110,6 +122,25 @@ func (w *RetentionWorker) RunOnce(ctx context.Context) {
 	// "3 kundan keyin o'chadi" degan bildirishnoma yuborilardi.
 	w.warnExpiring(ctx, now)
 	w.deleteExpired(ctx, now)
+	if w.cfg.TelegramArchive {
+		// Telegramga tushmagan, lekin muddati o'tgan yozuvlar: o'chirilmaydi,
+		// mentor ogohlantiriladi (aks holda disk jimgina to'lardi).
+		w.warnUnconfirmed(ctx, now)
+		// Tiklangan (kesh) nusxalarni muddati bilan tozalash.
+		w.evictCache(ctx, now)
+	}
+}
+
+// recordingEnd — retention hisobining tayanch vaqti.
+//
+// `COALESCE(ended_at, created_at)` bilan AYNI mantiq (postgres
+// `retentionQuery` izohiga qara): `ended_at` bo'sh bo'lishi mumkin va u
+// holda yozuv hisobdan butunlay tushib qolmasligi kerak.
+func recordingEnd(rec *entity.Recording) time.Time {
+	if rec.EndedAt != nil {
+		return *rec.EndedAt
+	}
+	return rec.CreatedAt
 }
 
 // warnExpiring — o'chishiga `WarnBefore` qolgan yozuvlar uchun mentorga
@@ -125,7 +156,19 @@ func (w *RetentionWorker) warnExpiring(ctx context.Context, now time.Time) {
 		w.log.Warn(ctx, "retention: ogohlantirish ro'yxatini o'qib bo'lmadi", logger.SafeString("err", err.Error()))
 		return
 	}
+	// ⚠️ Muddati ALLAQACHON o'tganlar bu ro'yxatdan chiqariladi.
+	//
+	// `ListExpiringUnwarned` faqat YUQORI chegara bilan filtrlaydi, ya'ni unga
+	// 40 kunlik yozuv ham tushadi. Ogohlantirishsiz qoldirilsa mentor AYNI SHU
+	// tick'da ikki xabar olardi: «3 kundan keyin o'chadi» va darhol keyin
+	// «o'chirildi/arxivga ko'chdi». Bundan tashqari `ClaimRetentionWarning`
+	// belgisi sarflanib, HAQIQIY sabab (masalan «Telegramga tushmagan»)
+	// haqidagi ogohlantirish endi yuborilmasdi.
+	expiredBefore := now.Add(-w.cfg.Retention)
 	for _, rec := range recs {
+		if !recordingEnd(rec).After(expiredBefore) {
+			continue // bu yozuv bilan `deleteExpired`/`warnUnconfirmed` shug'ullanadi
+		}
 		l, err := w.lessonRepo.GetByID(ctx, rec.LessonID)
 		if err != nil {
 			// Dars o'chirilgan bo'lsa yozuv ham CASCADE bilan ketgan bo'lardi;
@@ -168,13 +211,30 @@ func (w *RetentionWorker) warnExpiring(ctx context.Context, now time.Time) {
 // fayl yo'q" degan buzuq holatni qoldirishi mumkin.
 func (w *RetentionWorker) deleteExpired(ctx context.Context, now time.Time) {
 	cutoff := now.Add(-w.cfg.Retention)
-	recs, err := w.recRepo.ListExpired(ctx, cutoff, w.cfg.BatchLimit)
+
+	// ⭐ Telegram arxivi yoqilganda RO'YXAT ham, YAKUNIY HOLAT ham boshqa:
+	//   · ro'yxat — faqat Telegramda tasdiqlanganlar (`ListArchivable`);
+	//   · holat — `archived` (yozuv yo'qolmadi, joyi o'zgardi).
+	// O'chiq bo'lsa eski xulq to'liq saqlanadi.
+	list := w.recRepo.ListExpired
+	claim := w.recRepo.ClaimExpire
+	final := entity.RecordingStatusExpired
+	if w.cfg.TelegramArchive {
+		list = w.recRepo.ListArchivable
+		claim = w.recRepo.ClaimArchive
+		final = entity.RecordingStatusArchived
+	}
+
+	recs, err := list(ctx, cutoff, w.cfg.BatchLimit)
 	if err != nil {
 		w.log.Warn(ctx, "retention: muddati o'tganlar ro'yxatini o'qib bo'lmadi", logger.SafeString("err", err.Error()))
 		return
 	}
 	for _, rec := range recs {
-		claimed, err := w.recRepo.ClaimExpire(ctx, rec.ID, now)
+		// `ClaimArchive` ning WHERE sharti `telegram_sent_at IS NOT NULL` ni
+		// YANA tekshiradi: ro'yxat olingandan keyingi oynada holat o'zgargan
+		// bo'lsa ham fayl o'chmaydi.
+		claimed, err := claim(ctx, rec.ID, now)
 		if err != nil {
 			w.log.Warn(ctx, "retention: o'chirishni band qilib bo'lmadi",
 				logger.String("recording_id", rec.ID), logger.SafeString("err", err.Error()))
@@ -184,15 +244,112 @@ func (w *RetentionWorker) deleteExpired(ctx context.Context, now time.Time) {
 			continue // boshqa instans oldinroq ulgurdi
 		}
 		if err := w.minio.Delete(ctx, rec.ObjectKey); err != nil {
-			// Qator allaqachon `expired` — mentor uchun holat to'g'ri. Obyekt
-			// esa diskda qolib ketdi: bu OPERATSION nuqson, shuning uchun
-			// Error darajasida (monitoring ko'rsin), lekin holatni orqaga
-			// qaytarmaymiz — aks holda cheksiz qayta urinish sikliga tushardi.
+			// Qator allaqachon yangi holatda — mentor uchun holat to'g'ri.
+			// Obyekt esa diskda qolib ketdi: bu OPERATSION nuqson, shuning
+			// uchun Error darajasida (monitoring ko'rsin), lekin holatni
+			// orqaga qaytarmaymiz — aks holda cheksiz qayta urinish sikliga
+			// tushardi.
 			w.log.Error(ctx, "retention: MinIO obyektini o'chirib bo'lmadi (diskda qoldi)",
 				logger.String("recording_id", rec.ID), logger.SafeString("err", err.Error()))
 			continue
 		}
-		w.log.Info(ctx, "retention: yozuv o'chirildi",
-			logger.String("recording_id", rec.ID), logger.String("lesson_id", rec.LessonID))
+		w.log.Info(ctx, "retention: server nusxasi olib tashlandi",
+			logger.String("recording_id", rec.ID),
+			logger.String("lesson_id", rec.LessonID),
+			logger.String("status", final))
+		if w.cfg.TelegramArchive {
+			w.notifyArchived(ctx, rec)
+		}
+	}
+}
+
+// notifyArchived — «yozuv arxivga ko'chdi» bildirishnomasi.
+//
+// Kerak, chunki mentor uchun ro'yxatdagi holat kutilmaganda o'zgaradi.
+// Xabarsiz bu «yozuvim yo'qoldi» deb tushunilardi — aslida u Telegramda va
+// bir bosishda qaytadi.
+func (w *RetentionWorker) notifyArchived(ctx context.Context, rec *entity.Recording) {
+	l, err := w.lessonRepo.GetByID(ctx, rec.LessonID)
+	if err != nil {
+		return
+	}
+	lessonID := l.ID
+	body := fmt.Sprintf(
+		"«%s» darsining yozuvi serverdan Telegram arxiviga ko'chirildi. Yo'qolgani yo'q — ochganingizda qaytarib olinadi (30-60 soniya).",
+		l.Title)
+	if _, err := w.notif.Notify(ctx, l.MentorID, entity.NotificationTypeRecordingArchived,
+		"Yozuv arxivga ko'chdi", body, &lessonID); err != nil {
+		w.log.Warn(ctx, "retention: arxiv bildirishnomasi yuborilmadi",
+			logger.String("recording_id", rec.ID), logger.SafeString("err", err.Error()))
+	}
+}
+
+// warnUnconfirmed — muddati o'tgan, LEKIN Telegramga tushmagan yozuvlar.
+//
+// Ular O'CHIRILMAYDI (fayl diskda qoladi). Bu ataylab: mahsulot qarori
+// bo'yicha ma'lumot yo'qotishdan ko'ra to'lgan disk yaxshiroq. Lekin bu
+// holat JIM qolmasligi kerak — mentor bilsin va yuklab olib qo'ysin.
+//
+// `ClaimRetentionWarning` tufayli har yozuv uchun bir marta (ogohlantirish
+// bilan bir xil belgidan foydalanadi — ikki xil ogohlantirish bir yozuv uchun
+// baribir keraksiz).
+func (w *RetentionWorker) warnUnconfirmed(ctx context.Context, now time.Time) {
+	cutoff := now.Add(-w.cfg.Retention)
+	recs, err := w.recRepo.ListExpiredUnconfirmed(ctx, cutoff, w.cfg.BatchLimit)
+	if err != nil {
+		w.log.Warn(ctx, "retention: tasdiqlanmaganlar ro'yxati o'qilmadi", logger.SafeString("err", err.Error()))
+		return
+	}
+	for _, rec := range recs {
+		l, err := w.lessonRepo.GetByID(ctx, rec.LessonID)
+		if err != nil {
+			continue
+		}
+		claimed, err := w.recRepo.ClaimRetentionWarning(ctx, rec.ID)
+		if err != nil || !claimed {
+			continue
+		}
+		lessonID := l.ID
+		body := fmt.Sprintf(
+			"«%s» darsining yozuvi saqlash muddatidan oshdi, lekin Telegram arxiviga hali tushmagan. "+
+				"Shuning uchun u serverda SAQLANIB TURIBDI (o'chirilmaydi). Telegram sozlamalarini tekshiring yoki yozuvni yuklab oling.",
+			l.Title)
+		if _, err := w.notif.Notify(ctx, l.MentorID, entity.NotificationTypeTelegramFailed,
+			"Yozuv arxivlanmagan", body, &lessonID); err != nil {
+			w.log.Warn(ctx, "retention: tasdiqlanmagan ogohlantirishi ketmadi",
+				logger.String("recording_id", rec.ID), logger.SafeString("err", err.Error()))
+		}
+	}
+}
+
+// evictCache — Telegramdan tiklangan nusxalarni muddati tugagach o'chiradi.
+//
+// Kesh bo'lmasa har ochilgan eski dars 1 GB ni diskda abadiy qoldirardi va
+// 30 kunlik retention'ning butun ma'nosi yo'qolardi.
+func (w *RetentionWorker) evictCache(ctx context.Context, now time.Time) {
+	recs, err := w.recRepo.ListCacheExpired(ctx, now, w.cfg.BatchLimit)
+	if err != nil {
+		w.log.Warn(ctx, "retention: kesh ro'yxati o'qilmadi", logger.SafeString("err", err.Error()))
+		return
+	}
+	for _, rec := range recs {
+		// Avval DB (atomik), keyin fayl — `deleteExpired` bilan bir xil
+		// sabab: teskarisi "holat ready, fayl yo'q" degan yolg'on qoldirardi.
+		claimed, err := w.recRepo.ClaimCacheEvict(ctx, rec.ID)
+		if err != nil {
+			w.log.Warn(ctx, "retention: kesh o'chirishni band qilib bo'lmadi",
+				logger.String("recording_id", rec.ID), logger.SafeString("err", err.Error()))
+			continue
+		}
+		if !claimed {
+			continue
+		}
+		if err := w.minio.Delete(ctx, rec.ObjectKey); err != nil {
+			w.log.Error(ctx, "retention: kesh obyektini o'chirib bo'lmadi (diskda qoldi)",
+				logger.String("recording_id", rec.ID), logger.SafeString("err", err.Error()))
+			continue
+		}
+		w.log.Info(ctx, "retention: kesh nusxasi o'chirildi",
+			logger.String("recording_id", rec.ID))
 	}
 }

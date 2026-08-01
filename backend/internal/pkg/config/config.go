@@ -23,7 +23,38 @@ type Config struct {
 	Lesson   LessonConfig   `json:"lesson"`
 	// Recording — yozuvlarni saqlash siyosati (retention).
 	Recording RecordingConfig `json:"recording"`
+	// Telegram — dars arxivi (PRODUCT.md, 2026-08-01). Sozlanmagan bo'lsa
+	// integratsiya BUTUNLAY o'chiq va yozib olish avvalgidek ishlaydi.
+	Telegram TelegramConfig `json:"telegram"`
 }
+
+// TelegramConfig — Telegram arxivi.
+//
+// ⭐ Barcha maydonlar ixtiyoriy. `BotToken` bo'sh bo'lsa hech bir Telegram
+// ishchisi ishga tushmaydi va hech qanday xato bo'lmaydi — Sentry
+// (`SENTRY_DSN`) bilan aynan bir xil naqsh. Bu ataylab: asoschi tokenlarni
+// keyinroq qo'shadi va shu paytgacha tizim to'liq ishlashi kerak.
+type TelegramConfig struct {
+	// BotToken — @BotFather (TELEGRAM_BOT_TOKEN). Bo'sh → integratsiya o'chiq.
+	BotToken string `json:"-"`
+	// APIURL — Local Bot API Server (TELEGRAM_API_URL). Bo'sh → rasmiy
+	// api.telegram.org va 50 MB yuklash chegarasi (1 soatlik dars sig'maydi).
+	APIURL string `json:"api_url"`
+	// ArchiveChatID — video AVTOMATIK tushadigan doimiy arxiv guruhi
+	// (TELEGRAM_ARCHIVE_CHAT_ID, masalan -1001234567890). 0 → avtomatik
+	// arxivlash o'chiq.
+	ArchiveChatID int64 `json:"archive_chat_id"`
+	// UploadMaxBytes — bitta fayl chegarasi (TELEGRAM_UPLOAD_MAX_MB, default
+	// 1900). Local server bilan 2000 MB gacha.
+	UploadMaxBytes int64 `json:"upload_max_bytes"`
+	// FileRoot — Local Bot API Server fayllari backend konteynerida qayerga
+	// ulangani (TELEGRAM_FILE_ROOT). Tiklashda fayl HTTP orqali emas,
+	// to'g'ridan-to'g'ri diskdan o'qiladi — 1 GB uchun bu daqiqalar farqi.
+	FileRoot string `json:"file_root"`
+}
+
+// Enabled — integratsiya sozlanganmi.
+func (t TelegramConfig) Enabled() bool { return strings.TrimSpace(t.BotToken) != "" }
 
 // LessonConfig — dars hayoti (PRODUCT.md «Dars hayoti», №2).
 //
@@ -54,6 +85,10 @@ type RecordingConfig struct {
 	WarnBefore time.Duration `json:"warn_before"`
 	// SweepInterval — retention tekshiruvi oralig'i (RECORDING_RETENTION_INTERVAL, 1h).
 	SweepInterval time.Duration `json:"sweep_interval"`
+	// CacheTTL — Telegramdan QAYTARIB olingan nusxa serverda qancha turadi
+	// (RECORDING_CACHE_TTL_HOURS, default 24h). Muddat tugagach fayl yana
+	// o'chiriladi; Telegramdagi asl nusxa tegilmaydi.
+	CacheTTL time.Duration `json:"cache_ttl"`
 }
 
 // MobileConfig — mobil klient versiya nazorati (`GET /api/v1/app-config`).
@@ -331,9 +366,26 @@ func Load() *Config {
 		Recording: RecordingConfig{
 			// Kunlarda beriladi (RECORDING_RETENTION_DAYS=30) — operator uchun
 			// `720h` dan ancha tushunarli. Ichkarida time.Duration.
-			Retention:     time.Duration(getEnvInt("RECORDING_RETENTION_DAYS", 30)) * 24 * time.Hour,
+			// RECORDING_SERVER_RETENTION_DAYS — Telegram arxivi bilan kelgan
+			// YANGI nom (server nusxasi qancha turadi). Eski
+			// RECORDING_RETENTION_DAYS hamon ishlaydi va default bo'lib
+			// qoladi: mavjud serverlarda .env ni o'zgartirmasdan yangilanish
+			// mumkin bo'lsin.
+			Retention: time.Duration(getEnvInt("RECORDING_SERVER_RETENTION_DAYS",
+				getEnvInt("RECORDING_RETENTION_DAYS", 30))) * 24 * time.Hour,
 			WarnBefore:    time.Duration(getEnvInt("RECORDING_RETENTION_WARN_DAYS", 3)) * 24 * time.Hour,
 			SweepInterval: getEnvDuration("RECORDING_RETENTION_INTERVAL", time.Hour),
+			CacheTTL:      time.Duration(getEnvInt("RECORDING_CACHE_TTL_HOURS", 24)) * time.Hour,
+		},
+		Telegram: TelegramConfig{
+			BotToken:      getEnv("TELEGRAM_BOT_TOKEN", ""),
+			APIURL:        getEnv("TELEGRAM_API_URL", ""),
+			// Chat ID 64-bitli va MANFIY (supergroup: -1001234567890) —
+			// `getEnvInt` emas, aniq int64 parser.
+			ArchiveChatID: getEnvInt64("TELEGRAM_ARCHIVE_CHAT_ID", 0),
+			// MB'da beriladi (operator uchun tushunarli), ichkarida baytda.
+			UploadMaxBytes: int64(getEnvInt("TELEGRAM_UPLOAD_MAX_MB", 1900)) * 1024 * 1024,
+			FileRoot:       getEnv("TELEGRAM_FILE_ROOT", ""),
 		},
 		Mobile: MobileConfig{
 			AndroidMinVersion:    getEnv("APP_ANDROID_MIN_VERSION", "1.0.0"),
@@ -358,6 +410,18 @@ func getEnvInt(key string, def int) int {
 		return def
 	}
 	n, err := strconv.Atoi(v)
+	if err != nil {
+		return def
+	}
+	return n
+}
+
+func getEnvInt64(key string, def int64) int64 {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
 	if err != nil {
 		return def
 	}

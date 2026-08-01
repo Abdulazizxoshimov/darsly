@@ -53,6 +53,17 @@ type UseCase interface {
 	// Upload — host fayl ulashadi (chat xabari sifatida saqlanadi + tarqatiladi).
 	Upload(ctx context.Context, mentorID, lessonID string, f FileUpload, body, to string) (*entity.ChatMessage, error)
 
+	// Transcript — dars chatini yuklab olinadigan fayl qilib beradi (ish №21).
+	//
+	// Zoom dars oxirida chat faylini beradi; bizda tarix DB'da bor edi, lekin
+	// undan chiqish yo'li yo'q edi — ya'ni ustoz o'z darsining yozishmasini
+	// ilovadan tashqarida saqlay olmasdi.
+	//
+	// format: [FormatTXT] yoki [FormatHTML]; boshqasi → 400.
+	// Ko'rinuvchanlik `History` bilan bir xil: ommaviy xabarlar + ustozning
+	// O'Z shaxsiy yozishmalari (o'quvchilarning bir-biriga yozgani emas).
+	Transcript(ctx context.Context, mentorID, lessonID, format string) (*entity.ChatTranscript, error)
+
 	// SendFromRoom — xonadagi ISHTIROKCHI xabar yuboradi (room-token bilan
 	// autentifikatsiya qilingan identity). Tezlik cheklovi shu yerda.
 	SendFromRoom(ctx context.Context, lessonID, identity, name, body, to string) (*entity.ChatMessage, error)

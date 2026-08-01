@@ -137,8 +137,33 @@ async function parseError(res) {
 // odam kutishga tayyor bo'lgan vaqtdan qisqa.
 const REQUEST_TIMEOUT_MS = 20_000
 
+// `Content-Disposition: attachment; filename="a-chat.txt"` → `a-chat.txt`.
+//
+// Fayl nomini SERVER aytadi (dars sarlavhasidan yasalgan, ASCII'ga tozalangan) —
+// klient uni o'zi to'qisa transkript fayllari boshqa nom bilan tushar edi.
+// `filename*=UTF-8''…` (RFC 5987) shakli ham qabul qilinadi.
+export function filenameFromDisposition(header, fallback = 'fayl') {
+  const h = String(header || '')
+  const star = /filename\*=UTF-8''([^;]+)/i.exec(h)
+  if (star) {
+    try {
+      return decodeURIComponent(star[1].trim())
+    } catch {
+      /* buzuq kodlash — oddiy shaklga tushamiz */
+    }
+  }
+  const plain = /filename="?([^";]+)"?/i.exec(h)
+  return plain ? plain[1].trim() : fallback
+}
+
 // Asosiy so'rov. auth=false — public endpoint (token qo'shilmaydi).
-async function request(method, path, { body, auth = true, raw = false, _retried = false } = {}) {
+//
+// `blob: true` — javob JSON emas, FAYL (chat transkripti). Bunday endpoint'ni
+// oddiy `<a href>` bilan ochib bo'lmaydi: u himoyalangan va `Authorization`
+// header'ini talab qiladi, brauzer esa havolaga header qo'sha olmaydi.
+// Shuning uchun fayl shu yerdan — 401/refresh zanjiri bilan BIR XIL yo'ldan —
+// olinadi va chaqiruvchi uni `saveBlob` bilan saqlaydi.
+async function request(method, path, { body, auth = true, raw = false, blob = false, _retried = false } = {}) {
   const headers = {}
   if (body !== undefined) headers['Content-Type'] = 'application/json'
   if (auth && tokenStore.access) headers.Authorization = `Bearer ${tokenStore.access}`
@@ -177,7 +202,7 @@ async function request(method, path, { body, auth = true, raw = false, _retried 
     const r = await refreshing
     refreshing = null
     if (r.access) {
-      return request(method, path, { body, auth, raw, _retried: true })
+      return request(method, path, { body, auth, raw, blob, _retried: true })
     }
     onUnauthorized(r.revoked ? 'session_revoked' : 'expired')
     throw r.revoked
@@ -187,6 +212,18 @@ async function request(method, path, { body, auth = true, raw = false, _retried 
 
   if (res.status === 204) return null
   if (!res.ok) throw await parseError(res)
+
+  if (blob) {
+    return {
+      blob: await res.blob(),
+      // Zaxira nomi ATAYLAB bo'sh: header o'qilmasa (cross-origin'da server
+      // `Access-Control-Expose-Headers` bermasa) chaqiruvchi O'ZINING mazmunli
+      // nomini qo'ya olsin. `'fayl'` qaytarilsa u truthy bo'lib, chaqiruvchining
+      // `filename || 'dars-chat.txt'` zaxirasi hech qachon ishlamas edi va fayl
+      // kengaytmasiz tushardi.
+      filename: filenameFromDisposition(res.headers?.get?.('Content-Disposition'), ''),
+    }
+  }
 
   const json = await res.json()
   if (raw) return json // { data, total, page, limit, total_pages }
@@ -290,6 +327,8 @@ export const api = {
   del: (path, opts) => request('DELETE', path, opts),
   // ro'yxat konverti ({data,total,...}) uchun
   list: (path, opts) => request('GET', path, { raw: true, ...opts }),
+  // fayl javobi ({blob, filename}) — himoyalangan yuklab olish
+  blob: (path, opts) => request('GET', path, { blob: true, ...opts }),
   // multipart (fayl) — progress bilan
   upload,
 }

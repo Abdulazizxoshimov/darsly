@@ -150,6 +150,36 @@ else
   ensure_env RECORDING_RETENTION_INTERVAL   1h
 fi
 
+# ── Telegram arxivi (PRODUCT.md «Dars arxivi va Telegram saqlash») ───────────
+#
+# ⭐ Kalitlar BO'SH qo'shiladi va bu ATAYLAB: asoschi tokenlarni keyinroq
+# qo'yadi. `TELEGRAM_BOT_TOKEN` bo'sh bo'lsa backend integratsiyani umuman
+# ishga tushirmaydi (Sentry naqshi) — ya'ni bo'sh qiymat nosozlik emas,
+# "hali ulanmagan" degani. Bo'sh satrlar .env da turgani muhim: operator
+# nima to'ldirish kerakligini fayldan ko'radi va docs'ga qaramaydi.
+#
+# Qadamlar: docs/telegram-setup.md
+echo ">> Telegram arxivi kalitlari (bo'sh — keyin to'ldiriladi)..."
+ensure_env TELEGRAM_BOT_TOKEN         ""
+ensure_env TELEGRAM_API_ID            ""
+ensure_env TELEGRAM_API_HASH          ""
+ensure_env TELEGRAM_ARCHIVE_CHAT_ID   ""
+# Local Bot API Server darsly_net ichida — 50 MB emas, 2 GB chegara.
+ensure_env TELEGRAM_API_URL           "http://telegram-bot-api:8081"
+ensure_env TELEGRAM_UPLOAD_MAX_MB     1900
+# Ulashilgan volume: tiklashda fayl diskdan o'qiladi, HTTP orqali emas.
+ensure_env TELEGRAM_FILE_ROOT         "/var/lib/telegram-bot-api"
+ensure_env RECORDING_SERVER_RETENTION_DAYS 30
+ensure_env RECORDING_CACHE_TTL_HOURS       24
+
+if grep -q '^TELEGRAM_BOT_TOKEN=.\+' .env; then
+  echo "   Telegram sozlangan → stack'ni shunday ko'taring:"
+  echo "     docker compose --profile telegram up -d --build"
+else
+  echo "   Telegram hali sozlanmagan (yozib olish avvalgidek ishlaydi)."
+  echo "   Yoqish: docs/telegram-setup.md"
+fi
+
 # ── Kuzatuv sirlari (M16) ────────────────────────────────────────────────────
 # Prometheus scrape tokenini FAYL sifatida beradi (`credentials_file`), chunki
 # uni prometheus.yml ichiga yozish sirni git-tracked konfiguratsiyaga

@@ -6,6 +6,7 @@ import { errorText } from '../api/api'
 import { Field } from '../components/Field'
 import { Button } from '../components/Button'
 import { Avatar } from '../components/Avatar'
+import { TelegramSection } from './TelegramSection'
 import { toast } from '../lib/toast'
 import { DEFAULT_LANGUAGE, DEFAULT_TIMEZONE, roleLabel } from '../lib/format'
 
@@ -91,6 +92,10 @@ export function Profile() {
           </div>
         </form>
       </div>
+
+      {/* Serverda Telegram integratsiyasi sozlanmagan bo'lsa komponent
+          O'ZI hech nima chizmaydi (`enabled:false`). */}
+      <TelegramSection />
     </div>
   )
 }

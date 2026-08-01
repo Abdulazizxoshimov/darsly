@@ -222,3 +222,84 @@ func TestChatRepo_DirectMessageVisibility(t *testing.T) {
 	require.Len(t, items, 2, "limit qo'llanishi kerak")
 	require.Equal(t, "ustoz→ali", items[0].Body, "eng yangi birinchi")
 }
+
+// TestChatRepo_ListAllByLesson — arxiv/transkript yo'lining HAQIQIY SQL'i (№20, №21).
+//
+// Alohida test kerak, chunki xavf yuqoridagi bilan AYNAN bir xil va faqat SQL'da
+// ko'rinadi: ko'rinuvchanlik OR tarmoqlari `ListByLesson` bilan umumiy
+// `chatVisible` dan keladi, lekin tartib (`ASC`) va limit boshqa. Soxta repo bu
+// xatoni ushlay olmaydi — u Squirrel generatsiyasini umuman bajarmaydi.
+//
+// Bu yo'l orqali oqib ketishi mumkin bo'lgan narsa — begona shaxsiy yozishma —
+// yuklab olinadigan FAYLGA tushardi, ya'ni sizib chiqish qaytarib bo'lmas edi.
+func TestChatRepo_ListAllByLesson(t *testing.T) {
+	pg := testutil.SetupTestDB(t)
+	users := pgRepo.NewUserRepo(pg)
+	lessons := pgRepo.NewLessonRepo(pg)
+	chats := pgRepo.NewChatRepo(pg)
+
+	mentor := makeUser(t, users, "chat_all_mentor@darsly.uz")
+	sched := time.Now().UTC().Add(time.Hour)
+	l := &entity.Lesson{
+		ID: uuid.NewString(), MentorID: mentor.ID, Title: "Arxiv", DurationMin: 60,
+		ScheduledAt: &sched, Status: entity.LessonStatusEnded,
+		JoinSlug:  uuid.NewString()[:12],
+		CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+	}
+	require.NoError(t, lessons.Create(ctx(), l))
+
+	base := time.Now().UTC().Add(-time.Hour)
+	add := func(id, sender, body string, to *string, offset time.Duration) {
+		t.Helper()
+		require.NoError(t, chats.Create(ctx(), &entity.ChatMessage{
+			ID: id, LessonID: l.ID, SenderIdentity: sender, SenderName: sender,
+			Body: body, ToIdentity: to, CreatedAt: base.Add(offset),
+		}))
+	}
+	ptr := func(s string) *string { return &s }
+
+	// ATAYLAB vaqt tartibiga TESKARI qo'shiladi: `ASC` haqiqatan `created_at`
+	// bo'yicha bo'lishi kerak, qo'shilish tartibi bo'yicha emas.
+	ochirilgan := uuid.NewString()
+	add(uuid.NewString(), "vali", "vali→ustoz", ptr("mentor"), 4*time.Minute)
+	add(ochirilgan, "ali", "moderatsiya", nil, 3*time.Minute)
+	add(uuid.NewString(), "ali", "ali→vali", ptr("vali"), 2*time.Minute)
+	add(uuid.NewString(), "mentor", "hammaga", nil, time.Minute)
+
+	// Moderatsiya qilingan xabar hech kimga qaytmasligi kerak (arxivda ham).
+	_, err := chats.SoftDelete(ctx(), l.ID, ochirilgan, mentor.ID)
+	require.NoError(t, err)
+
+	bodies := func(identity string) []string {
+		t.Helper()
+		items, err := chats.ListAllByLesson(ctx(), l.ID, identity, 0)
+		require.NoError(t, err)
+		out := make([]string, 0, len(items))
+		for _, m := range items {
+			out = append(out, m.Body)
+		}
+		return out
+	}
+
+	// Ustoz: ommaviy + O'ZI ishtirok etgan DM. `ali→vali` KO'RINMASLIGI shart —
+	// o'quvchilarning bir-biriga yozgani ustozning arxiviga tushmaydi.
+	require.Equal(t, []string{"hammaga", "vali→ustoz"}, bodies("mentor"),
+		"eskidan yangiga tartib + begona DM yo'q")
+
+	// Ali: ommaviy + o'ziniki. Valining ustozga yozgani ko'rinmaydi.
+	require.Equal(t, []string{"hammaga", "ali→vali"}, bodies("ali"))
+
+	// Identity'siz — faqat ommaviy.
+	require.Equal(t, []string{"hammaga"}, bodies(""))
+
+	// O'chirilgan xabar hech bir ko'rinishda yo'q.
+	for _, id := range []string{"mentor", "ali", "vali", ""} {
+		require.NotContains(t, bodies(id), "moderatsiya")
+	}
+
+	// `max` chegarasi qo'llanadi (eng eskilaridan boshlab).
+	items, err := chats.ListAllByLesson(ctx(), l.ID, "mentor", 1)
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	require.Equal(t, "hammaga", items[0].Body, "eng eskisi birinchi")
+}

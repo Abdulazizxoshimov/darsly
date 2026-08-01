@@ -12,20 +12,27 @@ const (
 )
 
 type User struct {
-	ID           string     `json:"id"`
-	Email        string     `json:"email"`
-	PasswordHash string     `json:"-"`
-	FullName     string     `json:"full_name"`
-	AvatarURL    *string    `json:"avatar_url,omitempty"`
-	Color        string     `json:"color"`
-	Role         string     `json:"role"`
-	Timezone     string     `json:"timezone"`
-	Language     string     `json:"language"`
-	IsActive     bool       `json:"is_active"`
-	LastLoginAt  *time.Time `json:"last_login_at,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
-	DeletedAt    *time.Time `json:"-"`
+	ID           string  `json:"id"`
+	Email        string  `json:"email"`
+	PasswordHash string  `json:"-"`
+	FullName     string  `json:"full_name"`
+	AvatarURL    *string `json:"avatar_url,omitempty"`
+	Color        string  `json:"color"`
+	Role         string  `json:"role"`
+	Timezone     string  `json:"timezone"`
+	Language     string  `json:"language"`
+	IsActive     bool    `json:"is_active"`
+	// TelegramUserID — bog'langan Telegram akkaunt (bot mentorni shu orqali
+	// taniydi: dars tugagach «qaysi guruhga yuboray?» so'rovi kimga ketishi va
+	// tugmani bosgan odam kimligi shundan aniqlanadi). nil = bog'lanmagan.
+	// `json:"-"` — ID tashqariga chiqmaydi; holat `TelegramLinkStatus` da.
+	TelegramUserID   *int64     `json:"-"`
+	TelegramUsername *string    `json:"telegram_username,omitempty"`
+	TelegramLinkedAt *time.Time `json:"telegram_linked_at,omitempty"`
+	LastLoginAt      *time.Time `json:"last_login_at,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
+	DeletedAt        *time.Time `json:"-"`
 }
 
 type CreateUserReq struct {

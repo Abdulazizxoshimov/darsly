@@ -38,6 +38,27 @@ let lessons = [
     created_at: now(),
     updated_at: now(),
   },
+  // Yakunlangan dars — arxiv sahifasini (video + chat + materiallar) sinash uchun.
+  {
+    id: 'l2',
+    mentor_id: 'u1',
+    title: 'Geometriya — uchburchaklar (arxiv namunasi)',
+    description: '30 kundan eski dars',
+    scheduled_at: new Date(Date.now() - 35 * 86_400_000).toISOString(),
+    started_at: new Date(Date.now() - 35 * 86_400_000).toISOString(),
+    ended_at: new Date(Date.now() - 35 * 86_400_000 + 3_600_000).toISOString(),
+    duration_min: 60,
+    join_slug: 'arxiv1',
+    has_passcode: false,
+    is_locked: false,
+    is_recording_enabled: true,
+    is_waiting_room_enabled: false,
+    mute_on_entry: true,
+    allow_self_unmute: true,
+    status: 'ended',
+    created_at: now(),
+    updated_at: now(),
+  },
 ]
 
 // Kutish navbati (mentor tomoni) — WaitingRoomRequest shakli.
@@ -74,7 +95,9 @@ const pollResultsOf = (p) => {
 const REACTION_SET = ['👍', '👏', '❤️', '😂', '😮', '🎉', '✋']
 
 const DAY = 86_400_000
-// Yozuvlar: muddati yaqin (2 kun), normal (25 kun) va o'chirilgan.
+// Yozuvlar: muddati yaqin (2 kun), o'chirilgan va Telegram arxividagi.
+// Tiklash oqimi (`archived → restoring → ready`) yozuv obyektini JOYIDA
+// o'zgartiradi — massivning o'zi almashmaydi.
 const recordings = [
   {
     id: 'r1',
@@ -98,6 +121,61 @@ const recordings = [
     started_at: new Date(Date.now() - 40 * DAY).toISOString(),
     ended_at: new Date(Date.now() - 40 * DAY + 5_400_000).toISOString(),
     created_at: new Date(Date.now() - 40 * DAY).toISOString(),
+  },
+  // Telegram arxivi YOQILGAN holat: fayl serverdan ketgan, lekin YO'QOLMAGAN.
+  // `expired` dan farqi shu — va u butun tiklash oqimini boshlaydi.
+  {
+    id: 'r3',
+    lesson_id: 'l2',
+    egress_id: 'eg3',
+    status: 'archived',
+    duration_sec: 3600,
+    size_bytes: 196_608_000,
+    started_at: new Date(Date.now() - 35 * DAY).toISOString(),
+    ended_at: new Date(Date.now() - 35 * DAY + 3_600_000).toISOString(),
+    created_at: new Date(Date.now() - 35 * DAY).toISOString(),
+    telegram_sent_at: new Date(Date.now() - 35 * DAY + 3_900_000).toISOString(),
+  },
+]
+
+// Tiklash MOCK'i: `restoring` holat qancha davom etishini shu jadval belgilaydi.
+// Real backendda bu Telegramdan yuklab olish vaqti (30-60 s) — brauzerda
+// oqimni sinash uchun 12 soniya yetarli.
+const RESTORE_MS = 12_000
+const restoreDoneAt = new Map()
+
+// Telegram bog'lanishi. `enabled:false` qilib qo'yilsa profil bo'limi UMUMAN
+// ko'rinmasligini ham shu yerdan tekshirish mumkin.
+// Bog'lanmagan holat — backend `omitempty` sababli `telegram_username`,
+// `linked_at` va `chats` kalitlarini UMUMAN yubormaydi. Mock ham shunday
+// qilsin: `null` bilan yuborish adapterning "kalit yo'q" yo'lini hech qachon
+// sinamas edi.
+const TG_UNLINKED = { enabled: true, linked: false }
+let telegram = { ...TG_UNLINKED }
+let telegramLinkAt = 0
+
+// Chat arxivi — `offset_sec` dars boshidan hisoblangan (pleyerga sakrash uchun).
+const archiveChat = [
+  {
+    id: 'ac1', lesson_id: 'l2', sender_identity: 'host', sender_name: 'Aziz Karimov',
+    body: 'Assalomu alaykum, bugun uchburchaklar bilan tanishamiz', to_identity: null, file: null,
+    created_at: new Date(Date.now() - 35 * DAY).toISOString(), offset_sec: 12,
+  },
+  {
+    id: 'ac2', lesson_id: 'l2', sender_identity: 'guest_1', sender_name: 'Ali Valiyev',
+    body: 'Ustoz, teng yonli uchburchak qanday bo‘ladi?', to_identity: null, file: null,
+    created_at: new Date(Date.now() - 35 * DAY + 125_000).toISOString(), offset_sec: 125,
+  },
+  {
+    id: 'ac3', lesson_id: 'l2', sender_identity: 'host', sender_name: 'Aziz Karimov',
+    body: 'Yaxshi savol — hozir doskada ko‘rsataman', to_identity: 'guest_1', file: null,
+    created_at: new Date(Date.now() - 35 * DAY + 140_000).toISOString(), offset_sec: 140,
+  },
+  {
+    id: 'ac4', lesson_id: 'l2', sender_identity: 'host', sender_name: 'Aziz Karimov',
+    body: 'Uy ishi shu faylda', to_identity: null,
+    file: { name: 'uchburchaklar.pdf', size: 184_320, mime: 'application/pdf', url: 'blob:mock/uchburchaklar.pdf', expires_in_s: 3600 },
+    created_at: new Date(Date.now() - 35 * DAY + 2_400_000).toISOString(), offset_sec: 2400,
   },
 ]
 
@@ -424,13 +502,153 @@ export const handlers = [
   }),
   http.post(`${B}/rooms/:lessonID/hand`, () => new HttpResponse(null, { status: 204 })),
 
+  // ── Dars arxivi (№20) — video + chat + materiallar BITTA javobda ─────────
+  http.get(`${B}/lessons/:id/archive`, ({ params }) => {
+    const lesson = lessons.find((l) => l.id === params.id)
+    if (!lesson) return HttpResponse.json({ code: 'NOT_FOUND', message: 'topilmadi' }, { status: 404 })
+
+    // Yozuvni tanlash — kontraktdagi ustuvorlik: ready → expired → … .
+    const own = recordings.filter((r) => r.lesson_id === lesson.id)
+    const rank = { ready: 0, expired: 1, archived: 1, restoring: 2, recording: 3, processing: 3, failed: 4 }
+    const rec = [...own].sort((a, b) => (rank[a.status] ?? 9) - (rank[b.status] ?? 9))[0] || null
+
+    const chat = archiveChat.filter((m) => m.lesson_id === lesson.id)
+    return HttpResponse.json(
+      {
+        data: {
+          lesson,
+          recording: rec
+            ? {
+                id: rec.id,
+                status: rec.status,
+                duration_sec: rec.duration_sec,
+                size_bytes: rec.size_bytes,
+                // Havola FAQAT `ready` da — kontrakt shart.
+                url: rec.status === 'ready' ? 'blob:mock/archive.mp4' : null,
+                expires_at: rec.status === 'ready' ? rec.expires_at || null : null,
+              }
+            : null,
+          chat,
+          materials: chat
+            .filter((m) => m.file)
+            .map((m) => ({ name: m.file.name, size: m.file.size, mime: m.file.mime, url: m.file.url, created_at: m.created_at })),
+        },
+      },
+      { headers: { 'Cache-Control': 'no-store' } },
+    )
+  }),
+
+  // Chat transkripti (№21) — JSON emas, FAYL.
+  http.get(`${B}/lessons/:id/chat/transcript`, ({ params, request }) => {
+    const format = new URL(request.url).searchParams.get('format') || 'txt'
+    if (format !== 'txt' && format !== 'html') {
+      return HttpResponse.json({ code: 'BAD_REQUEST', message: 'format must be txt or html' }, { status: 400 })
+    }
+    const lesson = lessons.find((l) => l.id === params.id)
+    const rows = archiveChat.filter((m) => m.lesson_id === params.id)
+    const body =
+      format === 'html'
+        ? `<!doctype html><meta charset="utf-8"><title>${lesson?.title || 'Dars'}</title>` +
+          `<body style="background:#05080c;color:#eef1f6;font-family:sans-serif">` +
+          rows.map((m) => `<p><b style="color:#19d3a2">${m.sender_name}</b>: ${m.body}</p>`).join('') +
+          `</body>`
+        : `Dars: ${lesson?.title || 'Dars'}\n${'─'.repeat(29)}\n` +
+          (rows.length ? rows.map((m) => `${m.sender_name}: ${m.body}`).join('\n') : '(Chatda xabar bo‘lmagan)')
+    return new HttpResponse(body, {
+      headers: {
+        'Content-Type': format === 'html' ? 'text/html; charset=utf-8' : 'text/plain; charset=utf-8',
+        'Content-Disposition': `attachment; filename="dars-chat.${format}"`,
+        'Cache-Control': 'no-store',
+      },
+    })
+  }),
+
   // Yozuvlar — retention (30 kun) namunalari: yaqinda o'chadigan va o'chgan.
-  http.get(`${B}/lessons/:id/recordings`, () => ok(recordings)),
+  http.get(`${B}/lessons/:id/recordings`, ({ params }) =>
+    ok(recordings.filter((r) => r.lesson_id === params.id)),
+  ),
+
+  // Bitta yozuv — tiklash/qayta ishlash holatini poll qilish uchun.
+  http.get(`${B}/recordings/:id`, ({ params }) => {
+    const r = recordings.find((x) => x.id === params.id)
+    if (!r) return HttpResponse.json({ code: 'NOT_FOUND', message: 'topilmadi' }, { status: 404 })
+    // Tiklash muddati tugagan bo'lsa holat `ready` ga o'tadi (real backendda
+    // buni bot qiladi; bu yerda vaqt bo'yicha taqlid).
+    const doneAt = restoreDoneAt.get(r.id)
+    if (r.status === 'restoring' && doneAt && Date.now() >= doneAt) {
+      r.status = 'ready'
+      r.expires_at = new Date(Date.now() + DAY).toISOString()
+      restoreDoneAt.delete(r.id)
+    }
+    return ok(r)
+  }),
+
+  // Telegram arxividan qaytarib olish — 202 + poll.
+  http.post(`${B}/recordings/:id/restore`, ({ params }) => {
+    const r = recordings.find((x) => x.id === params.id)
+    if (!r) return HttpResponse.json({ code: 'NOT_FOUND', message: 'topilmadi' }, { status: 404 })
+    // Idempotent: allaqachon serverda bo'lsa `ready` (xato EMAS).
+    // `poll_after_s: 0` — backend bu holatda maydonni to'ldirmaydi va tegda
+    // `omitempty` yo'q. Klient buni o'zi 5 ga tuzatadi (`api/recordings.jsx`);
+    // mock rostini yuborsin, aks holda regressiya yashirinib qolardi.
+    if (r.status === 'ready') return ok({ status: 'ready', poll_after_s: 0 }, 202)
+    if (r.status !== 'archived' && r.status !== 'restoring') {
+      return HttpResponse.json({ code: 'BAD_REQUEST', message: 'recording cannot be restored' }, { status: 400 })
+    }
+    if (r.status === 'archived') {
+      r.status = 'restoring'
+      restoreDoneAt.set(r.id, Date.now() + RESTORE_MS)
+    }
+    return ok({ status: 'restoring', poll_after_s: 5 }, 202)
+  }),
+
+  // ── Telegram bog'lanishi (mentor) ────────────────────────────────────────
+  http.get(`${B}/me/telegram`, () => {
+    // Kod berilganidan ~15 soniya keyin "mentor botga /start yubordi" deb
+    // hisoblaymiz — klientdagi poll → «Bog'langan» o'tishi shunda ko'rinadi.
+    if (!telegram.linked && telegramLinkAt && Date.now() - telegramLinkAt > 15_000) {
+      telegram = {
+        enabled: true,
+        linked: true,
+        telegram_username: 'aziz_mentor',
+        linked_at: now(),
+        chats: [{ chat_id: -1001, title: 'Video darslar (arxiv)', type: 'group', is_active: true, added_at: now(), updated_at: now() }],
+      }
+      telegramLinkAt = 0
+    }
+    return ok(telegram)
+  }),
+  http.post(`${B}/me/telegram/link`, () => {
+    if (!telegram.enabled) {
+      return HttpResponse.json({ code: 'BAD_REQUEST', message: 'telegram is not configured' }, { status: 400 })
+    }
+    telegramLinkAt = Date.now()
+    return ok({ code: 'JN7K2Q', deep_link: 'https://t.me/jonly_bot?start=JN7K2Q', expires_in_s: 900 }, 201)
+  }),
+  http.delete(`${B}/me/telegram`, () => {
+    telegram = { ...TG_UNLINKED }
+    telegramLinkAt = 0
+    return new HttpResponse(null, { status: 204 })
+  }),
+
   http.get(`${B}/recordings/:id/download`, ({ params }) => {
     const r = recordings.find((x) => x.id === params.id)
     if (r && r.status === 'expired') {
       return HttpResponse.json(
         { code: 'BAD_REQUEST', message: 'recording has expired and was deleted' },
+        { status: 400 },
+      )
+    }
+    // Kontrakt: arxivlangan/tiklanayotgan yozuvni yuklab bo'lmaydi — avval tiklash.
+    if (r && (r.status === 'archived' || r.status === 'restoring')) {
+      return HttpResponse.json(
+        {
+          code: 'BAD_REQUEST',
+          message:
+            r.status === 'archived'
+              ? 'recording is archived — restore it first'
+              : 'recording is being restored — try again shortly',
+        },
         { status: 400 },
       )
     }

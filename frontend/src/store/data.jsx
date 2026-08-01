@@ -6,6 +6,8 @@ import * as recordingsApi from '../api/recordings'
 import * as notificationsApi from '../api/notifications'
 import * as pollsApi from '../api/polls'
 import * as chatApi from '../api/chat'
+import * as archiveApi from '../api/archive'
+import * as telegramApi from '../api/telegram'
 import * as userApi from '../api/user'
 import * as appApi from '../api/app'
 import * as blocklistApi from '../api/blocklist'
@@ -113,6 +115,89 @@ export function useRecordings(lessonId) {
   })
 }
 
+/* -------- Dars arxivi (video + chat + materiallar) -------- */
+
+// Javob ichida PRESIGNED havolalar bor (1 soatlik) va server uni
+// `Cache-Control: no-store` bilan yuboradi — shuning uchun kesh qisqa umrli.
+// Aks holda ustoz sahifani ertasi kuni ochganda "video ochilmadi" degan
+// buzuq havolani ko'rardi.
+export function useLessonArchive(lessonId) {
+  return useQuery({
+    queryKey: ['lesson-archive', lessonId],
+    queryFn: () => archiveApi.getLessonArchive(lessonId),
+    enabled: !!lessonId,
+    staleTime: 60_000,
+    gcTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+  })
+}
+
+// Bitta yozuv holati — `processing`/`restoring` tugagunicha poll qilinadi.
+// `intervalMs` ni SERVER dikta qiladi (`poll_after_s`), klient o'zicha emas.
+export function useRecordingStatus(recordingId, { enabled = false, intervalMs = 5000 } = {}) {
+  return useQuery({
+    queryKey: ['recording', recordingId],
+    queryFn: () => recordingsApi.getRecording(recordingId),
+    enabled: !!recordingId && enabled,
+    // Poll O'ZI TO'XTAYDI: yakuniy holatga (`ready`/`archived`/`failed`/…)
+    // yetganda interval `false` bo'ladi. `enabled` ni qayta hisoblash bilan
+    // to'xtatish mumkin emas edi — u o'zi shu so'rov natijasiga bog'liq
+    // (aylanma bog'liqlik), refetchInterval funksiyasi esa natijani ko'radi.
+    refetchInterval: (query) => {
+      const s = query.state.data?.status
+      if (s === 'processing' || s === 'restoring') return intervalMs
+      // `recording` — dars hali yozilmoqda. U ham o'zi yangilanadi, lekin
+      // sekinroq: bu holat daqiqalab davom etadi va tez-tez so'rashning
+      // ma'nosi yo'q.
+      if (s === 'recording') return intervalMs * 3
+      return false
+    },
+    // Fon tabda ham davom etadi: tiklash 30-60 soniya, ustoz shu payt
+    // boshqa oynaga o'tib ketishi tabiiy va qaytganda tayyor holatni kutadi.
+    refetchIntervalInBackground: true,
+    retry: 1,
+  })
+}
+
+export function useRestoreRecording() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: recordingsApi.restoreRecording,
+    onSuccess: (res, recordingId) => {
+      // Holatni DARHOL yangilaymiz — birinchi poll javobigacha tugma
+      // «Tiklash» bo'lib turmasin (ikkinchi bosish yana so'rov yuborardi).
+      qc.setQueryData(['recording', recordingId], (old) => ({
+        ...(old || {}),
+        id: recordingId,
+        status: res.status,
+      }))
+    },
+  })
+}
+
+/* -------- Telegram bog'lanishi (mentor) -------- */
+
+export function useTelegramStatus({ refetchInterval } = {}) {
+  return useQuery({
+    queryKey: ['telegram-status'],
+    queryFn: telegramApi.getTelegramStatus,
+    // Integratsiya o'chiq bo'lsa javob o'zgarmaydi — bekorga so'ramaymiz.
+    staleTime: 60_000,
+    refetchInterval,
+    retry: 1,
+  })
+}
+export function useTelegramLink() {
+  return useMutation({ mutationFn: telegramApi.startTelegramLink })
+}
+export function useTelegramUnlink() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: telegramApi.unlinkTelegram,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['telegram-status'] }),
+  })
+}
+
 /* -------- Notifications -------- */
 export function useNotifications(unread = false) {
   return useQuery({
@@ -201,6 +286,15 @@ export function useDeleteChatMessage() {
     onSuccess: (_d, v) => {
       qc.setQueryData(['chat-history', v.lessonId], (old) =>
         Array.isArray(old) ? old.filter((m) => m.id !== v.messageId) : old,
+      )
+      // Arxiv sahifasi ham SHU xabarni ko'rsatadi. Kesh yangilanmasa
+      // o'chirilgan xabar arxivda qolib ketardi (moderatsiya yarim ish
+      // bo'lardi) — va qayta yuklash 1 soatlik havolalarni bekorga qayta
+      // imzolashga majbur qilardi.
+      qc.setQueryData(['lesson-archive', v.lessonId], (old) =>
+        old && Array.isArray(old.chat)
+          ? { ...old, chat: old.chat.filter((m) => m.id !== v.messageId) }
+          : old,
       )
     },
   })

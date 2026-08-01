@@ -53,6 +53,20 @@ type SendRoomChatReq struct {
 	To    string `json:"to"`
 }
 
+// ChatTranscript — yuklab olish uchun tayyorlangan chat transkripti (ish №21).
+//
+// Usecase to'liq FAYLNI qaytaradi (baytlar + nomi + turi), handler esa uni
+// shunchaki oqimga yozadi. Fayl nomi ham shu yerda yasaladi: u
+// `Content-Disposition` sarlavhasiga tushadi va dars sarlavhasidan kelib
+// chiqadi, ya'ni FOYDALANUVCHI KIRITGAN matn. Nomni handlerda yig'ish
+// sarlavha in'yeksiyasi yo'lini ochardi — shuning uchun u bitta joyda,
+// qat'iy tozalash bilan yasaladi.
+type ChatTranscript struct {
+	Filename    string
+	ContentType string
+	Body        []byte
+}
+
 // ChatDeletedEvent — moderatsiya hodisasi (LiveKit data-channel).
 //
 // Klient shu ID li xabar pufagini ro'yxatdan olib tashlaydi. Xabar MAZMUNI

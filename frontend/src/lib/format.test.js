@@ -3,6 +3,7 @@ import {
   expiresInDays,
   formatBytes,
   formatExpiry,
+  formatOffset,
   RECORDING_STATUS_UZ,
 } from './format'
 
@@ -56,5 +57,25 @@ describe('formatBytes', () => {
 describe('RECORDING_STATUS_UZ', () => {
   it('`expired` holati ham tarjima qilingan', () => {
     expect(RECORDING_STATUS_UZ.expired).toBe('Muddati tugagan')
+  })
+})
+
+// Pleyer vaqt belgisi — chat xabari yonidagi tugmadagi matn. U video
+// shkalasidagi vaqt bilan bir xil ko'rinishda bo'lishi kerak.
+describe('formatOffset', () => {
+  it('soatgacha m:ss', () => {
+    expect(formatOffset(0)).toBe('0:00')
+    expect(formatOffset(5)).toBe('0:05')
+    expect(formatOffset(125)).toBe('2:05')
+    expect(formatOffset(3599)).toBe('59:59')
+  })
+  it('soatdan oshsa h:mm:ss', () => {
+    expect(formatOffset(3600)).toBe('1:00:00')
+    expect(formatOffset(3725)).toBe('1:02:05')
+  })
+  it('yaroqsiz qiymat 0:00', () => {
+    expect(formatOffset(-10)).toBe('0:00')
+    expect(formatOffset(undefined)).toBe('0:00')
+    expect(formatOffset('salom')).toBe('0:00')
   })
 })

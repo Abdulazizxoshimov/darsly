@@ -31,6 +31,13 @@ func CORS(allowOrigins ...string) gin.HandlerFunc {
 			c.Header("Access-Control-Allow-Credentials", "true")
 			c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Request-ID")
 			c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			// Content-Disposition — fayl NOMI shu sarlavhada keladi (chat
+			// transkripti, yozuv yuklab olish). Brauzer JS'ga faqat oq
+			// ro'yxatdagi sarlavhalarni ko'rsatadi, shuning uchun usiz boshqa
+			// origindagi SPA fayllarni server bergan nom o'rniga zaxira nom
+			// bilan saqlaydi. Bir originda muammo bilinmaydi — aynan shuning
+			// uchun oson o'tkazib yuboriladi.
+			c.Header("Access-Control-Expose-Headers", "Content-Disposition, X-Request-ID")
 			c.Header("Access-Control-Max-Age", "86400")
 		}
 

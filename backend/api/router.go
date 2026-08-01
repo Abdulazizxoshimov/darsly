@@ -299,8 +299,13 @@ func NewRouter(h *handlers.Handler, tokenMaker token.Maker, enforcer *casbin.Enf
 		// bilan TO'QNASHMAYDI: gin har HTTP metodi uchun alohida daraxt tutadi,
 		// bu esa POST, o'chirish esa DELETE.
 		lessons.POST("/:id/chat/upload", v1.UploadChatFile(h))
+		// Chat transkripti (№21) — TXT/HTML fayl. GET daraxtida `/chat` bilan
+		// to'qnashmaydi: `/chat` va `/chat/transcript` turli chuqurlikda.
+		lessons.GET("/:id/chat/transcript", v1.ChatTranscript(h))
 		// Moderatsiya (№6) — xabarni o'chirish (faqat dars egasi).
 		lessons.DELETE("/:id/chat/:messageID", v1.DeleteChatMessage(h))
+		// Dars arxivi (№20) — video + chat + materiallar bitta javobda.
+		lessons.GET("/:id/archive", v1.GetLessonArchive(h))
 		// So'rovnomalar (host)
 		lessons.GET("/:id/polls", v1.ListPolls(h))
 		lessons.POST("/:id/polls", v1.CreatePoll(h))
@@ -323,6 +328,20 @@ func NewRouter(h *handlers.Handler, tokenMaker token.Maker, enforcer *casbin.Enf
 	{
 		recordings.POST("/:id/stop", v1.StopRecording(h))
 		recordings.GET("/:id/download", v1.DownloadRecording(h))
+		// Bitta yozuv — tiklash holatini poll qilish uchun (archived →
+		// restoring → ready). Ro'yxatni har 5 soniyada so'rash isrof bo'lardi.
+		recordings.GET("/:id", v1.GetRecording(h))
+		// Telegram arxividan qaytarib olish (202 + poll).
+		recordings.POST("/:id/restore", v1.RestoreRecording(h))
+	}
+
+	// Telegram bog'lanishi (mentor). `/me/...` ostida, chunki bu FOYDALANUVCHI
+	// atributi — dars yoki yozuv emas.
+	me := protected.Group("/me/telegram")
+	{
+		me.GET("", v1.TelegramStatus(h))
+		me.POST("/link", v1.TelegramStartLink(h))
+		me.DELETE("", v1.TelegramUnlink(h))
 	}
 
 	// Mentorning doimiy qora ro'yxati (kick scope=mentor yozuvlari)

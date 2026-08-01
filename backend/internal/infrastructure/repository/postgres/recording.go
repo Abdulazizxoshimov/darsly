@@ -25,12 +25,15 @@ func NewRecordingRepo(p *pg.Postgres) repository.RecordingRepository {
 	return &recordingRepo{db: p.DB, builder: p.Builder}
 }
 
-const recordingCols = "id, lesson_id, egress_id, object_key, status, duration_sec, size_bytes, started_at, ended_at, created_at"
+const recordingCols = "id, lesson_id, egress_id, object_key, status, duration_sec, size_bytes, started_at, ended_at, created_at, " +
+	"telegram_file_id, telegram_message_id, telegram_chat_id, telegram_sent_at, telegram_error, telegram_attempts, cached_until"
 
 func scanRecording(row pgx.Row) (*entity.Recording, error) {
 	r := &entity.Recording{}
 	err := row.Scan(&r.ID, &r.LessonID, &r.EgressID, &r.ObjectKey, &r.Status,
-		&r.DurationSec, &r.SizeBytes, &r.StartedAt, &r.EndedAt, &r.CreatedAt)
+		&r.DurationSec, &r.SizeBytes, &r.StartedAt, &r.EndedAt, &r.CreatedAt,
+		&r.TelegramFileID, &r.TelegramMessageID, &r.TelegramChatID, &r.TelegramSentAt,
+		&r.TelegramError, &r.TelegramAttempts, &r.CachedUntil)
 	if err != nil {
 		return nil, err
 	}
@@ -128,12 +131,48 @@ func (r *recordingRepo) scanRecordings(ctx context.Context, sql string, args []a
 	return out, rows.Err()
 }
 
+// ListExpired — Telegram arxivi O'CHIQ bo'lgan o'rnatish uchun (eski xulq).
 func (r *recordingRepo) ListExpired(ctx context.Context, endedBefore time.Time, limit uint64) ([]*entity.Recording, error) {
 	sql, args, err := r.retentionQuery(endedBefore, limit).ToSql()
 	if err != nil {
 		return nil, fmt.Errorf("recordingRepo.ListExpired: %w", err)
 	}
 	return r.scanRecordings(ctx, sql, args, "ListExpired")
+}
+
+// ListArchivable — muddati o'tgan VA Telegramda tasdiqlangan yozuvlar.
+//
+// ⭐ `telegram_sent_at IS NOT NULL` — mahsulotning eng muhim kafolati
+// («video hech qachon yo'qolmaydi») aynan shu bitta shartda. U SQL'da,
+// chunki bu yerdan qaytgan har qator MinIO'dan o'chirilishga nomzod: filtrni
+// unutish yoki noto'g'ri joyga qo'yish qaytarib bo'lmaydigan yo'qotish
+// bo'lardi.
+func (r *recordingRepo) ListArchivable(ctx context.Context, endedBefore time.Time, limit uint64) ([]*entity.Recording, error) {
+	sql, args, err := r.retentionQuery(endedBefore, limit).
+		Where(sq.NotEq{"telegram_sent_at": nil}).
+		Where(sq.Eq{"cached_until": nil}).
+		ToSql()
+	if err != nil {
+		return nil, fmt.Errorf("recordingRepo.ListArchivable: %w", err)
+	}
+	return r.scanRecordings(ctx, sql, args, "ListArchivable")
+}
+
+// ListExpiredUnconfirmed — muddati o'tgan, lekin Telegramga TUSHMAGAN yozuvlar.
+//
+// Bular o'chirilmaydi (fayl serverda qoladi va disk yeydi) — mahsulot qarori
+// shunday: ma'lumot yo'qotishdan ko'ra to'lgan disk yaxshiroq. Mentor
+// ogohlantiriladi, operator esa `retention_warned_at` bo'yicha ularni
+// ko'radi.
+func (r *recordingRepo) ListExpiredUnconfirmed(ctx context.Context, endedBefore time.Time, limit uint64) ([]*entity.Recording, error) {
+	sql, args, err := r.retentionQuery(endedBefore, limit).
+		Where(sq.Eq{"telegram_sent_at": nil}).
+		Where(sq.Eq{"cached_until": nil}).
+		ToSql()
+	if err != nil {
+		return nil, fmt.Errorf("recordingRepo.ListExpiredUnconfirmed: %w", err)
+	}
+	return r.scanRecordings(ctx, sql, args, "ListExpiredUnconfirmed")
 }
 
 func (r *recordingRepo) ListExpiringUnwarned(ctx context.Context, endedBefore time.Time, limit uint64) ([]*entity.Recording, error) {
@@ -160,6 +199,29 @@ func (r *recordingRepo) ClaimExpire(ctx context.Context, id string, deletedAt ti
 	tag, err := r.db.Exec(ctx, sql, args...)
 	if err != nil {
 		return false, fmt.Errorf("recordingRepo.ClaimExpire: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// ClaimArchive — `ready → archived` (server nusxasi o'chirilmoqda, Telegramda qoladi).
+//
+// `ClaimExpire` bilan bir xil naqsh, ikkita farq bilan:
+//   - yakuniy holat `archived` (yozuv YO'QOLMADI, joyi o'zgardi);
+//   - `telegram_sent_at IS NOT NULL` sharti WHERE'da takrorlanadi (ro'yxat
+//     olingandan keyingi oynada holat o'zgargan bo'lishi mumkin).
+func (r *recordingRepo) ClaimArchive(ctx context.Context, id string, deletedAt time.Time) (bool, error) {
+	sql, args, _ := r.builder.
+		Update("recordings").
+		Set("status", entity.RecordingStatusArchived).
+		Set("deleted_at", deletedAt).
+		Where(sq.And{
+			sq.Eq{"id": id},
+			sq.Eq{"status": entity.RecordingStatusReady},
+			sq.NotEq{"telegram_sent_at": nil},
+		}).ToSql()
+	tag, err := r.db.Exec(ctx, sql, args...)
+	if err != nil {
+		return false, fmt.Errorf("recordingRepo.ClaimArchive: %w", err)
 	}
 	return tag.RowsAffected() == 1, nil
 }
@@ -192,6 +254,191 @@ func (r *recordingRepo) MarkReady(ctx context.Context, egressID, objectKey strin
 		Where(sq.Eq{"egress_id": egressID}).ToSql()
 	_, err := r.db.Exec(ctx, sql, args...)
 	return err
+}
+
+// ─── Telegram arxivi ─────────────────────────────────────────────────────────
+
+// EnqueueTelegram — yozuvni navbatga qo'yadi (`telegram_next_attempt_at = NOW()`).
+//
+// FAQAT `ready` yozuv navbatga tushadi (yiqilgan egressning fayli yo'q) va
+// FAQAT hali yuborilmagani (`telegram_sent_at IS NULL`) — webhook takroran
+// kelsa allaqachon arxivlangan yozuv qayta yuborilmasin (guruhda dublikat
+// video paydo bo'lardi).
+func (r *recordingRepo) EnqueueTelegram(ctx context.Context, egressID string) error {
+	sql, args, _ := r.builder.Update("recordings").
+		Set("telegram_next_attempt_at", sq.Expr("NOW()")).
+		Where(sq.And{
+			sq.Eq{"egress_id": egressID, "status": entity.RecordingStatusReady},
+			sq.Eq{"telegram_sent_at": nil},
+		}).ToSql()
+	_, err := r.db.Exec(ctx, sql, args...)
+	if err != nil {
+		return fmt.Errorf("recordingRepo.EnqueueTelegram: %w", err)
+	}
+	return nil
+}
+
+// ClaimTelegramUpload — navbatdan bitta yozuvni atomik oladi.
+//
+// `FOR UPDATE SKIP LOCKED` — `ClaimTranscode` bilan bir xil sabab: ikki
+// instans bir faylni ikki marta yuborsa guruhda ikkita bir xil video paydo
+// bo'ladi va buni orqaga qaytarib bo'lmaydi.
+//
+// Urinish hisobi DARHOL oshadi va keyingi urinish 30 daqiqaga suriladi:
+// yuklash soatlab ketishi mumkin, shu paytda jarayon o'lsa (deploy) yozuv
+// o'z-o'zidan navbatga qaytadi. `maxAttempts` ga yetganlar tanlanmaydi —
+// ular mentor aralashuvini kutadi.
+func (r *recordingRepo) ClaimTelegramUpload(ctx context.Context, now time.Time, maxAttempts int) (*entity.Recording, error) {
+	const q = `
+		UPDATE recordings SET
+			telegram_attempts        = telegram_attempts + 1,
+			telegram_next_attempt_at = $1::timestamptz + interval '30 minutes'
+		WHERE id = (
+			SELECT id FROM recordings
+			WHERE telegram_sent_at IS NULL
+			  AND status = 'ready'
+			  AND telegram_next_attempt_at IS NOT NULL
+			  AND telegram_next_attempt_at <= $1
+			  AND telegram_attempts < $2
+			ORDER BY telegram_next_attempt_at
+			LIMIT 1
+			FOR UPDATE SKIP LOCKED
+		)
+		RETURNING ` + recordingCols
+	rec, err := scanRecording(r.db.QueryRow(ctx, q, now, maxAttempts))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil // navbat bo'sh — xato emas
+	}
+	if err != nil {
+		return nil, fmt.Errorf("recordingRepo.ClaimTelegramUpload: %w", err)
+	}
+	return rec, nil
+}
+
+// MarkTelegramSent — muvaffaqiyat. `telegram_next_attempt_at` tozalanadi
+// (navbatdan chiqadi) va xato matni ham (eski nosozlik UI'da osilib qolmasin).
+func (r *recordingRepo) MarkTelegramSent(ctx context.Context, id string, chatID, messageID int64, fileID string) error {
+	sql, args, _ := r.builder.Update("recordings").
+		Set("telegram_chat_id", chatID).
+		Set("telegram_message_id", messageID).
+		Set("telegram_file_id", nullIfEmpty(fileID)).
+		Set("telegram_sent_at", sq.Expr("NOW()")).
+		Set("telegram_next_attempt_at", nil).
+		Set("telegram_error", nil).
+		Where(sq.Eq{"id": id}).ToSql()
+	if _, err := r.db.Exec(ctx, sql, args...); err != nil {
+		return fmt.Errorf("recordingRepo.MarkTelegramSent: %w", err)
+	}
+	return nil
+}
+
+func (r *recordingRepo) MarkTelegramFailed(ctx context.Context, id, errMsg string, nextAttempt *time.Time) error {
+	q := r.builder.Update("recordings").
+		Set("telegram_error", nullIfEmpty(errMsg)).
+		Where(sq.Eq{"id": id})
+	if nextAttempt != nil {
+		q = q.Set("telegram_next_attempt_at", *nextAttempt)
+	} else {
+		// nil → urinishlar tugadi: navbatdan chiqariladi. Fayl esa
+		// O'CHIRILMAYDI (retention `telegram_sent_at` ni talab qiladi).
+		q = q.Set("telegram_next_attempt_at", nil)
+	}
+	sql, args, _ := q.ToSql()
+	if _, err := r.db.Exec(ctx, sql, args...); err != nil {
+		return fmt.Errorf("recordingRepo.MarkTelegramFailed: %w", err)
+	}
+	return nil
+}
+
+// ─── Telegramdan qaytarib olish (restore) ────────────────────────────────────
+
+func (r *recordingRepo) ClaimRestore(ctx context.Context, id string) (bool, error) {
+	sql, args, _ := r.builder.Update("recordings").
+		Set("status", entity.RecordingStatusRestoring).
+		Where(sq.And{
+			sq.Eq{"id": id, "status": entity.RecordingStatusArchived},
+			sq.NotEq{"telegram_file_id": nil},
+		}).ToSql()
+	tag, err := r.db.Exec(ctx, sql, args...)
+	if err != nil {
+		return false, fmt.Errorf("recordingRepo.ClaimRestore: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+func (r *recordingRepo) FinishRestore(ctx context.Context, id, objectKey string, cachedUntil time.Time) error {
+	sql, args, _ := r.builder.Update("recordings").
+		Set("status", entity.RecordingStatusReady).
+		Set("object_key", objectKey).
+		Set("cached_until", cachedUntil).
+		Set("deleted_at", nil).
+		Where(sq.Eq{"id": id, "status": entity.RecordingStatusRestoring}).ToSql()
+	if _, err := r.db.Exec(ctx, sql, args...); err != nil {
+		return fmt.Errorf("recordingRepo.FinishRestore: %w", err)
+	}
+	return nil
+}
+
+func (r *recordingRepo) FailRestore(ctx context.Context, id, errMsg string) error {
+	sql, args, _ := r.builder.Update("recordings").
+		Set("status", entity.RecordingStatusArchived).
+		Set("telegram_error", nullIfEmpty(errMsg)).
+		Where(sq.Eq{"id": id, "status": entity.RecordingStatusRestoring}).ToSql()
+	if _, err := r.db.Exec(ctx, sql, args...); err != nil {
+		return fmt.Errorf("recordingRepo.FailRestore: %w", err)
+	}
+	return nil
+}
+
+func (r *recordingRepo) ListByStatus(ctx context.Context, status string, limit uint64) ([]*entity.Recording, error) {
+	if limit == 0 {
+		limit = 50
+	}
+	sql, args, err := r.builder.Select(recordingCols).From("recordings").
+		Where(sq.Eq{"status": status}).
+		OrderBy("created_at ASC").Limit(limit).ToSql()
+	if err != nil {
+		return nil, fmt.Errorf("recordingRepo.ListByStatus: %w", err)
+	}
+	return r.scanRecordings(ctx, sql, args, "ListByStatus")
+}
+
+func (r *recordingRepo) ListCacheExpired(ctx context.Context, now time.Time, limit uint64) ([]*entity.Recording, error) {
+	if limit == 0 {
+		limit = 200
+	}
+	sql, args, err := r.builder.Select(recordingCols).From("recordings").
+		Where(sq.Eq{"status": entity.RecordingStatusReady}).
+		Where(sq.NotEq{"cached_until": nil}).
+		Where(sq.Lt{"cached_until": now}).
+		OrderBy("cached_until ASC").Limit(limit).ToSql()
+	if err != nil {
+		return nil, fmt.Errorf("recordingRepo.ListCacheExpired: %w", err)
+	}
+	return r.scanRecordings(ctx, sql, args, "ListCacheExpired")
+}
+
+// ClaimCacheEvict — kesh nusxasini `archived` ga qaytaradi.
+//
+// `cached_until` shartda: mentor tiklashdan keyin yana ochsa muddat
+// uzaytirilgan bo'lishi mumkin va o'sha paytda faylni tortib olish
+// «video o'rtasida to'xtadi» degan holatni berardi.
+func (r *recordingRepo) ClaimCacheEvict(ctx context.Context, id string) (bool, error) {
+	sql, args, _ := r.builder.Update("recordings").
+		Set("status", entity.RecordingStatusArchived).
+		Set("cached_until", nil).
+		Where(sq.And{
+			sq.Eq{"id": id, "status": entity.RecordingStatusReady},
+			// `sq.Lt` bilan emas, `sq.Expr` bilan: Lt qiymat sifatida
+			// Sqlizer'ni QABUL QILMAYDI — u `NOW()` ni oddiy parametr deb
+			// bog'lardi va shart hech qachon bajarilmasdi.
+			sq.Expr("cached_until IS NOT NULL AND cached_until < NOW()"),
+		}).ToSql()
+	tag, err := r.db.Exec(ctx, sql, args...)
+	if err != nil {
+		return false, fmt.Errorf("recordingRepo.ClaimCacheEvict: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
 }
 
 // ─── Qayta kodlash navbati (CRF) ─────────────────────────────────────────────
