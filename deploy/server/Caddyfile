@@ -2,10 +2,10 @@
 # app.<IP>.sslip.io  → SPA + /api + /ws (yagona origin, CORS yo'q)
 # livekit.<IP>.sslip.io → LiveKit signaling (wss), host-network livekit:7880 ga.
 #
-# sslip.io: <anything>.194.163.139.242.sslip.io → 194.163.139.242 (real DNS).
+# sslip.io: <anything>.169.58.104.245.sslip.io → 169.58.104.245 (real DNS).
 # HTTP-01 ACME uchun 80/443 ochiq bo'lishi shart (ufw).
 
-app.194.163.139.242.sslip.io {
+app.169.58.104.245.sslip.io {
 	encode zstd gzip
 
 	# API + WebSocket (backend konteyneri, bir tarmoqda).
@@ -58,7 +58,7 @@ app.194.163.139.242.sslip.io {
 			#                 dev'da CSP yo'q, ya'ni muammo lokalda ko'rinmasdi.
 			#   connect-src — API/WS o'z originimizda; LiveKit signaling va MinIO
 			#                 yozuvlari alohida subdomenlarda.
-			Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https://files.194.163.139.242.sslip.io; media-src 'self' blob:; connect-src 'self' blob: wss://livekit.194.163.139.242.sslip.io https://files.194.163.139.242.sslip.io; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+			Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https://files.169.58.104.245.sslip.io; media-src 'self' blob:; connect-src 'self' blob: wss://livekit.169.58.104.245.sslip.io https://files.169.58.104.245.sslip.io; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
 		}
 
 		# Hash'li assetlar — abadiy keshlanadi (fayl nomi kontent bilan o'zgaradi).
@@ -74,7 +74,7 @@ app.194.163.139.242.sslip.io {
 	}
 }
 
-livekit.194.163.139.242.sslip.io {
+livekit.169.58.104.245.sslip.io {
 	# host-network'dagi LiveKit'ga (7880) host-gateway orqali.
 	reverse_proxy host.docker.internal:7880
 }
@@ -89,7 +89,7 @@ livekit.194.163.139.242.sslip.io {
 # MUHIM: Caddy reverse_proxy Host header'ni DEFAULT saqlaydi (nginx'dan farqli) —
 # shuning uchun MinIO imzoni aynan shu host bilan tekshiradi va imzo to'g'ri chiqadi.
 # Bucket ochiq QILINMAYDI: imzosiz so'rov MinIO'ning o'zi tomonidan 403 bo'ladi.
-files.194.163.139.242.sslip.io {
+files.169.58.104.245.sslip.io {
 	# Yozuvlar yirik (100 MB+) — bufferlash YO'Q, oqim bilan uzatiladi.
 	reverse_proxy darsly-minio:9000 {
 		flush_interval -1

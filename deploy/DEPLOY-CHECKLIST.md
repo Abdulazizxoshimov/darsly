@@ -1,20 +1,19 @@
 # Deploy checklist — audit tuzatishlaridan keyin
 
-> Bu ro'yxat **server qaytgach** bajariladi. 2026-07-28 holatiga
-> `194.163.139.242` yetib bo'lmaydi (ICMP/22/443 — hammasi jim, yo'l upstream'da
-> uziladi). Deploy artefaktlari mahalliy tekshirildi, quyida faqat bajarish qoladi.
+> Yangi server: **169.58.104.245** (2026-07-31 dan; eski Contabo o'chgan).
+> Serverda `telegram/Tg-bot` ning ikki boti systemd'da ishlaydi — ULARGA TEGMANG.
+> Jonly hamma narsasi `darsly-` prefiks + `darsly_net` tarmog'ida.
 
 ## 0. Server tirikligini tasdiqlash
 
 ```bash
-ping -c 3 194.163.139.242
-ssh root@194.163.139.242 'uptime && docker ps --format "{{.Names}}\t{{.Status}}"'
+ping -c 3 169.58.104.245
+ssh root@169.58.104.245 'uptime && docker ps --format "{{.Names}}\t{{.Status}}"'
 ```
 
 Yetib bo'lmasa — Contabo panelidan holatni tekshiring (o'chgan / to'lov / suspend).
 
-⚠️ Serverda **tgbot** va **eduverse** ham bor. Ularга TEGMANG: darsly hamma
-narsasi `darsly-` prefiks va `darsly_net` tarmog'ida.
+⚠️ Serverda **tgbot** va **tgbot-akademiya** (systemd) ishlaydi. Ularga TEGMANG.
 
 ## 1. Kod va konfiguratsiyani yuklash
 
@@ -23,13 +22,21 @@ narsasi `darsly-` prefiks va `darsly_net` tarmog'ida.
 cd frontend && npm ci && npm run build && rsync -a --delete dist/ ../deploy/server/www/
 
 # Backend manbasi + deploy konfiguratsiyasi
-cd .. && rsync -a --delete --exclude .git backend deploy/server root@194.163.139.242:/opt/darsly/
+# ⚠️ YO'L MUHIM: docker-compose.yml da backend build konteksti `../../backend`,
+# ya'ni serverda tuzilma AYNAN /opt/darsly/{backend,deploy/server} bo'lishi shart.
+# Avval `deploy/server` /opt/darsly/server ga tushardi va build
+# "path /opt/backend not found" bilan yiqilardi (2026-07-31 da ko'rindi).
+cd .. && rsync -a --delete --exclude .git --exclude node_modules \
+  backend root@169.58.104.245:/opt/darsly/
+rsync -a --delete --exclude .git \
+  deploy/server root@169.58.104.245:/opt/darsly/deploy/
 ```
 
 ## 2. Sirlar va konfiguratsiya
 
 ```bash
-ssh root@194.163.139.242 'cd /opt/darsly/deploy/server && ./remote-setup.sh'
+# SERVER_IP majburiy emas (default yangi server), lekin server almashsa shu bilan beriladi
+ssh root@169.58.104.245 'cd /opt/darsly/deploy/server && SERVER_IP=169.58.104.245 ./remote-setup.sh'
 ```
 
 `remote-setup.sh` endi qo'shimcha ravishda:
@@ -43,7 +50,11 @@ ssh root@194.163.139.242 'cd /opt/darsly/deploy/server && ./remote-setup.sh'
 ## 3. Ko'tarish
 
 ```bash
-ssh root@194.163.139.242 'cd /opt/darsly/deploy/server && docker compose up -d --build'
+# ⚠️ Build 10+ daqiqa oladi. SSH uzilsa build ham to'xtaydi — serverda FONDA
+# ishga tushiring (2026-07-31 da SSH timeout bilan bir marta uzilgan):
+ssh root@169.58.104.245 'cd /opt/darsly/deploy/server && \
+  nohup docker compose up -d --build > /root/jonly-build.log 2>&1 &'
+# Kuzatish: ssh ... 'tail -f /root/jonly-build.log'
 ```
 
 ⚠️ Backend qayta ishga tushadi → **jonli darslar uziladi**. Dars bo'lmagan
@@ -53,19 +64,19 @@ vaqtda bajaring.
 
 ```bash
 # a) Sog'liq
-curl -sS https://app.194.163.139.242.sslip.io/api/v1/app-config | head -c 200
+curl -sS https://app.169.58.104.245.sslip.io/api/v1/app-config | head -c 200
 
 # b) /metrics tokensiz YOPIQ bo'lishi kerak
-curl -s -o /dev/null -w '%{http_code}\n' https://app.194.163.139.242.sslip.io/metrics   # kutilgan: 404 yoki 401
+curl -s -o /dev/null -w '%{http_code}\n' https://app.169.58.104.245.sslip.io/metrics   # kutilgan: 404 yoki 401
 
 # c) /swagger production'da YO'Q
-curl -s -o /dev/null -w '%{http_code}\n' https://app.194.163.139.242.sslip.io/swagger/index.html  # kutilgan: 404
+curl -s -o /dev/null -w '%{http_code}\n' https://app.169.58.104.245.sslip.io/swagger/index.html  # kutilgan: 404
 
 # d) SPA xavfsizlik sarlavhalari (M5)
-curl -sI https://app.194.163.139.242.sslip.io/ | grep -iE 'content-security-policy|strict-transport|x-frame'
+curl -sI https://app.169.58.104.245.sslip.io/ | grep -iE 'content-security-policy|strict-transport|x-frame'
 
 # e) Prometheus maqsadni ko'ryaptimi
-ssh root@194.163.139.242 'docker exec darsly-prometheus wget -qO- localhost:9090/api/v1/targets' \
+ssh root@169.58.104.245 'docker exec darsly-prometheus wget -qO- localhost:9090/api/v1/targets' \
   | grep -o '"health":"[a-z]*"'    # kutilgan: "up"
 ```
 
@@ -78,7 +89,7 @@ o'chadi** va dars ishlamaydi.
 Tashqariga chiqarilmagan (`127.0.0.1:3030`). Kirish:
 
 ```bash
-ssh -L 3030:localhost:3030 root@194.163.139.242
+ssh -L 3030:localhost:3030 root@169.58.104.245
 # brauzerda http://localhost:3030 · admin / (GRAFANA_PASSWORD .env dan)
 ```
 

@@ -82,6 +82,33 @@ jonli video-dars platformasi — birinchi relizda «Zoom qila oladigan narsani q
 - Dars boshlanmagan: o'quvchiga «kutish sahifasi», boshlanganda avto-kirish — ⚠️
 - Ko-host: keyinroq. Ishtirokchilar paneli: Zoom standarti (holatlar, qo'l tepada, qidiruv)
 
+### Ekran ulashish overlay'i va SIFAT maqsadi (asoschi, 2026-07-31)
+
+**Strategik maqsad:** Zoom'ni ortda qoldirish — sekin, lekin izchil. Birinchi reliz
+foydalanuvchida **chuqur iz** qoldirishi kerak, ya'ni kamida Zoom darajasida
+(tezlik va sifat bo'yicha), imkon bo'lsa undan yaxshiroq.
+
+**Ikki o'lchov birinchi darajali:**
+1. **Kechikish (latency)** — hozir "juda ko'p" deb baholandi; minimallashtirish shart.
+2. **Ekran ulashish sifati** — hozir past; past internetli hududlarda ham yuqori
+   sifat kerak (matn/slayd o'qilishi).
+
+**Overlay talabi (screen-share-safe):**
+- Ekran ulashilayotganda, foydalanuvchi BOSHQA ilovada bo'lsa ham, ekranda
+  kichik suzuvchi panel turadi (Document PiP — alohida OS oynasi).
+- Panelda IKKI mustaqil element: (a) **Chat tugmasi** yangi xabar badge'i bilan,
+  (b) **Qo'l ko'targanlar indikatori** — chatdan BUTUNLAY ajratilgan, o'z badge'i
+  va animatsiyasi bilan.
+- Chat tugmasi bosilganda ekranning ~1/4 qismini egallovchi yon panel ochiladi
+  (xabarlar tarixi + real-time yangi xabarlar + kim yozgani).
+- Qo'l ko'targanlar ro'yxati chat panelining ICHIDA emas — overlay'ning o'zida
+  (dropdown/mini-ro'yxat).
+- Panel ochilganda badge nolga tushadi (o'qilgan deb belgilanadi).
+- **Muhim cheklov:** butun ekran ulashilsa hech qanday web-overlay yashira olmaydi
+  (OS darajasidagi cheklov) — shuning uchun ulashish boshlanishida ogohlantirish:
+  «Overlay o'quvchilarga ko'rinmasligi uchun butun ekranni emas, bitta oyna/tabni
+  ulashing».
+
 ## Qurilishi kerak (javoblardan kelib chiqqan yangi ishlar)
 
 | # | Ish | Manba savol | Hajm |
@@ -102,6 +129,9 @@ jonli video-dars platformasi — birinchi relizda «Zoom qila oladigan narsani q
 | 14 | Emoji-reaksiyalar | D7 | backend K + UI K |
 | 15 | Chatda fayl ulashish (MinIO orqali) | D8 | backend O + UI K |
 | 16 | Dars oldi kutish sahifasi (avto-kirish bilan) | D10 | web K |
+| 17 | **Kechikishni minimallashtirish** (Zoom darajasi yoki undan yaxshi) | 2026-07-31 | KATTA |
+| 18 | **Ekran ulashish sifati past internetda** (matn o'qiladigan) | 2026-07-31 | KATTA |
+| 19 | Overlay: kompakt PiP + chat badge + alohida qo'l indikatori + 1/4 panel | 2026-07-31 | web O |
 
 (K = kichik, O = o'rta)
 

@@ -14,7 +14,10 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-IP="194.163.139.242"
+# IP env orqali beriladi: server almashganda skript tahrirlanmasin.
+#   SERVER_IP=169.58.104.245 ./remote-setup.sh
+# (2026-07-31: eski Contabo 194.163.139.242 to'lov tugab o'chdi.)
+IP="${SERVER_IP:-169.58.104.245}"
 APP_HOST="app.${IP}.sslip.io"
 LK_HOST="livekit.${IP}.sslip.io"
 FILES_HOST="files.${IP}.sslip.io"   # MinIO presigned URL'lar uchun ochiq host (Caddy)
