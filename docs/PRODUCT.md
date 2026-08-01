@@ -45,13 +45,18 @@ jonli video-dars platformasi — birinchi relizda «Zoom qila oladigan narsani q
 
 ### Yozuvlar (video)
 - Avto-yozuv: dars boshlanishi bilan (qurilgan ✅)
-- Ko'rish: **faqat mentor**; o'quvchilarga tarqatishni mentor o'zi hal qiladi (Telegram)
-- **Saqlash: 30 kun**, keyin avto-o'chirish (ogohlantirish bilan) — ⚠️ hali qurilmagan
+- Ko'rish: ilovada **faqat mentor**. Tarqatish Telegram orqali va **qaror mentorniki**:
+  dars tugagach bot guruhlar ro'yxatini beradi, mentor qaysi biriga yuborishni tanlaydi
+  yoki umuman yubormaydi. **Arxiv guruhiga esa avtomatik** saqlanadi (2026-08-01).
+- **Saqlash: server 30 kun** → keyin serverdan o'chadi, lekin **Telegramda ABADIY**
+  qoladi (2026-08-01 qarori — «Dars arxivi va Telegram saqlash» bo'limiga qara).
+  Eski qoida «30 kundan keyin butunlay yo'qoladi» BEKOR QILINDI.
 - Sifat: kichik hajm + yuqori sifat balansi (CRF qayta kodlash — qurilgan ✅)
 - «Yozilmoqda» banneri o'quvchiga: KERAK EMAS (REC indikator yetadi)
 
 ### Chat va Poll
-- Chat tarixi: faqat mentor ko'radi (web modal — qurilgan ✅)
+- Chat tarixi: ilovada faqat mentor ko'radi (qurilgan ✅). Telegramga yuborish —
+  **mentor tanlaydi**: har dars oxirida bot «chat ham ketsinmi?» deb so'raydi (2026-08-01).
 - O'quvchilar o'rtasida shaxsiy chat: YO'Q (umumiy + mentorga shaxsiy)
 - **Mentor xabar o'chira oladi** (moderatsiya) — ⚠️ hali qurilmagan
 - **Poll ikki rejimda yaratiladi:** «faqat mentor uchun» / «hammaga ko'rinadigan»;
@@ -109,6 +114,40 @@ foydalanuvchida **chuqur iz** qoldirishi kerak, ya'ni kamida Zoom darajasida
   «Overlay o'quvchilarga ko'rinmasligi uchun butun ekranni emas, bitta oyna/tabni
   ulashing».
 
+### Dars arxivi va Telegram saqlash (asoschi, 2026-08-01)
+
+**Maqsad:** Zoom kabi — dars tugagach nafaqat video, balki **chat ham** saqlanadi;
+video esa Telegram guruhiga yuboriladi (o'quvchilarga tarqatish + ikkinchi nusxa).
+
+**Dars sahifasi (ilovada):** o'tgan darsni bosganda — chapda video pleyer, o'ngda
+chat tarixi (vaqt belgilari bilan). Chatdagi vaqtni bosganda video o'sha daqiqaga
+o'tadi. Pastda «Materiallar» — darsda ulashilgan fayllar (serverda qoladi).
+
+**Video saqlash zanjiri (ishonchlilik birinchi o'rinda):**
+1. Yozuv serverga tushadi (hozirgidek, egress → MinIO)
+2. Bot Telegramga yuklaydi; muvaffaqiyat **tasdiqlangach** server nusxasi qoladi
+3. **Server nusxasi 30 kun** turadi → keyin o'chadi (Telegram = doimiy arxiv)
+4. 30 kundan eski darsni ochganda: Telegramdan yuklab olinadi (30-60 s),
+   ijro etiladi va **1 kun keshda** turadi, keyin yana o'chadi
+5. Yuklash uzilsa: 3 marta ortib boruvchi oraliqda qayta urinish + mentorga
+   bildirishnoma; **server nusxasi O'CHIRILMAYDI** (video hech qachon yo'qolmaydi)
+
+**Telegram cheklovi va yechimi:** oddiy bot 50 MB gacha yuboradi, 1 soatlik dars
+esa ~75–250 MB. Shuning uchun serverda **Local Bot API Server** (Telegram'ning
+rasmiy dasturi, Docker) ishlaydi — chegara 2 GB. Kerak: `api_id`/`api_hash`
+(my.telegram.org) + bot tokeni (@BotFather).
+
+**Guruh siyosati (2026-08-01, aniqlashtirilgan):**
+- **Arxiv guruhi** — mentorning shaxsiy «Video darslar» guruhi: video u yerga
+  HAR DOIM avtomatik saqlanadi (bu ikkinchi nusxa, ishonchlilik uchun).
+- **O'quvchilar guruhi** — dars tugagach bot mavjud guruhlar ro'yxatini beradi,
+  mentor qaysi biriga yuborishni tanlaydi **yoki umuman yubormaydi**. Qaror mentorniki.
+- **Chat fayli** (TXT + HTML) — mentor tanlaydi: bot «chat ham ketsinmi?» deb so'raydi.
+- **Darsdagi fayllar** Telegramga yuborilmaydi (guruh shishmasin) — ilovada qoladi.
+
+**Maxfiylik:** guruh a'zolari videoni forward qila oladi — bu qabul qilingan
+(mentor o'z guruhini biladi).
+
 ## Qurilishi kerak (javoblardan kelib chiqqan yangi ishlar)
 
 | # | Ish | Manba savol | Hajm |
@@ -132,6 +171,9 @@ foydalanuvchida **chuqur iz** qoldirishi kerak, ya'ni kamida Zoom darajasida
 | 17 | **Kechikishni minimallashtirish** (Zoom darajasi yoki undan yaxshi) | 2026-07-31 | KATTA |
 | 18 | **Ekran ulashish sifati past internetda** (matn o'qiladigan) | 2026-07-31 | KATTA |
 | 19 | Overlay: kompakt PiP + chat badge + alohida qo'l indikatori + 1/4 panel | 2026-07-31 | web O |
+| 20 | **Dars arxiv sahifasi** — video + chat yonma-yon, vaqt bo'yicha sakrash, materiallar | 2026-08-01 | backend K + web O + mobil O |
+| 21 | **Chat transkripti** (TXT + HTML eksport) | 2026-08-01 | backend K |
+| 22 | **Telegram saqlash**: Local Bot API Server, guruh tanlash, qayta urinish, 30 kun + 1 kunlik kesh | 2026-08-01 | yangi servis KATTA |
 
 (K = kichik, O = o'rta)
 
