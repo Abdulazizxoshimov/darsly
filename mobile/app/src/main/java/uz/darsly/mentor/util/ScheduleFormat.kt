@@ -54,6 +54,10 @@ object ScheduleFormat {
         fromDate: LocalDate? = LocalDate.now(zone),
     ): List<Day> = lessons
         .filter { it.status != "cancelled" }
+        // ⭐ "O'tgan" = sanasi o'tgan YOKI allaqachon TUGAGAN. Sana yolg'iz
+        // yetarli emas: ustoz kelasi haftaga qo'yilgan darsni bugun o'tkazib
+        // yuborishi mumkin va u jadvalda "kelgusi" bo'lib turib qolardi.
+        .filter { fromDate == null || it.status != "ended" }
         .mapNotNull { lesson ->
             val millis = LessonFormat.epochOrNull(lesson.scheduledAt) ?: return@mapNotNull null
             val date = Instant.ofEpochMilli(millis).atZone(zone).toLocalDate()
@@ -71,9 +75,18 @@ object ScheduleFormat {
      *
      * Ularni jimgina tashlab yuborish mumkin emas: ustoz "darsim yo'qoldi" deb
      * o'ylardi. Bekor qilinganlar bu yerda ham tashlanadi.
+     *
+     * ⭐ `includePast` (2026-08-04, emulyatorda o'lchangan nuqson): avval bu
+     * parametr YO'Q edi va «O'tgan darslarni ham ko'rsatish» tumbleri faqat
+     * sanali bo'limga ta'sir qilardi. Tezkor darslarning sanasi bo'lmagani
+     * uchun ular HAR DOIM shu yerda qolardi — ustoz bir necha dars o'tkazgach
+     * jadval tugagan darslar bilan to'lib, mo'ljallangan vazifasini
+     * bajarmay qo'yardi. Sanasi yo'q darsda "o'tganlik"ning yagona belgisi —
+     * `status == "ended"`.
      */
-    fun undated(lessons: List<Lesson>): List<Lesson> = lessons
+    fun undated(lessons: List<Lesson>, includePast: Boolean = true): List<Lesson> = lessons
         .filter { it.status != "cancelled" && LessonFormat.epochOrNull(it.scheduledAt) == null }
+        .filter { includePast || it.status != "ended" }
         .sortedByDescending { LessonFormat.epochOrNull(it.createdAt) ?: 0L }
 
     /** "Bugun, 27-iyul" · "Ertaga, 28-iyul" · "shanba, 1-avgust" · "1-yanvar 2027". */

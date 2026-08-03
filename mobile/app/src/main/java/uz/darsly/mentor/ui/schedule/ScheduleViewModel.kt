@@ -114,7 +114,11 @@ class ScheduleViewModel @Inject constructor(
             lessons = lessons,
             fromDate = if (includePast) null else LocalDate.now(),
         )
-        _state.update { it.copy(days = days, undated = ScheduleFormat.undated(lessons)) }
+        // `includePast` IKKALA bo'limga ham uzatiladi: avval faqat sanali
+        // bo'limga berilardi va tumbler vaqtsiz darslarga ta'sir qilmasdi.
+        _state.update {
+            it.copy(days = days, undated = ScheduleFormat.undated(lessons, includePast))
+        }
     }
 
     fun noticeShown() = _state.update { it.copy(notice = null) }

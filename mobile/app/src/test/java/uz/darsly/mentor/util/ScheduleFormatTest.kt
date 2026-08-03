@@ -203,4 +203,52 @@ class ScheduleFormatTest {
         // Bir xonali soat nol bilan to'ldiriladi — ustun tekis tursin.
         assertEquals("06:05", ScheduleFormat.timeLabel(lesson("a", "2026-07-27T01:05:00Z"), tashkent))
     }
+
+    // ─── «O'tgan darslarni ham ko'rsatish» tumbleri ──────────────────────────
+    //
+    // 2026-08-04 da emulyatorda topilgan nuqson: tumbler faqat SANALI bo'limga
+    // ta'sir qilardi. Tezkor darsning sanasi yo'q, shuning uchun ular jadvalda
+    // abadiy qolib, ekranni to'ldirib yuborardi.
+
+    @Test
+    fun `tumbler ochiq bolsa vaqtsiz TUGAGAN dars korinmaydi`() {
+        val lessons = listOf(
+            lesson("tugagan", null, status = "ended"),
+            lesson("kutilmoqda", null, status = "scheduled"),
+        )
+        val got = ScheduleFormat.undated(lessons, includePast = false)
+        assertEquals(listOf("kutilmoqda"), got.map { it.id })
+    }
+
+    @Test
+    fun `tumbler yoniq bolsa vaqtsiz tugagan dars ham korinadi`() {
+        val lessons = listOf(
+            lesson("tugagan", null, status = "ended"),
+            lesson("kutilmoqda", null, status = "scheduled"),
+        )
+        val got = ScheduleFormat.undated(lessons, includePast = true)
+        assertEquals(setOf("tugagan", "kutilmoqda"), got.map { it.id }.toSet())
+    }
+
+    // Sanasi KELAJAKDA, lekin allaqachon o'tkazilgan dars ham "o'tgan" hisoblanadi —
+    // aks holda ustoz uni yana o'tkazishi kerakdek ko'rinib turardi.
+    @Test
+    fun `kelajak sanali TUGAGAN dars tumbler ochiqda yashiriladi`() {
+        val lessons = listOf(
+            lesson("tugagan", "2026-08-01T09:00:00Z", status = "ended"),
+            lesson("kelgusi", "2026-08-01T12:00:00Z", status = "scheduled"),
+        )
+        val days = ScheduleFormat.groupByDay(lessons, tashkent, fromDate = LocalDate.of(2026, 1, 1))
+        assertEquals(listOf("kelgusi"), days.flatMap { it.lessons }.map { it.id })
+    }
+
+    @Test
+    fun `tumbler yoniqda kelajak sanali tugagan dars ham qoladi`() {
+        val lessons = listOf(
+            lesson("tugagan", "2026-08-01T09:00:00Z", status = "ended"),
+            lesson("kelgusi", "2026-08-01T12:00:00Z", status = "scheduled"),
+        )
+        val days = ScheduleFormat.groupByDay(lessons, tashkent, fromDate = null)
+        assertEquals(setOf("tugagan", "kelgusi"), days.flatMap { it.lessons }.map { it.id }.toSet())
+    }
 }
