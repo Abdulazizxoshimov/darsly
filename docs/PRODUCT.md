@@ -283,6 +283,38 @@ ALOHIDA fayl chiqaradi (*Active Speaker*, *Gallery View*, **Shared Screen**,
 ekranining aniq nisbati), kamera plitkasi umuman yo'q, t=0 dan kontent va ovoz.
 Bizning kvadrat kadr xuddi shu natijani BITTA fayl bilan beradi.
 
+### Server sig'imi: egress CPU (2026-08-04, o'lchangan)
+
+Yozuv sifatining chegarasi endi kodda emas — **serverda**. Egress = headless
+Chrome + Xvfb + x264 va u 4 yadroli mashinada (postgres/redis/minio/caddy/
+prometheus/grafana/loki va ikki Telegram boti bilan birga) eng og'ir komponent.
+
+| Kanvas | fps | Piksel/s | Natija |
+|---|---|---|---|
+| 1280×720 | 15 | 13.8 M | ishlagan (eski holat) |
+| 1280×1280 | 25 | 41.0 M | ❌ «pipeline frozen» — **yozuv yo'qoldi** |
+| 1024×1024 | 25 | 26.2 M | ishlagan, lekin egress 1027% CPU, yuk 10–13 |
+| **1024×1024** | **15** | **15.7 M** | ✅ default — CPU ogohlantirishi **0** |
+
+**Yozuvni yo'qotish sifatdan beqiyos qimmat**, shuning uchun default eng
+xavfsiz nuqtada. `RECORDING_CANVAS` va `RECORDING_FPS` env bilan sozlanadi —
+kuchliroq serverda `1280` + `25` to'liq paritetni (tik kadr 576×1280)
+qaytaradi. Ya'ni bu **server sotib olish qarori**, kod ishi emas.
+
+Yakuniy o'lchov (tik telefon ekrani ulashilgan):
+
+| | Kadr | Mayda formulalar |
+|---|---|---|
+| Avval | 324×718 | xira |
+| Hozir (1024) | **458×1022** | o'qiladi |
+| 1280 bilan (kuchli server) | 576×1280 | to'liq parite |
+
+**⚠️ Kvadrat kadrning yon ta'siri:** LiveKit shabloni EKRANNI butun holicha
+(`contain`), KAMERANI esa kadrga to'ldirib (`cover`) chizadi. Ya'ni faqat
+kamerali (ulashishsiz) dars yozuvida kadr kvadrat KESILADI — chap/o'ng
+chetlari yo'qoladi. Asosiy stsenariy ekran ulashish bo'lgani uchun bu qabul
+qilingan; kamera-only darslar muhim bo'lsa qayta ko'riladi.
+
 ## Qurilishi kerak (javoblardan kelib chiqqan yangi ishlar)
 
 | # | Ish | Manba savol | Hajm |
@@ -314,7 +346,10 @@ Bizning kvadrat kadr xuddi shu natijani BITTA fayl bilan beradi.
 | 25 | ~~Ulashishda ilova avtomatik fonga o'tsin (Zoom kabi)~~ ✅ 2026-08-03 | 2026-08-01 | mobil K |
 | 26 | ~~Mobil ulashishda yozuv rezolyutsiyasi~~ ✅ 2026-08-03 — kvadrat kadr | 2026-08-03 | backend K |
 | 27 | ~~Mobil ilova ekran o'lchamini backendga aytsin~~ — KERAK EMAS (kvadrat kadr manbani bilishni talab qilmaydi) | 2026-08-03 | — |
-| 28 | Egress CPU o'lchovi: kvadrat kadr 4 yadroli serverda necha parallel darsga yetadi | 2026-08-03 | QA K |
+| 28 | ~~Egress CPU o'lchovi~~ ✅ 2026-08-04 — «Server sig'imi» bo'limiga qara | 2026-08-03 | QA K |
+| 29 | **Server quvvatini oshirish** — 1280 kanvas + 25 fps uchun (to'liq Zoom pariteti) | 2026-08-04 | qaror kerak |
+| 30 | Jonli darsni ro'yxatdan yakunlash tugmasi (hozir faqat xona ichidan) | 2026-08-04 | mobil K |
+| 31 | Xonaga qayta kirilsa ikkinchi yozuv boshlanadi — arxivda ikki fayl | 2026-08-04 | qaror kerak |
 
 (K = kichik, O = o'rta)
 
