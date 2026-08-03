@@ -83,10 +83,28 @@ vaqtda bajaring.
 curl -sS https://app.169.58.104.245.sslip.io/api/v1/app-config | head -c 200
 
 # b) /metrics tokensiz YOPIQ bo'lishi kerak
-curl -s -o /dev/null -w '%{http_code}\n' https://app.169.58.104.245.sslip.io/metrics   # kutilgan: 404 yoki 401
-
 # c) /swagger production'da YO'Q
-curl -s -o /dev/null -w '%{http_code}\n' https://app.169.58.104.245.sslip.io/swagger/index.html  # kutilgan: 404
+#
+# ⚠️ HOLAT KODIGA QARAMANG — u YOLG'ON tinchlik beradi (2026-08-03 da chalg'itdi).
+# Caddy SPA fallback'i NOMA'LUM har qanday yo'lga `index.html` ni 200 bilan
+# qaytaradi, ya'ni ochiq `/metrics` ham, yo'q `/metrics` ham 200 ko'rinadi.
+# To'g'ri tekshiruv — MAZMUN: HTML kelsa yo'l yopiq, Prometheus/Swagger
+# javobi kelsa OCHIQ va bu xavfsizlik nuqsoni.
+for p in /metrics /swagger/index.html; do
+  body=$(curl -s -m 15 "https://app.169.58.104.245.sslip.io$p" | head -c 40)
+  case "$body" in
+    '<!doctype html>'*|'<!DOCTYPE html>'*) echo "$p — YOPIQ (SPA fallback) ✅" ;;
+    *) echo "$p — OCHIQ ❌: $body" ;;
+  esac
+done
+
+# c2) APK havolasi HAQIQATAN yuklanadimi (app-config'dagi manzil bo'yicha).
+# 2026-08-03 da `APP_ANDROID_APK_URL` rebranddan qolgan `darsly-mentor.apk` ga
+# ishora qilib turgan edi — fayl esa `jonly-*.apk`. Ilova ichidagi yangilanish
+# jimgina 404 olardi va buni faqat foydalanuvchi sezardi.
+U=$(curl -s https://app.169.58.104.245.sslip.io/api/v1/app-config \
+    | python3 -c "import sys,json;print(json.load(sys.stdin)['data']['android']['apk_url'])")
+curl -sI -m 25 "$U" | head -1   # kutilgan: HTTP/2 200
 
 # d) SPA xavfsizlik sarlavhalari (M5)
 curl -sI https://app.169.58.104.245.sslip.io/ | grep -iE 'content-security-policy|strict-transport|x-frame'
