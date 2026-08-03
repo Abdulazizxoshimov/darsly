@@ -367,3 +367,51 @@ func startsBlack(t *testing.T, path string) bool {
 	}
 	return false
 }
+
+// ⭐ Transkod kadr chastotasini manbadan YUQORIGA ko'tarmasligi kerak.
+//
+// 2026-08-04 da serverda aynan shu bo'ldi: egress CPU sababli 15 fps yozardi,
+// transkod esa 25 ni majburlab har uchinchi kadrni takrorlardi — fayl kattaroq,
+// sifat esa bir xil.
+func TestTranscode_FPSManbadanOshmaydi(t *testing.T) {
+	requireFFmpeg(t)
+	dir := t.TempDir()
+	src := dir + "/src15.mp4"
+	dst := dir + "/out.mp4"
+
+	run(t, "ffmpeg", "-y", "-nostdin",
+		"-f", "lavfi", "-i", "testsrc2=size=640x480:rate=15:duration=6",
+		"-c:v", "libx264", "-preset", "ultrafast", src)
+
+	w := NewTranscodeWorker(nil, nil, testutil.NewLogger(), DefaultTranscodeConfig())
+	ctx := context.Background()
+
+	plan := w.analyze(ctx, src)
+	require.Equal(t, 15, plan.FPS, "manba 15 fps — reja shuni belgilashi kerak")
+	require.Equal(t, 15, plan.outFPS(w.cfg.FPS))
+
+	require.NoError(t, w.runFFmpeg(ctx, src, dst, plan))
+	_, _, fps, _, _, _ := probeAll(t, dst)
+	require.InDelta(t, 15.0, fps, 0.6, "natija manbadan tez bo'lmasin")
+}
+
+// Manba sozlamadan TEZ bo'lsa chegara ishlaydi (hajm nazorati).
+func TestTranscode_FPSChegaraQollanadi(t *testing.T) {
+	requireFFmpeg(t)
+	dir := t.TempDir()
+	src := dir + "/src30.mp4"
+	dst := dir + "/out.mp4"
+
+	run(t, "ffmpeg", "-y", "-nostdin",
+		"-f", "lavfi", "-i", "testsrc2=size=640x480:rate=30:duration=6",
+		"-c:v", "libx264", "-preset", "ultrafast", src)
+
+	w := NewTranscodeWorker(nil, nil, testutil.NewLogger(), DefaultTranscodeConfig())
+	ctx := context.Background()
+	plan := w.analyze(ctx, src)
+	require.Zero(t, plan.FPS, "manba tez — reja aralashmasin, sozlama chegarasi qolsin")
+
+	require.NoError(t, w.runFFmpeg(ctx, src, dst, plan))
+	_, _, fps, _, _, _ := probeAll(t, dst)
+	require.InDelta(t, 25.0, fps, 0.6, "sozlamadagi chegara qo'llanadi")
+}

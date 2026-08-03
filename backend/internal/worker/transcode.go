@@ -62,9 +62,15 @@ func DefaultTranscodeConfig() TranscodeConfig {
 		Enabled: true,
 		CRF:     26,
 		Preset:  "veryfast",
-		// 25 fps — Zoom pariteti. 15 fps da sichqoncha va skroll harakati
-		// uzuq-yuluq ko'rinardi; statik slaydda qo'shimcha kadrlar CRF ostida
-		// deyarli bepul (P-kadrlar bo'sh chiqadi).
+		// FPS — bu YUQORI CHEGARA, majburiy qiymat emas.
+		//
+		// Manba (egress) undan past bo'lsa `analyze` chiqishni manbaga
+		// tenglashtiradi (`editPlan.FPS`). Aks holda ffmpeg kadrlarni
+		// TAKRORLAB 25 ga yetkazardi: fayl kattaroq, sifat esa bir xil —
+		// 2026-08-04 da serverda aynan shunday bo'lgan (egress 15, natija 25).
+		//
+		// 25 chegara sifatida qoladi: kuchli serverda `RECORDING_FPS=25`
+		// qo'yilsa transkod ham avtomatik 25 chiqaradi, kod o'zgarmaydi.
 		FPS:           25,
 		AudioKbps:     64,
 		AudioRateHz:   48000,
@@ -310,7 +316,7 @@ func (w *TranscodeWorker) runFFmpeg(ctx context.Context, src, dst string, plan e
 	if plan.Crop != nil {
 		vf = fmt.Sprintf("crop=%d:%d:%d:%d,", plan.Crop.W, plan.Crop.H, plan.Crop.X, plan.Crop.Y)
 	}
-	vf += fmt.Sprintf("fps=%d", w.cfg.FPS)
+	vf += fmt.Sprintf("fps=%d", plan.outFPS(w.cfg.FPS))
 
 	args = append(args,
 		"-c:v", "libx264",

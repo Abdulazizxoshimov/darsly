@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -21,6 +22,13 @@ import (
 
 // editPlan — ffmpeg'ga beriladigan tahrirlar.
 type editPlan struct {
+	// FPS — chiqish kadr chastotasi. 0 → sozlamadagi qiymat.
+	//
+	// ⭐ Nega kerak (2026-08-04): egress kadr chastotasi CPU sababli 15 ga
+	// tushirildi, transkod esa 25 ni majburlab, har uchinchi kadrni
+	// TAKRORLARDI — fayl kattaroq, sifat esa bir xil. Endi transkod manbadan
+	// yuqoriga KO'TARMAYDI.
+	FPS int
 	// Crop — qora yo'llarni kesish (nil → kesilmaydi).
 	Crop *CropRect
 	// StartSec — boshidan necha soniya tashlanadi (0 → tashlanmaydi).
@@ -28,6 +36,14 @@ type editPlan struct {
 }
 
 func (p editPlan) edits() bool { return p.Crop != nil || p.StartSec > 0 }
+
+// outFPS — chiqish kadr chastotasi (rejada yo'q bo'lsa sozlamadagi qiymat).
+func (p editPlan) outFPS(cfgFPS int) int {
+	if p.FPS > 0 {
+		return p.FPS
+	}
+	return cfgFPS
+}
 
 func (p editPlan) String() string {
 	var parts []string
@@ -55,6 +71,8 @@ type mediaInfo struct {
 	Width, Height int
 	Duration      float64
 	HasAudio      bool
+	// FPS — manbaning kadr chastotasi (0 → aniqlanmadi).
+	FPS float64
 }
 
 // analyze manba faylni o'lchab tahrir rejasini qaytaradi.
@@ -84,6 +102,10 @@ func (w *TranscodeWorker) analyze(ctx context.Context, src string) editPlan {
 		black, silence := detectLead(ctx, src, info.Duration)
 		plan.StartSec = leadingDeadSeconds(black, silence, info.Duration, info.HasAudio)
 	}
+	// Kadr chastotasi manbadan yuqoriga ko'tarilmasin (izoh: editPlan.FPS).
+	if info.FPS > 0 && int(math.Round(info.FPS)) < w.cfg.FPS {
+		plan.FPS = int(math.Round(info.FPS))
+	}
 	return plan
 }
 
@@ -91,7 +113,7 @@ func (w *TranscodeWorker) analyze(ctx context.Context, src string) editPlan {
 func probeMedia(ctx context.Context, path string) (mediaInfo, error) {
 	out, err := exec.CommandContext(ctx, "ffprobe",
 		"-v", "error",
-		"-show_entries", "stream=codec_type,width,height",
+		"-show_entries", "stream=codec_type,width,height,avg_frame_rate",
 		"-show_entries", "format=duration",
 		"-of", "json", path,
 	).Output()
@@ -103,6 +125,7 @@ func probeMedia(ctx context.Context, path string) (mediaInfo, error) {
 			CodecType string `json:"codec_type"`
 			Width     int    `json:"width"`
 			Height    int    `json:"height"`
+			AvgFrame  string `json:"avg_frame_rate"`
 		} `json:"streams"`
 		Format struct {
 			Duration string `json:"duration"`
@@ -119,6 +142,7 @@ func probeMedia(ctx context.Context, path string) (mediaInfo, error) {
 			// oqim bo'lib ko'rinishi mumkin).
 			if s.Width*s.Height > info.Width*info.Height {
 				info.Width, info.Height = s.Width, s.Height
+				info.FPS = parseFrameRate(s.AvgFrame)
 			}
 		case "audio":
 			info.HasAudio = true
@@ -129,6 +153,21 @@ func probeMedia(ctx context.Context, path string) (mediaInfo, error) {
 		return info, fmt.Errorf("ffprobe: video oqimi topilmadi")
 	}
 	return info, nil
+}
+
+// parseFrameRate ffprobe'ning "25/1" ko'rinishidagi qiymatini soniyaga aylantiradi.
+// Aniqlab bo'lmasa 0 (chaqiruvchi sozlamadagi qiymatga tushadi).
+func parseFrameRate(v string) float64 {
+	num, den, ok := strings.Cut(v, "/")
+	if !ok {
+		return 0
+	}
+	n, err1 := strconv.ParseFloat(num, 64)
+	d, err2 := strconv.ParseFloat(den, 64)
+	if err1 != nil || err2 != nil || d <= 0 {
+		return 0
+	}
+	return n / d
 }
 
 // probeDuration — natija faylining davomiyligi (soniya). Xatoda 0.
