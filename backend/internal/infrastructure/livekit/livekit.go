@@ -24,6 +24,7 @@ type Client struct {
 	tokenTTL  time.Duration // kirish tokeni amal qilish muddati (join/reconnect gate)
 	layout    string        // Egress kompozitsiya shabloni (qarang: egress.go normalizeLayout)
 	canvas    int           // Yozuv kadrining tomoni (kvadrat) — qarang: egress.go recCanvasSide
+	fps       int           // Yozuv kadr chastotasi — qarang: egress.go recFramerate
 	enabled   bool
 }
 
@@ -47,6 +48,7 @@ func New(cfg config.LiveKitConfig) *Client {
 		tokenTTL:  ttl,
 		layout:    normalizeLayout(cfg.EgressLayout),
 		canvas:    cfg.RecordingCanvas,
+		fps:       cfg.RecordingFPS,
 		enabled:   true,
 	}
 }

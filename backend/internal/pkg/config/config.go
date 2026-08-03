@@ -131,6 +131,12 @@ type LiveKitConfig struct {
 	// piksel kodlaydi, shuning uchun kuchsiz serverda 1024 ga tushirsa bo'ladi:
 	// yuk bugungi 720p bilan deyarli teng, tik kadr esa hozirgidan 42% o'tkir.
 	RecordingCanvas int `json:"recording_canvas"`
+	// RecordingFPS — yozuv kadr chastotasi. 0 → default 15.
+	//
+	// 4 yadroli serverda 25 fps egressni to'ldirib yubordi va bir yozuv
+	// "pipeline frozen" bilan yo'qoldi (o'lchangan). Kuchli serverda 25
+	// qo'yilsa Zoom pariteti qaytadi.
+	RecordingFPS int `json:"recording_fps"`
 }
 
 type SentryConfig struct {
@@ -369,6 +375,7 @@ func Load() *Config {
 			EgressLayout: getEnv("LIVEKIT_EGRESS_LAYOUT", ""),
 			// 0 → `livekit.recCanvasSide` (1280). Kuchsiz serverda 1024 qo'ying.
 			RecordingCanvas: getEnvInt("RECORDING_CANVAS", 0),
+			RecordingFPS:    getEnvInt("RECORDING_FPS", 0),
 		},
 		Lesson: LessonConfig{
 			MaxDuration:   getEnvDuration("LESSON_MAX_DURATION", 4*time.Hour),

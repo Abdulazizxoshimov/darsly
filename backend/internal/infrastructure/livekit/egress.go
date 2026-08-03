@@ -82,9 +82,8 @@ func normalizeLayout(l string) string {
 // emas, MATN — ravshanlik saqlanadi, bitrate esa ~3.3 barobar past.
 //
 // ⭐ 2026-08-03 (docs/PRODUCT.md «Yozuv sifati: Zoom bilan taqqoslash»):
-//   - `recFramerate` 15 → **25**. Zoom yozuvida 25 fps; 15 fps sichqoncha va
-//     skroll harakatini uzuq-yuluq ko'rsatardi. Bitreytga ta'siri kichik,
-//     chunki statik slaydda qo'shimcha kadrlar deyarli bo'sh chiqadi.
+//   - `recFramerate` 15 → 25 (Zoom pariteti) — LEKIN 2026-08-04 da o'lchov
+//     asosida 15 ga QAYTARILDI, quyidagi izohga qara.
 //   - `recAudioFreq` OSHKORA **48000**. Proto default'i 44100 (`AudioFrequency`
 //     izohiga qara) — WebRTC/Opus manbasi esa 48 kHz, ya'ni egress ovozni
 //     BEKORGA qayta diskretlab, 44.1 kHz mono chiqarardi (o'lchangan).
@@ -94,15 +93,33 @@ func normalizeLayout(l string) string {
 //
 // Kalit kadr oralig'i 4 s: brauzerda oldinga/orqaga o'tish shu qadamda ishlaydi
 // (kattaroq oraliq faylni yana kichraytiradi, lekin "sakrash" qo'polashadi).
+//
+// ⚠️ 2026-08-04 — `recFramerate` 25 dan **15** ga QAYTARILDI (o'lchov bilan).
+// Sabab `recCanvasSide` izohidagi CPU bo'limida: 4 yadroli serverda egress
+// 25 fps'da mashinani to'liq yeb qo'ydi va bir yozuv «pipeline frozen» bilan
+// YO'QOLDI. Dars yozuvida asosiy talab — slayd MATNI o'qilishi, ya'ni
+// rezolyutsiya; fps esa faqat sichqoncha/skroll silliqligiga ta'sir qiladi.
+// Shuning uchun CPU byudjeti fps'dan olinib rezolyutsiyaga berildi.
+// Kuchli serverda `RECORDING_FPS=25` bilan Zoom pariteti qaytariladi.
 const (
 	recBaseWidth    = 1280
 	recBaseHeight   = 720
-	recFramerate    = 25
+	recFramerate    = 15
+	recMinFramerate = 5
+	recMaxFramerate = 30
 	recVideoKbps    = 900
 	recAudioKbps    = 64
 	recAudioFreq    = 48000
 	recKeyFrameSecs = 4.0
 )
+
+// pickFramerate sozlamadagi fps'ni tekshiradi (0/chegaradan tashqari → default).
+func pickFramerate(fps int) int32 {
+	if fps < recMinFramerate || fps > recMaxFramerate {
+		return recFramerate
+	}
+	return int32(fps)
+}
 
 // ⭐⭐ KADR KVADRAT — HAR QANDAY ORIENTATSIYA TO'LIQ REZOLYUTSIYADA SAQLANADI.
 //
@@ -132,11 +149,20 @@ const (
 // (internal/worker/videofilter.go) — u shu fayl uchun ISHLAB TURIBDI va
 // asoschining haqiqiy yozuvida o'lchangan.
 //
-// ## Narxi va uning chegarasi
-// Egress 1280x1280 = 1.64 Mpiksel kodlaydi, 1280x720 = 0.92 Mpiksel o'rniga
-// (+78%). 4 yadroli serverda bu sezilarli, shuning uchun `RECORDING_CANVAS`
-// env bilan pasaytirsa bo'ladi (masalan 1024 → 1.05 Mpiksel, ya'ni bugungi
-// 720p bilan deyarli teng yuk, tik kadr esa 461x1024 — hozirgidan 42% o'tkir).
+// ## ⚠️ CPU — DEFAULT 1024, 1280 EMAS (2026-08-04, serverda o'lchangan)
+// Egress = headless Chrome + Xvfb + x264. Yuk kadr maydoniga ham, fps'ga ham
+// proporsional. 4 yadroli serverda (u yerda postgres/redis/minio/caddy/
+// prometheus/grafana/loki va ikki Telegram boti ham ishlaydi) o'lchandi:
+//
+//	kanvas    fps  piksel/s   natija
+//	1280x720   15  13.8 M     ishlagan (eski holat)
+//	1280x1280  25  41.0 M     ❌ «pipeline frozen» — YOZUV YO'QOLDI
+//	1024x1024  25  26.2 M     ishlagan, lekin egress 1027% CPU, yuk 10-13
+//	1024x1024  15  15.7 M     ✅ tanlangan default
+//
+// Yozuvni YO'QOTISH — sifatdan beqiyos qimmat, shuning uchun default eng
+// xavfsiz nuqtada. Kuchliroq serverda `RECORDING_CANVAS=1280` +
+// `RECORDING_FPS=25` bilan to'liq parite (tik kadr 576x1280) qaytariladi.
 //
 // ## Agar kesish ishlamay qolsa
 // Fayl kvadrat bo'lib, kontent o'rtada qoladi: kompozitsiya bugungidan yomon,
@@ -144,7 +170,7 @@ const (
 const (
 	// recCanvasSide — kvadrat kadrning tomoni. `RECORDING_CANVAS` env bilan
 	// almashtiriladi (quyi chegara `recMinCanvasSide`).
-	recCanvasSide    = 1280
+	recCanvasSide    = 1024
 	recMinCanvasSide = 640
 )
 
@@ -219,7 +245,7 @@ func (c *Client) StartRoomRecording(ctx context.Context, roomName, objectKey str
 			Advanced: &livekit.EncodingOptions{
 				Width:            int32(w),
 				Height:           int32(h),
-				Framerate:        recFramerate,
+				Framerate:        pickFramerate(c.fps),
 				VideoCodec:       livekit.VideoCodec_H264_MAIN,
 				VideoBitrate:     pickVideoBitrate(w, h),
 				AudioCodec:       livekit.AudioCodec_AAC, // MP4 uchun standart

@@ -50,12 +50,12 @@ func TestPickRecordingSize(t *testing.T) {
 		side         int
 		wantW, wantH int
 	}{
-		{"sozlanmagan → default", 0, 1280, 1280},
-		{"manfiy → default", -1, 1280, 1280},
-		{"juda kichik → default", 320, 1280, 1280},
-		{"kuchsiz server uchun 1024", 1024, 1024, 1024},
+		{"sozlanmagan → default", 0, 1024, 1024},
+		{"manfiy → default", -1, 1024, 1024},
+		{"juda kichik → default", 320, 1024, 1024},
+		{"kuchli server uchun 1280", 1280, 1280, 1280},
 		{"quyi chegara", 640, 640, 640},
-		{"toq qiymat juftga tushadi", 1025, 1024, 1024},
+		{"toq qiymat juftga tushadi", 1281, 1280, 1280},
 	}
 	for _, tc := range cases {
 		w, h := pickRecordingSize(tc.side)
@@ -151,5 +151,18 @@ func TestNewClient_LayoutFromConfig(t *testing.T) {
 	base.EgressLayout = "chaqmoq"
 	if c := New(base); c.layout != DefaultEgressLayout {
 		t.Errorf("yaroqsiz env → %q, kutilgan %q", c.layout, DefaultEgressLayout)
+	}
+}
+
+// fps sozlamasi: chegaradan tashqari qiymat yozuvni buzmasin.
+func TestPickFramerate(t *testing.T) {
+	cases := []struct{ in int; want int32 }{
+		{0, recFramerate}, {-5, recFramerate}, {1, recFramerate}, {100, recFramerate},
+		{15, 15}, {25, 25}, {5, 5}, {30, 30},
+	}
+	for _, c := range cases {
+		if got := pickFramerate(c.in); got != c.want {
+			t.Errorf("pickFramerate(%d) = %d, kutilgan %d", c.in, got, c.want)
+		}
 	}
 }
