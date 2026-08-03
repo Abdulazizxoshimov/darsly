@@ -2,7 +2,6 @@ package livekit
 
 import (
 	"context"
-	"math"
 	"net/http"
 	"strings"
 
@@ -105,65 +104,61 @@ const (
 	recKeyFrameSecs = 4.0
 )
 
-// ⭐ KADR O'LCHAMI MANBAGA MOSLASHADI — qora yo'llar muammosi.
+// ⭐⭐ KADR KVADRAT — HAR QANDAY ORIENTATSIYA TO'LIQ REZOLYUTSIYADA SAQLANADI.
 //
-// O'lchangan nuqson (docs/PRODUCT.md): tik (portrait) telefon ekrani qotib
-// qolgan 1280x720 kadrga solinganda kontent kadrning atigi **22%** ini
-// egallardi — chap va o'ngda 78% qora yo'l. Egress shabloni videoni
-// `object-fit: contain` bilan chizadi, ya'ni kadr nisbati manbaga mos
-// kelmasa qora yo'l MUQARRAR. Yechim — kadrni manba nisbatiga qurish.
+// ## Nima uchun kvadrat (2026-08-03, o'lchov bilan)
+// Egress shabloni videoni `object-fit: contain` bilan chizadi: kadr nisbati
+// manbaga mos kelmasa qora yo'l MUQARRAR va kontent kichrayadi. O'lchangan
+// nuqson — tik telefon ekrani 1280x720 kadrga solinganda kontent kadrning
+// 22% ini egallardi va yakuniy fayl 324x718 chiqardi (docs/PRODUCT.md).
 //
-// Cheklovlar:
-//   - uzun tomon 1280 dan oshmaydi (bitrate/CPU byudjeti) va manbadan ham
-//     katta bo'lmaydi — upscale bitreytni yeydi, ravshanlik qo'shmaydi;
-//   - uzun tomon `recMinLongSide` dan kichik bo'lmaydi: juda kichik manba
-//     (masalan 320x240 kamera) yozuvni o'qib bo'lmas holga keltirmasin;
-//   - nisbat [recMinAspect, recMaxAspect] oralig'iga QISILADI: 9:20 telefon
-//     (0.45) o'tadi, ammo g'alati/buzuq TrackInfo (masalan 8:1) kadrni
-//     ip-ingichka qilib qo'ymaydi;
-//   - ikkala o'lcham ham JUFT — H.264 (yuv420p) toq o'lchamni qabul qilmaydi.
+// Birinchi urinish kadrni MANBA nisbatiga qurish edi. U ISHLAMAYDI, chunki:
+//
+//  1. **Vaqt.** Yozuv birinchi `track_published` da boshlanadi — u mikrofon
+//     yoki kamera. Kadr tanlanayotganda ekran ulashish xonada hali YO'Q.
+//  2. **LiveKit Android SDK 2.27.0 yolg'on o'lcham aytadi** (bytecode'dan
+//     tekshirilgan): `AddTrackRequest` ga `options.captureParams` xom holda
+//     ketadi, `LocalScreencastVideoTrack.startCapture()` esa orientatsiyani
+//     faqat capturer uchun almashtiradi. Ya'ni tik telefonda kadr 576x1280
+//     oqadi, `TrackInfo` esa 1280x576 deydi. Keyin ham yangilanmaydi.
+//
+// Kvadrat kadr IKKALA sababni ham chetlab o'tadi — manbani BILISH shart emas:
+//
+//	tik telefon 576x1280  → 1280x1280 ichida to'liq sig'adi → kesib → 576x1280
+//	yotiq       1280x720  → to'liq sig'adi                  → kesib → 1280x720
+//	planshet    1280x800  → to'liq sig'adi                  → kesib → 1280x800
+//
+// Ortiqcha maydonni transkoddagi `cropdetect` olib tashlaydi
+// (internal/worker/videofilter.go) — u shu fayl uchun ISHLAB TURIBDI va
+// asoschining haqiqiy yozuvida o'lchangan.
+//
+// ## Narxi va uning chegarasi
+// Egress 1280x1280 = 1.64 Mpiksel kodlaydi, 1280x720 = 0.92 Mpiksel o'rniga
+// (+78%). 4 yadroli serverda bu sezilarli, shuning uchun `RECORDING_CANVAS`
+// env bilan pasaytirsa bo'ladi (masalan 1024 → 1.05 Mpiksel, ya'ni bugungi
+// 720p bilan deyarli teng yuk, tik kadr esa 461x1024 — hozirgidan 42% o'tkir).
+//
+// ## Agar kesish ishlamay qolsa
+// Fayl kvadrat bo'lib, kontent o'rtada qoladi: kompozitsiya bugungidan yomon,
+// ammo REZOLYUTSIYA baribir yuqori. Ya'ni eng yomon holatda ham sifat pasaymaydi.
 const (
-	recMaxLongSide = 1280
-	recMinLongSide = 640
-	recMinAspect   = 0.40 // ≈ 9:22 — eng tik telefon ekrani ham sig'adi
-	recMaxAspect   = 2.50 // ≈ 21:9 — ultra-keng monitor
+	// recCanvasSide — kvadrat kadrning tomoni. `RECORDING_CANVAS` env bilan
+	// almashtiriladi (quyi chegara `recMinCanvasSide`).
+	recCanvasSide    = 1280
+	recMinCanvasSide = 640
 )
 
-// pickRecordingSize manba trek o'lchamidan yozuv kadrini tanlaydi.
+// pickRecordingSize yozuv kadrini qaytaradi.
 //
-// SOF funksiya (LiveKit'ga bog'liq emas) — qaror shu yerda, chunki uni
-// tarmoqsiz sinash mumkin va noto'g'ri kadr butun yozuvni buzadi.
-// srcW/srcH noma'lum (0 yoki manfiy) bo'lsa bazaviy 1280x720 qaytadi.
-func pickRecordingSize(srcW, srcH int) (int, int) {
-	if srcW <= 0 || srcH <= 0 {
-		return recBaseWidth, recBaseHeight
+// side — sozlamadagi kvadrat tomon (0 yoki juda kichik bo'lsa `recCanvasSide`).
+// SOF funksiya: qaror shu yerda, chunki noto'g'ri kadr butun yozuvni buzadi va
+// buni tarmoqsiz sinash kerak.
+func pickRecordingSize(side int) (int, int) {
+	if side < recMinCanvasSide {
+		side = recCanvasSide
 	}
-	ar := float64(srcW) / float64(srcH)
-	switch {
-	case ar < recMinAspect:
-		ar = recMinAspect
-	case ar > recMaxAspect:
-		ar = recMaxAspect
-	}
-
-	long := srcW
-	if srcH > long {
-		long = srcH
-	}
-	if long > recMaxLongSide {
-		long = recMaxLongSide
-	}
-	if long < recMinLongSide {
-		long = recMinLongSide
-	}
-
-	var w, h int
-	if ar >= 1 { // yotiq yoki kvadrat
-		w, h = long, int(math.Round(float64(long)/ar))
-	} else { // tik
-		h, w = long, int(math.Round(float64(long)*ar))
-	}
-	return evenDim(w), evenDim(h)
+	s := evenDim(side)
+	return s, s
 }
 
 // evenDim o'lchamni juft songa keltiradi (H.264 yuv420p talabi) va 16 dan
@@ -202,56 +197,20 @@ func pickVideoBitrate(w, h int) int32 {
 // dars ~1.6 GB dan oshmasin.
 const recMaxVideoKbps = 1400
 
-// roomVideoSize xonadagi ENG MOS video trek o'lchamini qaytaradi.
+// ⚠️ `roomVideoSize` ATAYLAB YO'Q (2026-08-03 da olib tashlandi).
 //
-// Ustuvorlik: ekran ulashish → kamera. Sabab — dars yozuvining mazmuni ekran;
-// `single-speaker` shabloni ham aynan ekranni birinchi qilib chizadi, ya'ni
-// kadr nisbati o'sha trekka mos bo'lishi kerak.
-//
-// Bir nechta nomzod bo'lsa maydoni kattasi olinadi (simulcast'da `TrackInfo`
-// eng yuqori qatlam o'lchamini beradi).
-//
-// ok=false — xonada video trek yo'q yoki LiveKit javob bermadi. Bu ODATIY
-// hol: yozuv birinchi `track_published` da boshlanadi va u ko'pincha MIKROFON
-// bo'ladi (ekran ulashish keyinroq keladi). Shuning uchun bu yo'l "eng yaxshi
-// harakat", kafolat emas — qora yo'llarni yakuniy yo'q qiluvchi bosqich
-// transkoddagi `cropdetect` (internal/worker/videofilter.go).
-func (c *Client) roomVideoSize(ctx context.Context, roomName string) (int, int, bool) {
-	parts, err := c.ListParticipants(ctx, roomName)
-	if err != nil {
-		return 0, 0, false
-	}
-	var bestW, bestH int
-	var bestScreen bool
-	for _, p := range parts {
-		for _, t := range p.GetTracks() {
-			if t.GetType() != livekit.TrackType_VIDEO {
-				continue
-			}
-			w, h := int(t.GetWidth()), int(t.GetHeight())
-			if w <= 0 || h <= 0 {
-				continue
-			}
-			screen := t.GetSource() == livekit.TrackSource_SCREEN_SHARE
-			// Ekran ulashish kameradan HAR DOIM ustun; teng turda maydoni katta.
-			if (screen && !bestScreen) || (screen == bestScreen && w*h > bestW*bestH) {
-				bestW, bestH, bestScreen = w, h, screen
-			}
-		}
-	}
-	if bestW == 0 {
-		return 0, 0, false
-	}
-	return bestW, bestH, true
-}
+// U `ListParticipants` dan `TrackInfo.width/height` ni o'qib kadr nisbatini
+// tanlardi. Ikki sababdan ishonchsiz — batafsili `recCanvasSide` izohida:
+// (1) yozuv boshlanganda ekran ulashish hali xonada yo'q; (2) LiveKit Android
+// SDK ekran treki uchun YOTIQ o'lcham e'lon qiladi, kadr esa tik oqadi.
+// Kvadrat kadr ikkalasini ham keraksiz qiladi.
 
 // StartRoomRecording xonani MP4 sifatida MinIO'ga (S3) yozib olishni boshlaydi.
 // objectKey — MinIO ichidagi yakuniy fayl yo'li. Egress ID qaytaradi.
 func (c *Client) StartRoomRecording(ctx context.Context, roomName, objectKey string, s3 S3Config) (string, error) {
-	// Kadr o'lchami xonadagi haqiqiy manbaga moslanadi (qora yo'llar bo'lmasin).
-	// Manba topilmasa bazaviy 1280x720 — `pickRecordingSize(0,0)` shuni beradi.
-	srcW, srcH, _ := c.roomVideoSize(ctx, roomName)
-	w, h := pickRecordingSize(srcW, srcH)
+	// Kadr KVADRAT — manba nisbatidan qat'i nazar kontent to'liq rezolyutsiyada
+	// sig'adi; ortiqcha maydonni transkod kesadi (izoh: `recCanvasSide`).
+	w, h := pickRecordingSize(c.canvas)
 
 	req := &livekit.RoomCompositeEgressRequest{
 		RoomName: roomName,

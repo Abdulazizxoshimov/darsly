@@ -245,22 +245,43 @@ O'lchov (kamera o'chiq, telefon ekrani ulashilgan):
 - kadr to'g'ri tanlansa: **576×1280** (737 kpiksel) — Zoom pariteti
 - hozirgi holda (kesish bilan): **324×720** (233 kpiksel) — Zoom'ning ~23% i
 
-**Ikkala sabab ham tuzatilishi shart** — bittasi yetmaydi:
+#### ✅ Yechim: KVADRAT kadr (2026-08-03)
 
-| Sabab | Yechim | Hajm |
+Ikkala sababni ham tuzatish shart emas — ikkalasini ham **chetlab o'tsa** bo'ladi.
+
+Yozuv kadri **kvadrat** (1280×1280) qilindi. Egress shabloni videoni
+`object-fit: contain` bilan chizadi, ya'ni uzun tomon bo'yicha masshtablaydi —
+kvadrat kadrda esa **har qanday orientatsiyaning uzun tomoni to'liq ishlatiladi**:
+
+| Manba | 1280×1280 ichida | Transkod kesgach |
 |---|---|---|
-| 2 (yolg'on o'lcham) | Mobil ilova HAQIQIY o'lchamni O'ZI backendga aytadi (u `ScreenCaptureSize` da allaqachon hisoblangan). SDK'da API yo'q, lekin ilova ham backend ham bizniki. | kichik |
-| 1 (vaqt) | **A: Zoom modeli** — ulashish boshlanganda IKKINCHI egress (`StartTrackCompositeEgress`: ekran treki + mikrofon) aynan native o'lchamda. Dars yozuvi hozirgidek davom etadi, ya'ni hech narsa yo'qolmaydi. Narxi: 2 fayl — egress CPU ~2×, arxiv/Telegram/retention ikkalasini bilishi kerak. | o'rta |
-| | **B: bitta fayl** — yozuv birinchi *video* trekda boshlanadi. Kadr har doim to'g'ri, lekin kamerasiz kirib gapirilgan boshlang'ich qism butunlay yo'qoladi. | kichik |
+| Tik telefon 576×1280 | 576×1280 (to'liq) | **576×1280** |
+| Yotiq 1280×720 | 1280×720 (to'liq) | **1280×720** |
+| Planshet 1280×800 | 1280×800 (to'liq) | **1280×800** |
+
+Nega bu ikkala sababni ham yopadi:
+- **Vaqt muammosi yo'qoladi** — kadr keyin kelgan trekka ham to'g'ri keladi,
+  chunki u hech qanday nisbatga bog'lanmagan;
+- **SDK yolg'oni ahamiyatsiz** — manba o'lchamini BILISH umuman kerak emas.
+
+Ustiga: ikkinchi fayl kerak emas (Zoom'ning «Shared Screen» modeli murakkabligi
+tushdi), ovoz yo'qolmaydi, arxiv/Telegram/retention o'zgarmaydi.
+
+**Narxi:** egress 1.64 Mpiksel kodlaydi (1280×720 = 0.92 o'rniga, +78%).
+4 yadroli serverda sezilarli, shuning uchun `RECORDING_CANVAS` env bilan
+pasaytirsa bo'ladi (1024 → 1.05 Mpiksel ≈ bugungi 720p yuki, tik kadr esa
+461×1024, hozirgidan 42% o'tkir).
+
+**Eng yomon holat xavfsiz:** kesish ishlamay qolsa fayl kvadrat bo'lib qoladi
+va kontent o'rtada turadi — kompozitsiya yomon, ammo rezolyutsiya baribir
+yuqori. Ya'ni sifat hech qachon bugungidan pastga tushmaydi.
 
 **Zoom qanday qilgan (asoschining faylidan aniqlandi, 2026-08-03):** Zoom bu
 muammoni hal qilmagan — undan chetlab o'tgan. Uning bulutli yozuvi bir nechta
 ALOHIDA fayl chiqaradi (*Active Speaker*, *Gallery View*, **Shared Screen**,
 *Audio only*). Asoschi bergan fayl — aynan «Shared Screen»: 1280×800 (planshet
 ekranining aniq nisbati), kamera plitkasi umuman yo'q, t=0 dan kontent va ovoz.
-Ya'ni ekran fayli ulashish boshlanganda tug'iladi va kontent o'lchamida bo'ladi;
-darsning qolgani boshqa faylda yozilaveradi. Shuning uchun Zoom'da na
-rezolyutsiya, na ovoz yo'qoladi — bu **A yo'lining aynan o'zi**.
+Bizning kvadrat kadr xuddi shu natijani BITTA fayl bilan beradi.
 
 ## Qurilishi kerak (javoblardan kelib chiqqan yangi ishlar)
 
@@ -291,8 +312,9 @@ rezolyutsiya, na ovoz yo'qoladi — bu **A yo'lining aynan o'zi**.
 | 23 | ~~Yozuv kadri manba nisbatiga moslashsin (qora yo'llar yo'qolsin)~~ ✅ 2026-08-03 | 2026-08-01 | backend O |
 | 24 | ~~Yozuv 25 fps + 48 kHz stereo (Zoom pariteti)~~ ✅ 2026-08-03 | 2026-08-01 | backend K |
 | 25 | ~~Ulashishda ilova avtomatik fonga o'tsin (Zoom kabi)~~ ✅ 2026-08-03 | 2026-08-01 | mobil K |
-| 26 | **Mobil ulashishda yozuv rezolyutsiyasi** — ikki sabab (vaqt + SDK yolg'on o'lcham), yuqoridagi «Qolgan bo'shliq» | 2026-08-03 | qaror kerak |
-| 27 | Mobil ilova ekran o'lchamini backendga o'zi aytsin (26 uchun SHART) | 2026-08-03 | mobil K + backend K |
+| 26 | ~~Mobil ulashishda yozuv rezolyutsiyasi~~ ✅ 2026-08-03 — kvadrat kadr | 2026-08-03 | backend K |
+| 27 | ~~Mobil ilova ekran o'lchamini backendga aytsin~~ — KERAK EMAS (kvadrat kadr manbani bilishni talab qilmaydi) | 2026-08-03 | — |
+| 28 | Egress CPU o'lchovi: kvadrat kadr 4 yadroli serverda necha parallel darsga yetadi | 2026-08-03 | QA K |
 
 (K = kichik, O = o'rta)
 

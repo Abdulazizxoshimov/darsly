@@ -23,6 +23,7 @@ type Client struct {
 	egress    *lksdk.EgressClient
 	tokenTTL  time.Duration // kirish tokeni amal qilish muddati (join/reconnect gate)
 	layout    string        // Egress kompozitsiya shabloni (qarang: egress.go normalizeLayout)
+	canvas    int           // Yozuv kadrining tomoni (kvadrat) — qarang: egress.go recCanvasSide
 	enabled   bool
 }
 
@@ -45,6 +46,7 @@ func New(cfg config.LiveKitConfig) *Client {
 		egress:    lksdk.NewEgressClient(httpURL, cfg.APIKey, cfg.APISecret),
 		tokenTTL:  ttl,
 		layout:    normalizeLayout(cfg.EgressLayout),
+		canvas:    cfg.RecordingCanvas,
 		enabled:   true,
 	}
 }

@@ -124,6 +124,13 @@ type LiveKitConfig struct {
 	// Default "speaker": dars yozuvida ustoz/ekran asosiy oynada bo'lsin (grid'da
 	// slayd matni o'qilmas kichik plitkaga tushib qoladi). Qarang: livekit/egress.go.
 	EgressLayout string `json:"egress_layout"`
+	// RecordingCanvas — yozuv kadrining tomoni (kadr KVADRAT). 0 → default 1280.
+	//
+	// Kvadrat kadr har qanday orientatsiyani to'liq rezolyutsiyada saqlaydi
+	// (sabablar: livekit/egress.go `recCanvasSide`). Narxi — egress ko'proq
+	// piksel kodlaydi, shuning uchun kuchsiz serverda 1024 ga tushirsa bo'ladi:
+	// yuk bugungi 720p bilan deyarli teng, tik kadr esa hozirgidan 42% o'tkir.
+	RecordingCanvas int `json:"recording_canvas"`
 }
 
 type SentryConfig struct {
@@ -360,6 +367,8 @@ func Load() *Config {
 			// (hozir "single-speaker"). Bu yerda nom takrorlansa ikki joy
 			// ajralib ketardi va env'siz muhitda eski layout ishlab qolardi.
 			EgressLayout: getEnv("LIVEKIT_EGRESS_LAYOUT", ""),
+			// 0 → `livekit.recCanvasSide` (1280). Kuchsiz serverda 1024 qo'ying.
+			RecordingCanvas: getEnvInt("RECORDING_CANVAS", 0),
 		},
 		Lesson: LessonConfig{
 			MaxDuration:   getEnvDuration("LESSON_MAX_DURATION", 4*time.Hour),

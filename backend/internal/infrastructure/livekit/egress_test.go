@@ -39,47 +39,77 @@ func TestNormalizeLayout(t *testing.T) {
 	}
 }
 
-// ⭐ Qora yo'llar muammosi: kadr manba nisbatiga moslashadimi.
+// ⭐ KVADRAT KADR: har qanday orientatsiya to'liq rezolyutsiyada sig'sin.
+//
+// Nega manba o'lchami umuman berilmaydi: `TrackInfo` Android publisher uchun
+// ishonchsiz (izoh: egress.go `recCanvasSide`). Kvadrat kadr manbani bilishni
+// talab qilmaydi — kesish bosqichi ortiqchasini olib tashlaydi.
 func TestPickRecordingSize(t *testing.T) {
 	cases := []struct {
 		name         string
-		srcW, srcH   int
+		side         int
 		wantW, wantH int
 	}{
-		{"noma'lum manba → bazaviy", 0, 0, 1280, 720},
-		{"manfiy → bazaviy", -1, 720, 1280, 720},
-		{"720p yotiq o'zgarmaydi", 1280, 720, 1280, 720},
-		{"1080p → 720p ga tushadi", 1920, 1080, 1280, 720},
-		{"16:10 planshet (Zoom fayli)", 1280, 800, 1280, 800},
-		{"tik telefon 9:16", 1080, 1920, 720, 1280},
-		{"tik telefon 9:20 (zamonaviy)", 1080, 2400, 576, 1280},
-		{"kvadrat", 800, 800, 800, 800},
-		{"kichik manba upscale QILINMAYDI", 640, 360, 640, 360},
-		{"juda kichik manba minimalga ko'tariladi", 320, 240, 640, 480},
-		{"ultra-keng nisbat qisiladi", 3840, 600, 1280, 512},
-		{"g'alati ip-ingichka tik nisbat qisiladi", 100, 1000, 400, 1000},
+		{"sozlanmagan → default", 0, 1280, 1280},
+		{"manfiy → default", -1, 1280, 1280},
+		{"juda kichik → default", 320, 1280, 1280},
+		{"kuchsiz server uchun 1024", 1024, 1024, 1024},
+		{"quyi chegara", 640, 640, 640},
+		{"toq qiymat juftga tushadi", 1025, 1024, 1024},
 	}
 	for _, tc := range cases {
-		w, h := pickRecordingSize(tc.srcW, tc.srcH)
+		w, h := pickRecordingSize(tc.side)
 		if w != tc.wantW || h != tc.wantH {
-			t.Errorf("%s: pickRecordingSize(%d,%d) = %dx%d, kutilgan %dx%d",
-				tc.name, tc.srcW, tc.srcH, w, h, tc.wantW, tc.wantH)
+			t.Errorf("%s: pickRecordingSize(%d) = %dx%d, kutilgan %dx%d",
+				tc.name, tc.side, w, h, tc.wantW, tc.wantH)
 		}
 	}
 }
 
-// H.264 (yuv420p) toq o'lchamni qabul qilmaydi — hech qanday manba toq
-// natija bermasligi kerak.
-func TestPickRecordingSizeAlwaysEven(t *testing.T) {
-	for w := 1; w <= 2600; w += 7 {
-		for _, h := range []int{1, 33, 361, 719, 1081, 2399} {
-			gw, gh := pickRecordingSize(w, h)
-			if gw%2 != 0 || gh%2 != 0 {
-				t.Fatalf("pickRecordingSize(%d,%d) = %dx%d — toq o'lcham", w, h, gw, gh)
-			}
-			if gw < 16 || gh < 16 {
-				t.Fatalf("pickRecordingSize(%d,%d) = %dx%d — juda kichik", w, h, gw, gh)
-			}
+// Kadr KVADRAT bo'lishi — butun yechimning asosi. Nisbat buzilsa qora yo'l
+// qaytadi, shuning uchun bu alohida mahkamlangan.
+func TestPickRecordingSizeIsSquare(t *testing.T) {
+	for side := -50; side <= 2600; side += 7 {
+		w, h := pickRecordingSize(side)
+		if w != h {
+			t.Fatalf("pickRecordingSize(%d) = %dx%d — kvadrat emas", side, w, h)
+		}
+	}
+}
+
+// ⭐ HAR QANDAY manba kvadrat kadrga QORA YO'LSIZ sig'adimi.
+//
+// Bu — yechimning mohiyati: kontent kadrdan kattaroq bo'lsa u KESILARDI
+// (mazmun yo'qolardi), kichik bo'lsa faqat bo'sh joy qoladi va uni transkod
+// olib tashlaydi. Shuning uchun har bir realistik manba uchun kontent
+// kvadratga to'liq sig'ishi va uzun tomoni to'liq ishlatilishi tekshiriladi.
+func TestSquareCanvasFitsEveryOrientation(t *testing.T) {
+	sources := []struct {
+		name string
+		w, h int
+	}{
+		{"tik telefon 9:20", 576, 1280},
+		{"tik telefon 9:16", 720, 1280},
+		{"yotiq 720p", 1280, 720},
+		{"planshet 16:10 (Zoom fayli)", 1280, 800},
+		{"planshet 4:3", 1024, 768},
+		{"kvadrat", 900, 900},
+	}
+	side, _ := pickRecordingSize(0)
+	for _, s := range sources {
+		// `object-fit: contain` — masshtab uzun tomon bo'yicha.
+		k := float64(side) / float64(max(s.w, s.h))
+		gotW, gotH := float64(s.w)*k, float64(s.h)*k
+		if gotW > float64(side)+0.5 || gotH > float64(side)+0.5 {
+			t.Errorf("%s: %vx%v kvadratga sig'madi (%d)", s.name, gotW, gotH, side)
+		}
+		// Uzun tomon TO'LIQ ishlatilsin — aks holda rezolyutsiya behuda yo'qoladi.
+		if long := max(gotW, gotH); long < float64(side)-0.5 {
+			t.Errorf("%s: uzun tomon %v — kadr %d ni to'liq ishlatmadi", s.name, long, side)
+		}
+		// Manbadan KATTALASHTIRILMASIN: upscale bitreytni yeydi, sifat qo'shmaydi.
+		if k > 1.0 {
+			t.Logf("%s: manba kadrdan kichik (k=%.2f) — upscale bo'ladi, kutilgan hol", s.name, k)
 		}
 	}
 }
