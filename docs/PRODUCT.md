@@ -206,27 +206,61 @@ haqiqiy-ffmpeg testi ostida (`TestTranscodePipeline_RemovesBarsAndDeadStart`).
 
 #### ⚠️ Qolgan bo'shliq — asoschi qarori kerak
 
-**Yozuv birinchi `track_published` da boshlanadi va u odatda MIKROFON.** Ya'ni
-kadr o'lchami tanlanayotgan paytda xonada hali video trek yo'q → bazaviy
-1280×720 olinadi. Ekran ulashish keyinroq kelib, o'sha kadrga qora yo'l bilan
-tushadi. 3-bosqich (kesish) kompozitsiyani baribir tuzatadi, lekin
-**rezolyutsiyani qaytara olmaydi** — piksellar egress bosqichida yo'qolgan.
+Yuqoridagi 2-bosqich (kadr manba trekidan) **web ustozlar uchun ishlaydi, mobil
+ustozlar uchun ishlamaydi**. Ikki mustaqil sabab bor va ikkalasi ham bitta
+natijaga olib keladi: telefon ekrani ulashilganda yozuv kadri baribir yotiq
+bo'lib qoladi, kesish esa kompozitsiyani tuzatadi, ammo **rezolyutsiyani
+qaytara olmaydi** — piksellar egress bosqichida yo'qolgan.
 
-O'lchovda ko'ringan farq (kamera O'CHIQ, telefon ekrani ulashilgan):
-- kadr to'g'ri tanlansa: **576×1280**
-- hozirgi holda (kesish bilan): **324×720** — ya'ni chiziqli ~44% past
+**Sabab 1 — VAQT.** Yozuv birinchi `track_published` da boshlanadi va u
+mikrofon yoki kamera bo'ladi. Kadr o'lchami tanlanayotganda ekran ulashish
+xonada hali YO'Q; u keyinroq kelib, allaqachon tanlangan kadrga tushadi.
 
-Kamera YONIQ bo'lsa muammo yo'q: telefon kamerasi tik trek beradi va kadr
-o'shanga to'g'ri moslanadi.
+**Sabab 2 — LiveKit Android SDK 2.27.0 SERVERGA YOLG'ON O'LCHAM AYTADI**
+(bytecode'dan tekshirildi, 2026-08-03):
 
-**Yechim va uning narxi.** Yozuvni birinchi *video* trekda boshlash — u holda
-kadr har doim to'g'ri. Lekin ustoz kamerasiz kirib, ulashishdan oldin gapirsa
-(«salom, hozir ekranni ulashaman»), **o'sha gap yozuvga tushmaydi**. Bu aynan
-`leadingDeadSeconds` ataylab saqlab qolayotgan narsa — ya'ni bu ovoz yo'qotish
-bilan rezolyutsiya o'rtasidagi savdo, texnik emas, MAHSULOT qarori.
+```
+LocalParticipant$publishVideoTrack$5  → AddTrackRequest.setWidth/Height
+                                        ← LocalVideoTrack.getDimensions()
+                                        ← options.captureParams (XOM qiymat)
 
-Uchinchi yo'l yo'q: egress boshlangach kadr o'lchamini o'zgartirib bo'lmaydi,
-qayta boshlash esa bitta darsdan ikkita fayl qoldiradi.
+LocalScreencastVideoTrack.startCapture()
+    getCaptureDimensions(dispW, dispH):
+        dispW > dispH → (params.w, params.h)
+        else          → (params.h, params.w)   ← faqat capturer uchun almashadi,
+                                                  captureParams ga QAYTA YOZILMAYDI
+```
+
+Ya'ni tik telefonda **kadr 576×1280 oqadi, `TrackInfo` esa 1280×576 deydi**.
+Kamera trekida ham shunday (sensor formati doim yotiq). Keyinchalik ham
+yangilanmaydi: `UpdateLocalVideoTrack` protobuf bor, lekin SDK unga hech qayerdan
+murojaat qilmaydi; burilishda faqat `capturer.changeCaptureFormat` chaqiriladi,
+signalga hech narsa ketmaydi. `TrackInfo.layers` ham yordam bermaydi — u aynan
+o'sha yolg'on sonlarning /2, /4 nusxalari.
+
+**Xulosa: `TrackInfo.width/height` ni Android publisher uchun ishonchli deb
+bo'lmaydi.** Hozirgi `roomVideoSize` uni o'qiydi.
+
+O'lchov (kamera o'chiq, telefon ekrani ulashilgan):
+- kadr to'g'ri tanlansa: **576×1280** (737 kpiksel) — Zoom pariteti
+- hozirgi holda (kesish bilan): **324×720** (233 kpiksel) — Zoom'ning ~23% i
+
+**Ikkala sabab ham tuzatilishi shart** — bittasi yetmaydi:
+
+| Sabab | Yechim | Hajm |
+|---|---|---|
+| 2 (yolg'on o'lcham) | Mobil ilova HAQIQIY o'lchamni O'ZI backendga aytadi (u `ScreenCaptureSize` da allaqachon hisoblangan). SDK'da API yo'q, lekin ilova ham backend ham bizniki. | kichik |
+| 1 (vaqt) | **A: Zoom modeli** — ulashish boshlanganda IKKINCHI egress (`StartTrackCompositeEgress`: ekran treki + mikrofon) aynan native o'lchamda. Dars yozuvi hozirgidek davom etadi, ya'ni hech narsa yo'qolmaydi. Narxi: 2 fayl — egress CPU ~2×, arxiv/Telegram/retention ikkalasini bilishi kerak. | o'rta |
+| | **B: bitta fayl** — yozuv birinchi *video* trekda boshlanadi. Kadr har doim to'g'ri, lekin kamerasiz kirib gapirilgan boshlang'ich qism butunlay yo'qoladi. | kichik |
+
+**Zoom qanday qilgan (asoschining faylidan aniqlandi, 2026-08-03):** Zoom bu
+muammoni hal qilmagan — undan chetlab o'tgan. Uning bulutli yozuvi bir nechta
+ALOHIDA fayl chiqaradi (*Active Speaker*, *Gallery View*, **Shared Screen**,
+*Audio only*). Asoschi bergan fayl — aynan «Shared Screen»: 1280×800 (planshet
+ekranining aniq nisbati), kamera plitkasi umuman yo'q, t=0 dan kontent va ovoz.
+Ya'ni ekran fayli ulashish boshlanganda tug'iladi va kontent o'lchamida bo'ladi;
+darsning qolgani boshqa faylda yozilaveradi. Shuning uchun Zoom'da na
+rezolyutsiya, na ovoz yo'qoladi — bu **A yo'lining aynan o'zi**.
 
 ## Qurilishi kerak (javoblardan kelib chiqqan yangi ishlar)
 
@@ -257,7 +291,8 @@ qayta boshlash esa bitta darsdan ikkita fayl qoldiradi.
 | 23 | ~~Yozuv kadri manba nisbatiga moslashsin (qora yo'llar yo'qolsin)~~ ✅ 2026-08-03 | 2026-08-01 | backend O |
 | 24 | ~~Yozuv 25 fps + 48 kHz stereo (Zoom pariteti)~~ ✅ 2026-08-03 | 2026-08-01 | backend K |
 | 25 | ~~Ulashishda ilova avtomatik fonga o'tsin (Zoom kabi)~~ ✅ 2026-08-03 | 2026-08-01 | mobil K |
-| 26 | **Yozuv boshi kesilganda kadr o'lchami** — ustoz kamerasiz kirsa yozuv 16:9 boshlanadi (yuqoridagi «Qolgan bo'shliq») | 2026-08-03 | qaror kerak |
+| 26 | **Mobil ulashishda yozuv rezolyutsiyasi** — ikki sabab (vaqt + SDK yolg'on o'lcham), yuqoridagi «Qolgan bo'shliq» | 2026-08-03 | qaror kerak |
+| 27 | Mobil ilova ekran o'lchamini backendga o'zi aytsin (26 uchun SHART) | 2026-08-03 | mobil K + backend K |
 
 (K = kichik, O = o'rta)
 
