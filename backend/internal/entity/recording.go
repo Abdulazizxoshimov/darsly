@@ -23,6 +23,17 @@ type Recording struct {
 	// Faqat `ready` yozuvlarda to'ldiriladi (qolganlarida o'chiriladigan narsa yo'q).
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 
+	// ContentOffsetSec — fayl boshidan KESILGAN soniyalar (transkoddagi qora va
+	// jim "o'lik" qism). Ya'ni faylning t=0 lahzasi haqiqiy vaqtda
+	// `StartedAt + ContentOffsetSec` ga to'g'ri keladi.
+	//
+	// Nega saqlanadi: arxivda chat xabari bosilganda video o'sha lahzaga
+	// sakraydi. Busiz butun chat kesilgan miqdorga siljib ketardi — 13 s kesish
+	// = har bir xabar 13 s noto'g'ri joyga olib borardi. Klientga berilmaydi
+	// (ichki hisob): tashqariga chiqadigan narsa allaqachon to'g'rilangan
+	// `offset_sec`.
+	ContentOffsetSec int `json:"-"`
+
 	// ── Telegram arxivi (PRODUCT.md «Dars arxivi va Telegram saqlash») ───────
 	//
 	// `TelegramSentAt` — eng muhim maydon: server nusxasi FAQAT u to'lgan
@@ -50,6 +61,30 @@ type Recording struct {
 
 // InTelegram — yozuv Telegramda tasdiqlanganmi (server nusxasini o'chirish sharti).
 func (r *Recording) InTelegram() bool { return r != nil && r.TelegramSentAt != nil }
+
+// PlaybackZero — video faylining t=0 lahzasi HAQIQIY vaqtda qachon.
+//
+// ## Nega kerak
+// Arxivda chat xabari bosilganda video o'sha lahzaga sakraydi. Sakrash
+// `xabar_vaqti − nol_nuqta` bilan hisoblanadi va nol nuqta **fayl boshi**
+// bo'lishi shart, dars boshi emas. Ular ikki sababdan farq qiladi:
+//
+//  1. Egress darsdan KEYINROQ boshlanadi (birinchi trek e'lon qilinganda);
+//  2. Transkod fayl boshidagi qora va jim qismni kesadi ([ContentOffsetSec]).
+//
+// Ikkalasi ham hisobga olinmasa xabarlar o'nlab soniyaga siljib ketardi —
+// ya'ni «sakrash» funksiyasi ishlagandek ko'rinib, aslida noto'g'ri joyga
+// olib borardi.
+//
+// ok=false — yozuv yo'q yoki uning boshlanish vaqti noma'lum. Bunday holda
+// chaqiruvchi darsning boshlanish vaqtiga tushadi (taxminiy, lekin yo'qdan
+// yaxshi).
+func (r *Recording) PlaybackZero() (time.Time, bool) {
+	if r == nil || r.StartedAt.IsZero() {
+		return time.Time{}, false
+	}
+	return r.StartedAt.Add(time.Duration(r.ContentOffsetSec) * time.Second), true
+}
 
 // ServerExpiry — yozuv qachon SERVERDAN o'chadi (klientga ko'rsatiladigan sana).
 //

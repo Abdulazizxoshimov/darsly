@@ -1,11 +1,13 @@
 package testutil
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -602,12 +604,36 @@ func (c *FakeCache) Client() *goredis.Client { return nil }
 
 // ─── Minio ───────────────────────────────────────────────────────────────────
 
-type FakeMinio struct{ Objects map[string]bool }
+type FakeMinio struct {
+	Objects map[string]bool
+	// Contents — HAQIQIY bayt mazmuni. Ko'p testga kerak emas (obyekt bor-yo'qligi
+	// yetarli), lekin transkod ishchisi faylni ffmpeg'ga uzatadi va u yerda
+	// mazmun ahamiyatli. To'ldirilgan bo'lsa `Get` shu baytlarni beradi.
+	Contents map[string][]byte
+}
 
-func NewFakeMinio() *FakeMinio { return &FakeMinio{Objects: map[string]bool{}} }
+func NewFakeMinio() *FakeMinio {
+	return &FakeMinio{Objects: map[string]bool{}, Contents: map[string][]byte{}}
+}
 
-func (m *FakeMinio) Upload(_ context.Context, name, _ string, _ io.Reader, _ int64) (string, error) {
+// PutFile — diskdagi faylni obyekt sifatida joylaydi (transkod testlari uchun).
+func (m *FakeMinio) PutFile(name, path string) error {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
 	m.Objects[name] = true
+	m.Contents[name] = b
+	return nil
+}
+
+func (m *FakeMinio) Upload(_ context.Context, name, _ string, r io.Reader, _ int64) (string, error) {
+	m.Objects[name] = true
+	if r != nil {
+		if b, err := io.ReadAll(r); err == nil {
+			m.Contents[name] = b
+		}
+	}
 	return name, nil
 }
 func (m *FakeMinio) PresignedURL(_ context.Context, name string, _ time.Duration) (string, error) {
@@ -617,11 +643,18 @@ func (m *FakeMinio) Get(_ context.Context, name string) (io.ReadCloser, error) {
 	if !m.Objects[name] {
 		return nil, fmt.Errorf("minio(fake): %q not found", name)
 	}
+	if b, ok := m.Contents[name]; ok {
+		return io.NopCloser(bytes.NewReader(b)), nil
+	}
 	// Mazmuni ahamiyatsiz — testlar faqat oqim borligini tekshiradi.
 	return io.NopCloser(strings.NewReader("fake-video")), nil
 }
 
-func (m *FakeMinio) Delete(_ context.Context, name string) error { delete(m.Objects, name); return nil }
+func (m *FakeMinio) Delete(_ context.Context, name string) error {
+	delete(m.Objects, name)
+	delete(m.Contents, name)
+	return nil
+}
 func (m *FakeMinio) EnsureBucket(_ context.Context) error        { return nil }
 
 // ─── RoomUseCase ─────────────────────────────────────────────────────────────
@@ -1416,12 +1449,20 @@ func (r *FakeRecordingRepo) ClaimTranscode(_ context.Context) (*entity.Recording
 	return &cp, nil
 }
 
-func (r *FakeRecordingRepo) FinishTranscode(_ context.Context, id string, newSize, originalSize int64) error {
+func (r *FakeRecordingRepo) FinishTranscode(_ context.Context, id string, newSize, originalSize int64, durationSec, trimmedSec int) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.transcode[id] = entity.TranscodeDone
 	if rec, ok := r.byID[id]; ok {
 		rec.SizeBytes = newSize
+		if durationSec > 0 {
+			rec.DurationSec = durationSec
+		}
+		// Postgres kabi QO'SHILADI, ustiga yozilmaydi — qayta transkodda
+		// siljish to'planishi testda ham aynan shunday ko'rinsin.
+		if trimmedSec > 0 {
+			rec.ContentOffsetSec += trimmedSec
+		}
 	}
 	r.originalSize[id] = originalSize
 	return nil

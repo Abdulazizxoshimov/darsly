@@ -39,6 +39,8 @@ import uz.darsly.mentor.data.livekit.RoomReaction
 import uz.darsly.mentor.data.livekit.RoomSignal
 import uz.darsly.mentor.data.livekit.ScreenAudioPolicy
 import uz.darsly.mentor.data.livekit.ScreenSharePlan
+import uz.darsly.mentor.data.livekit.ShareBackgroundPlan
+import uz.darsly.mentor.data.store.UiPrefs
 import uz.darsly.mentor.service.LessonNotifications
 import uz.darsly.mentor.service.LessonService
 import uz.darsly.mentor.service.ShareFrameOverlay
@@ -194,6 +196,16 @@ data class RoomUiState(
      * ekranda bir bosishlik "Davom ettirish" kartasi chiqadi.
      */
     val restoreShare: Boolean = false,
+    /**
+     * ⭐ Ulashish boshlandi — ilovani fonga olish TALABI (№25, bir martalik hodisa).
+     *
+     * Nega holatda va nega bir martalik: qarorni [ShareBackgroundPlan] chiqaradi
+     * (u sof va test ostida), bajarilishi esa Activity'ni talab qiladi
+     * (`moveTaskToBack`) — ya'ni faqat Compose qatlamida mumkin. Ko'rsatilgach
+     * `shareBackgroundShown()` uni tozalaydi, aks holda ekran har qayta
+     * chizilganda ilova o'zini yana fonga tashlardi.
+     */
+    val shareBackground: ShareBackgroundPlan.Decision? = null,
     /** Spike diagnostikasi: ekranga chiqadigan qisqa jurnal. */
     val log: List<String> = emptyList(),
 ) {
@@ -258,6 +270,7 @@ class RoomViewModel @Inject constructor(
     private val moderation: ModerationRepository,
     private val chatRepo: RoomChatRepository,
     private val lessons: LessonsRepository,
+    private val uiPrefs: UiPrefs,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(RoomUiState())
@@ -313,6 +326,17 @@ class RoomViewModel @Inject constructor(
     /** Sessiya oqimlarini kuzatuvchi korutinalar — bo'shatishda bekor qilinadi. */
     private val observeJobs = mutableListOf<Job>()
 
+    /**
+     * Shu dars sessiyasida "fonga o'tish" qarori allaqachon bajarilganmi (№25).
+     *
+     * QAMROVI ATAYLAB DARS, ulashish emas. `ScreenShareController.reset()` da
+     * saqlansa bo'lardi, lekin u ustoz ulashishni to'xtatganda ham chaqiriladi —
+     * ya'ni ikkinchi ulashishda ilova yana o'zini fonga tashlardi. Ustoz esa
+     * o'sha payt ataylab ILOVAGA QAYTGAN bo'lishi mumkin (masalan chatni
+     * o'qigan). Kutilmagan fonga o'tish — kutilmagan foreground'dan yomonroq.
+     */
+    private var shareBackgroundHandled = false
+
     private fun log(line: String) {
         _state.update { it.copy(log = (it.log + line).takeLast(40)) }
     }
@@ -337,6 +361,8 @@ class RoomViewModel @Inject constructor(
      */
     fun join(lessonId: String, withCamera: Boolean = true) {
         if (!joinGuard.tryBegin()) return
+        // Yangi dars = "fonga o'tish" qarori yana bir marta beriladi (№25).
+        shareBackgroundHandled = false
         _state.update { it.copy(connecting = true, error = null, micDenied = false) }
         viewModelScope.launch {
             val ctx = appContext
@@ -991,6 +1017,7 @@ class RoomViewModel @Inject constructor(
                         appContext,
                         ShareFrameOverlay.colorFor(_state.value.recordingEnabled),
                     )
+                    onShareStarted()
                 } else {
                     ShareFrameOverlay.hide()
                 }
@@ -1105,6 +1132,35 @@ class RoomViewModel @Inject constructor(
         notifySignals(vibrate = false)
     }
 
+    /**
+     * ⭐ ULASHISH HAQIQATAN BOSHLANDI — Zoom kabi ilovani fonga olamiz (№25).
+     *
+     * Signal `screenShareOn` OQIMIDAN olinadi, `startScreenShare()` dan emas:
+     * ustoz tizim dialogida "Boshlash" ni bosgani hali ulashish boshlangani
+     * emas (SDK `SecurityException` bilan yiqilishi mumkin). Ilovani fonga
+     * olish esa faqat efir haqiqatan ketayotganda to'g'ri.
+     *
+     * Qaror [ShareBackgroundPlan] da (sof, JVM testida qoplangan) — bu yerda
+     * faqat kirish qiymatlarini yig'ish va natijani UI'ga uzatish.
+     */
+    private fun onShareStarted() {
+        val decision = ShareBackgroundPlan.onShareStarted(
+            sharing = true,
+            alreadyHandled = shareBackgroundHandled,
+            autoBackground = uiPrefs.autoBackgroundOnShare,
+            cameraOn = _state.value.camOn,
+        )
+        if (decision.isEmpty) return
+        shareBackgroundHandled = true
+        log(if (decision.moveToBack) "ulashish boshlandi — ilova fonga olinadi" else "ulashish boshlandi")
+        _state.update { it.copy(shareBackground = decision) }
+    }
+
+    /** UI xabarni ko'rsatdi va (kerak bo'lsa) ilovani fonga oldi — hodisa tozalanadi. */
+    fun shareBackgroundShown() {
+        _state.update { it.copy(shareBackground = null) }
+    }
+
     /** Ustoz "Keyinroq" dedi — taklif yopiladi, lekin niyat saqlanadi. */
     fun dismissRestoreShare() = screenShare.dismissRestorePrompt()
 
@@ -1148,6 +1204,7 @@ class RoomViewModel @Inject constructor(
         LessonSessionHolder.stop()
         session = null
         screenShare.reset()
+        shareBackgroundHandled = false
         joinGuard.onReleased()
         LessonService.stop(appContext)
         _state.value = RoomUiState()

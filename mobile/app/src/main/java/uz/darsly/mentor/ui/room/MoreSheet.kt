@@ -22,6 +22,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -46,6 +47,8 @@ fun MoreSheet(
     onDismiss: () -> Unit,
     onReaction: (String) -> Unit,
     onOpenPoll: () -> Unit,
+    autoBackground: Boolean,
+    onAutoBackgroundChange: (Boolean) -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
@@ -96,6 +99,33 @@ fun MoreSheet(
                 Icon(Icons.Default.Poll, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
                 Text("So'rovnoma")
+            }
+
+            // ⭐ №25 — ULASHISHDA ILOVA FONGA O'TSINMI.
+            //
+            // Sozlama aynan SHU YERDA: u dars ichida, ulashishdan bir necha
+            // soniya oldin kerak bo'ladi. Kabinetdagi umumiy sozlamalarga
+            // qo'yilsa ustoz uni dars o'rtasida topa olmasdi (dars ekranidan
+            // chiqish esa "Yakunlaysizmi?" savolidan o'tadi).
+            Spacer(Modifier.height(20.dp))
+            Text("Ekran ulashish", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(8.dp))
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Ulashganda ilova fonga o'tsin", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "Zoom kabi: efir boshlanishi bilan Jonly yig'iladi va siz " +
+                            "materialingizda qolasiz. O'chirsangiz ilova ekranda qoladi " +
+                            "va o'quvchilar uni ko'radi.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                Switch(checked = autoBackground, onCheckedChange = onAutoBackgroundChange)
             }
         }
     }

@@ -26,14 +26,15 @@ func NewRecordingRepo(p *pg.Postgres) repository.RecordingRepository {
 }
 
 const recordingCols = "id, lesson_id, egress_id, object_key, status, duration_sec, size_bytes, started_at, ended_at, created_at, " +
-	"telegram_file_id, telegram_message_id, telegram_chat_id, telegram_sent_at, telegram_error, telegram_attempts, cached_until"
+	"telegram_file_id, telegram_message_id, telegram_chat_id, telegram_sent_at, telegram_error, telegram_attempts, cached_until, " +
+	"content_offset_sec"
 
 func scanRecording(row pgx.Row) (*entity.Recording, error) {
 	r := &entity.Recording{}
 	err := row.Scan(&r.ID, &r.LessonID, &r.EgressID, &r.ObjectKey, &r.Status,
 		&r.DurationSec, &r.SizeBytes, &r.StartedAt, &r.EndedAt, &r.CreatedAt,
 		&r.TelegramFileID, &r.TelegramMessageID, &r.TelegramChatID, &r.TelegramSentAt,
-		&r.TelegramError, &r.TelegramAttempts, &r.CachedUntil)
+		&r.TelegramError, &r.TelegramAttempts, &r.CachedUntil, &r.ContentOffsetSec)
 	if err != nil {
 		return nil, err
 	}
@@ -482,12 +483,23 @@ func (r *recordingRepo) ClaimTranscode(ctx context.Context) (*entity.Recording, 
 }
 
 // FinishTranscode muvaffaqiyatli natijani yozadi: yangi hajm + eskisi (taqqoslash uchun).
-func (r *recordingRepo) FinishTranscode(ctx context.Context, id string, newSize, originalSize int64) error {
-	sql, args, _ := r.builder.Update("recordings").
+func (r *recordingRepo) FinishTranscode(ctx context.Context, id string, newSize, originalSize int64, durationSec, trimmedSec int) error {
+	q := r.builder.Update("recordings").
 		Set("transcode_status", entity.TranscodeDone).
 		Set("size_bytes", newSize).
-		Set("original_size_bytes", originalSize).
-		Where(sq.Eq{"id": id}).ToSql()
+		Set("original_size_bytes", originalSize)
+	// Davomiylik faqat haqiqatan o'lchangan bo'lsa yoziladi — 0 bilan ustiga
+	// yozish arxiv sahifasidagi vaqt shkalasini yo'q qilardi.
+	if durationSec > 0 {
+		q = q.Set("duration_sec", durationSec)
+	}
+	// Kesilgan miqdor QO'SHILADI, ustiga yozilmaydi: yozuv qayta transkod
+	// qilinsa (masalan ishchi qayta yurgizilsa) siljish to'planib boradi va
+	// har safar noldan hisoblansa chat sinxroni buzilardi.
+	if trimmedSec > 0 {
+		q = q.Set("content_offset_sec", sq.Expr("content_offset_sec + ?", trimmedSec))
+	}
+	sql, args, _ := q.Where(sq.Eq{"id": id}).ToSql()
 	_, err := r.db.Exec(ctx, sql, args...)
 	return err
 }

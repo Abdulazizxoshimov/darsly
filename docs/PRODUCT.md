@@ -148,6 +148,86 @@ rasmiy dasturi, Docker) ishlaydi — chegara 2 GB. Kerak: `api_id`/`api_hash`
 **Maxfiylik:** guruh a'zolari videoni forward qila oladi — bu qabul qilingan
 (mentor o'z guruhini biladi).
 
+### Yozuv sifati: Zoom bilan taqqoslash (2026-08-01, o'lchangan)
+
+Asoschi ikki faylni berdi: Zoom yozuvi va Jonly yozuvi. Ikkalasi ochib, kadrlari
+ko'rildi va o'lchandi. **Farq bitreytda emas — KOMPOZITSIYADA.**
+
+| | Zoom | Jonly (hozir) |
+|---|---|---|
+| Kadr | 1280×800 (**manba nisbati**) | 1280×720 (**qotib qolgan**) |
+| Kontent pikseli | 1 024 000 | 230 400 (**22%**) |
+| Kadr/sek | 25 | 15 |
+| Ovoz | 48 kHz stereo | 44.1 kHz mono |
+
+**Uchta asosiy nuqson:**
+1. **78% kadr behuda.** Tik (portrait) telefon ekrani 16:9 kadrga solingan →
+   chap va o'ngda qora yo'llar. Zoom esa kadrni MANBA nisbatiga moslaydi
+   (1280×800 = 16:10 planshet ekrani) va kontent butun kadrni to'ldiradi.
+2. **Yozuvda ilovaning O'ZI ko'rinadi** — «Ekraningiz ulashilmoqda»,
+   ishtirokchilar paneli, tugmalar. Ustoz butun telefon ekranini ulashib,
+   Jonly ichida qolgan. Zoom bunda ilovani **avtomatik yig'ib** (floating
+   tugmaga) foydalanuvchini kontent ilovasiga chiqaradi.
+3. **Boshida ~15 s qora ekran** va kamera plitkasi bo'sh avatar bo'lib turadi.
+
+**Qaror (asoschi): Zoom andozasi.** Ya'ni:
+- yozuv kadri manba nisbatiga moslashadi (tik manba → tik yozuv), qora yo'l yo'q;
+- ekran ulashilganda kontent butun kadrni egallaydi (kamera kichik yoki yo'q);
+- 25 fps, 48 kHz stereo ovoz;
+- ulashish boshlanishida ilova avtomatik fonga o'tadi (Zoom kabi), efir-ramka
+  va suzuvchi panel qoladi.
+Kamchiliklar chiqsa — keyingi relizda qayta ko'riladi.
+
+#### Bajarildi (2026-08-03) — o'lchov bilan tasdiqlangan
+
+Uch bosqichda tuzatildi. Har biri alohida qatlamda, chunki bittasi ishlamay
+qolsa keyingisi qutqaradi:
+
+| Bosqich | Qayerda | Nima qiladi |
+|---|---|---|
+| 1. Manba | `ScreenCaptureSize.kt` (mobil) | Ulashish manbasi qurilma **nisbatidan** hisoblanadi. Avval qotib qolgan 1280×720 edi va `MediaProjection` tik telefonni o'sha kadrga qora yo'l bilan solardi — ya'ni qora yo'l MANBADA tug'ilardi. |
+| 2. Kompozitsiya | `egress.go` (backend) | Yozuv kadri xonadagi haqiqiy trekdan (`roomVideoSize` → `pickRecordingSize`) olinadi; layout `speaker` → **`single-speaker`** (yon karusel ustuni kadrning ~1/4 ini yeyardi); 25 fps; 48 kHz. |
+| 3. Kafolat | `videofilter.go` + `transcode_analyze.go` | Qayta kodlashda `cropdetect` bilan qolgan qora yo'l kesiladi va boshidagi **qora VA jim** qism tashlanadi. Bu — oxirgi to'siq: yuqoridagi ikkalasi adashsa ham yakuniy faylda qora yo'l qolmaydi. |
+
+**Asoschining haqiqiy yozuvi ustida o'lchandi** (`video_2026-08-01_17-24-41.mp4`,
+quvurni to'liq yurgizib):
+
+| | Oldin | Keyin |
+|---|---|---|
+| Kadr | 1280×720 | 320×718 (**tik — manba nisbati**) |
+| Kadr/sek | 15 | 25 |
+| Ovoz | 44.1 kHz mono | 48 kHz stereo |
+| Kontent kadrning necha % i | 25% | **100%** |
+
+Kesilgan kadr ko'z bilan ham tekshirildi: telefon ekrani to'liq, hech qayeri
+qirqilmagan. Qaror mantiqi 20+ chekka holat testi ostida
+(`videofilter_test.go`), quvurning o'zi esa nuqsonni sun'iy takrorlovchi
+haqiqiy-ffmpeg testi ostida (`TestTranscodePipeline_RemovesBarsAndDeadStart`).
+
+#### ⚠️ Qolgan bo'shliq — asoschi qarori kerak
+
+**Yozuv birinchi `track_published` da boshlanadi va u odatda MIKROFON.** Ya'ni
+kadr o'lchami tanlanayotgan paytda xonada hali video trek yo'q → bazaviy
+1280×720 olinadi. Ekran ulashish keyinroq kelib, o'sha kadrga qora yo'l bilan
+tushadi. 3-bosqich (kesish) kompozitsiyani baribir tuzatadi, lekin
+**rezolyutsiyani qaytara olmaydi** — piksellar egress bosqichida yo'qolgan.
+
+O'lchovda ko'ringan farq (kamera O'CHIQ, telefon ekrani ulashilgan):
+- kadr to'g'ri tanlansa: **576×1280**
+- hozirgi holda (kesish bilan): **324×720** — ya'ni chiziqli ~44% past
+
+Kamera YONIQ bo'lsa muammo yo'q: telefon kamerasi tik trek beradi va kadr
+o'shanga to'g'ri moslanadi.
+
+**Yechim va uning narxi.** Yozuvni birinchi *video* trekda boshlash — u holda
+kadr har doim to'g'ri. Lekin ustoz kamerasiz kirib, ulashishdan oldin gapirsa
+(«salom, hozir ekranni ulashaman»), **o'sha gap yozuvga tushmaydi**. Bu aynan
+`leadingDeadSeconds` ataylab saqlab qolayotgan narsa — ya'ni bu ovoz yo'qotish
+bilan rezolyutsiya o'rtasidagi savdo, texnik emas, MAHSULOT qarori.
+
+Uchinchi yo'l yo'q: egress boshlangach kadr o'lchamini o'zgartirib bo'lmaydi,
+qayta boshlash esa bitta darsdan ikkita fayl qoldiradi.
+
 ## Qurilishi kerak (javoblardan kelib chiqqan yangi ishlar)
 
 | # | Ish | Manba savol | Hajm |
@@ -174,6 +254,10 @@ rasmiy dasturi, Docker) ishlaydi — chegara 2 GB. Kerak: `api_id`/`api_hash`
 | 20 | **Dars arxiv sahifasi** — video + chat yonma-yon, vaqt bo'yicha sakrash, materiallar | 2026-08-01 | backend K + web O + mobil O |
 | 21 | **Chat transkripti** (TXT + HTML eksport) | 2026-08-01 | backend K |
 | 22 | **Telegram saqlash**: Local Bot API Server, guruh tanlash, qayta urinish, 30 kun + 1 kunlik kesh | 2026-08-01 | yangi servis KATTA |
+| 23 | ~~Yozuv kadri manba nisbatiga moslashsin (qora yo'llar yo'qolsin)~~ ✅ 2026-08-03 | 2026-08-01 | backend O |
+| 24 | ~~Yozuv 25 fps + 48 kHz stereo (Zoom pariteti)~~ ✅ 2026-08-03 | 2026-08-01 | backend K |
+| 25 | ~~Ulashishda ilova avtomatik fonga o'tsin (Zoom kabi)~~ ✅ 2026-08-03 | 2026-08-01 | mobil K |
+| 26 | **Yozuv boshi kesilganda kadr o'lchami** — ustoz kamerasiz kirsa yozuv 16:9 boshlanadi (yuqoridagi «Qolgan bo'shliq») | 2026-08-03 | qaror kerak |
 
 (K = kichik, O = o'rta)
 

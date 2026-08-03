@@ -3,9 +3,11 @@ package worker
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/zoom/darsly/internal/entity"
@@ -33,6 +35,20 @@ type TranscodeConfig struct {
 	FPS     int
 	// AudioKbps — nutq uchun; 64k AAC dars yozuvida yetarli.
 	AudioKbps int
+	// AudioRateHz / AudioChannels — Zoom pariteti (docs/PRODUCT.md «Yozuv sifati»):
+	// Zoom yozuvi 48 kHz stereo. WebRTC/Opus manbasi ham 48 kHz, ya'ni 44.1 ga
+	// tushirish faqat zarar qilardi.
+	//
+	// Stereo mono manbaga BEPUL yaqin: AAC kanallarni mid/side kodlaydi va
+	// bir xil ikki kanalda side deyarli nol bit oladi. Ya'ni bu "pariteti
+	// uchun hajm to'lash" emas.
+	AudioRateHz   int
+	AudioChannels int
+	// CropBars — qora yo'llarni (pillarbox/letterbox) `cropdetect` bilan
+	// aniqlab kesish. Qaror `decideCrop` da (videofilter.go).
+	CropBars bool
+	// TrimLead — yozuv boshidagi qora VA jim qismni kesish (`leadingDeadSeconds`).
+	TrimLead bool
 	// TempDir — vaqtinchalik fayllar. Bo'sh bo'lsa OS temp'i.
 	TempDir string
 	// Interval — navbatni tekshirish davri.
@@ -43,13 +59,20 @@ type TranscodeConfig struct {
 
 func DefaultTranscodeConfig() TranscodeConfig {
 	return TranscodeConfig{
-		Enabled:    true,
-		CRF:        26,
-		Preset:     "veryfast",
-		FPS:        15,
-		AudioKbps:  64,
-		Interval:   30 * time.Second,
-		StaleAfter: 3 * time.Hour,
+		Enabled: true,
+		CRF:     26,
+		Preset:  "veryfast",
+		// 25 fps — Zoom pariteti. 15 fps da sichqoncha va skroll harakati
+		// uzuq-yuluq ko'rinardi; statik slaydda qo'shimcha kadrlar CRF ostida
+		// deyarli bepul (P-kadrlar bo'sh chiqadi).
+		FPS:           25,
+		AudioKbps:     64,
+		AudioRateHz:   48000,
+		AudioChannels: 2,
+		CropBars:      true,
+		TrimLead:      true,
+		Interval:      30 * time.Second,
+		StaleAfter:    3 * time.Hour,
 	}
 }
 
@@ -135,7 +158,7 @@ func (w *TranscodeWorker) step(ctx context.Context) (bool, error) {
 	}
 
 	start := time.Now()
-	newSize, err := w.process(ctx, rec)
+	res, err := w.process(ctx, rec)
 	if err != nil {
 		w.log.Warn(ctx, "transcode failed — asl fayl saqlanib qoldi",
 			logger.String("recording_id", rec.ID),
@@ -150,24 +173,39 @@ func (w *TranscodeWorker) step(ctx context.Context) (bool, error) {
 		return true, nil
 	}
 
-	if err := w.repo.FinishTranscode(ctx, rec.ID, newSize, rec.SizeBytes); err != nil {
+	if err := w.repo.FinishTranscode(ctx, rec.ID, res.Size, rec.SizeBytes, res.DurationSec, res.TrimmedSec); err != nil {
 		w.log.Error(ctx, "transcode: finish write failed", logger.SafeString("err", err.Error()))
 		return true, nil
 	}
 	w.log.Info(ctx, "recording transcoded",
 		logger.String("recording_id", rec.ID),
 		logger.String("before", humanMB(rec.SizeBytes)),
-		logger.String("after", humanMB(newSize)),
+		logger.String("after", humanMB(res.Size)),
+		logger.String("edits", res.Note),
 		logger.String("took", time.Since(start).Round(time.Second).String()),
 	)
 	return true, nil
 }
 
-// process: MinIO → vaqtinchalik fayl → ffmpeg → MinIO (ustiga).
-func (w *TranscodeWorker) process(ctx context.Context, rec *entity.Recording) (int64, error) {
+// transcodeResult — bajarilgan ish natijasi.
+type transcodeResult struct {
+	Size int64
+	// DurationSec — natija davomiyligi. 0 → DB'dagi qiymat o'zgarmaydi
+	// (boshi kesilmagan, ya'ni eski davomiylik hamon to'g'ri).
+	DurationSec int
+	// TrimmedSec — fayl boshidan kesilgan soniyalar. Arxivdagi chat sakrashi
+	// shu qadar surilishi kerak ([entity.Recording.PlaybackZero]).
+	TrimmedSec int
+	// Note — jurnal uchun qisqa izoh ("crop=720x1280+280+0 trim=13.4s").
+	Note string
+}
+
+// process: MinIO → vaqtinchalik fayl → tahlil → ffmpeg → MinIO (ustiga).
+func (w *TranscodeWorker) process(ctx context.Context, rec *entity.Recording) (transcodeResult, error) {
+	var res transcodeResult
 	dir, err := os.MkdirTemp(w.cfg.TempDir, "darsly-transcode-")
 	if err != nil {
-		return 0, fmt.Errorf("temp dir: %w", err)
+		return res, fmt.Errorf("temp dir: %w", err)
 	}
 	defer os.RemoveAll(dir) // katta fayllar diskda qolib ketmasin
 
@@ -175,36 +213,69 @@ func (w *TranscodeWorker) process(ctx context.Context, rec *entity.Recording) (i
 	dst := filepath.Join(dir, "out.mp4")
 
 	if err := w.download(ctx, rec.ObjectKey, src); err != nil {
-		return 0, err
+		return res, err
 	}
-	if err := w.runFFmpeg(ctx, src, dst); err != nil {
-		return 0, err
+
+	// Tahlil MAJBURIY EMAS: yiqilsa oddiy (kesishsiz) qayta kodlash ketadi.
+	// Yozuvni qayta kodlamay qoldirishdan ko'ra qora yo'lli qoldirgan yaxshi.
+	plan := w.analyze(ctx, src)
+	res.Note = plan.String()
+
+	if err := w.runFFmpeg(ctx, src, dst, plan); err != nil {
+		return res, err
 	}
 
 	st, err := os.Stat(dst)
 	if err != nil {
-		return 0, fmt.Errorf("stat result: %w", err)
+		return res, fmt.Errorf("stat result: %w", err)
 	}
-	// Natija kattaroq bo'lsa almashtirish ZARAR: fayl ham o'sadi, sifat ham
-	// tushadi (ikki marta kodlangan bo'ladi). Bunday hol harakatli video yoki
-	// juda qisqa yozuvda bo'lishi mumkin.
-	if st.Size() >= rec.SizeBytes {
-		return 0, fmt.Errorf("natija kichrayamadi (%s → %s)", humanMB(rec.SizeBytes), humanMB(st.Size()))
+	// Natija kattaroq bo'lsa almashtirish odatda ZARAR: fayl ham o'sadi, sifat
+	// ham tushadi (ikki marta kodlangan bo'ladi).
+	//
+	// ISTISNO — kesish qo'llangan hol. Unda qayta kodlashning maqsadi hajm emas,
+	// KOMPOZITSIYA: qora yo'llar olib tashlanadi va kontent butun kadrni
+	// egallaydi. Bunda natija bir oz kattarishi mumkin (endi bitlar qora
+	// piksellarga emas, matnga ketadi) va bu KUTILGAN. Faqat portlash
+	// (`cropGrowthLimit` dan ortiq o'sish) rad etiladi.
+	limit := rec.SizeBytes
+	if plan.edits() {
+		limit = int64(float64(rec.SizeBytes) * cropGrowthLimit)
+	}
+	if rec.SizeBytes > 0 && st.Size() >= limit {
+		return res, fmt.Errorf("natija kichrayamadi (%s → %s)", humanMB(rec.SizeBytes), humanMB(st.Size()))
 	}
 
 	f, err := os.Open(dst)
 	if err != nil {
-		return 0, fmt.Errorf("open result: %w", err)
+		return res, fmt.Errorf("open result: %w", err)
 	}
 	defer f.Close()
 
 	// Ustiga yozamiz: havola (`object_key`) o'zgarmaydi, ya'ni allaqachon
 	// berilgan presigned URL ham ishlayveradi.
 	if _, err := w.minio.Upload(ctx, rec.ObjectKey, "video/mp4", f, st.Size()); err != nil {
-		return 0, fmt.Errorf("upload result: %w", err)
+		return res, fmt.Errorf("upload result: %w", err)
 	}
-	return st.Size(), nil
+	res.Size = st.Size()
+	// Davomiylik va siljish FAQAT boshi kesilganda o'zgaradi — aks holda
+	// DB'dagi (webhook'dan kelgan) qiymatlar tegilmaydi.
+	//
+	// Siljish AYNAN shu yerda, yuklashdan KEYIN yoziladi: yuklash yiqilsa
+	// MinIO'da hamon ESKI (kesilmagan) fayl turadi va siljishni saqlash
+	// arxivdagi chatni buzardi.
+	if plan.StartSec > 0 {
+		res.TrimmedSec = int(math.Round(plan.StartSec))
+		if d := probeDuration(ctx, dst); d > 0 {
+			res.DurationSec = int(d)
+		}
+	}
+	return res, nil
 }
+
+// cropGrowthLimit — kesish qo'llanganda natija asl hajmning shuncha barobaridan
+// oshmasligi kerak. 1.25 — qora yo'llar o'rniga kontentga ketgan bitlar uchun
+// yetarli zaxira, ammo ffmpeg butunlay noto'g'ri ishlagan holni ushlaydi.
+const cropGrowthLimit = 1.25
 
 func (w *TranscodeWorker) download(ctx context.Context, key, path string) error {
 	obj, err := w.minio.Get(ctx, key)
@@ -225,27 +296,57 @@ func (w *TranscodeWorker) download(ctx context.Context, key, path string) error 
 	return f.Sync()
 }
 
-func (w *TranscodeWorker) runFFmpeg(ctx context.Context, src, dst string) error {
-	args := []string{
-		"-y", "-nostdin",
-		"-i", src,
+func (w *TranscodeWorker) runFFmpeg(ctx context.Context, src, dst string, plan editPlan) error {
+	args := []string{"-y", "-nostdin"}
+	// `-ss` INPUT'dan OLDIN: ffmpeg faylni shu nuqtaga tez o'tkazadi va chiqish
+	// vaqt belgilari noldan boshlanadi (baribir qayta kodlanadi, ya'ni kesish
+	// kalit kadrga qadalib qolmaydi).
+	if plan.StartSec > 0 {
+		args = append(args, "-ss", strconv.FormatFloat(plan.StartSec, 'f', 2, 64))
+	}
+	args = append(args, "-i", src)
+
+	vf := ""
+	if plan.Crop != nil {
+		vf = fmt.Sprintf("crop=%d:%d:%d:%d,", plan.Crop.W, plan.Crop.H, plan.Crop.X, plan.Crop.Y)
+	}
+	vf += fmt.Sprintf("fps=%d", w.cfg.FPS)
+
+	args = append(args,
 		"-c:v", "libx264",
 		"-crf", fmt.Sprint(w.cfg.CRF),
 		"-preset", w.cfg.Preset,
-		"-vf", fmt.Sprintf("fps=%d", w.cfg.FPS),
+		"-vf", vf,
 		"-pix_fmt", "yuv420p", // eski pleyerlar va Safari uchun
 		"-c:a", "aac",
 		"-b:a", fmt.Sprintf("%dk", w.cfg.AudioKbps),
-		"-ac", "1", // nutq — mono; stereo ikki barobar joy yeydi, foyda yo'q
+		"-ar", fmt.Sprint(w.audioRate()),
+		"-ac", fmt.Sprint(w.audioChannels()),
 		"-movflags", "+faststart", // brauzerda darhol o'ynasin (moov boshda)
 		dst,
-	}
+	)
 	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("ffmpeg: %w: %s", err, tail(string(out), 500))
 	}
 	return nil
+}
+
+// audioRate / audioChannels — nolinchi konfiguratsiyada ham yaroqli qiymat
+// (test yoki qisman to'ldirilgan config ffmpeg'ni `-ar 0` bilan yiqitmasin).
+func (w *TranscodeWorker) audioRate() int {
+	if w.cfg.AudioRateHz <= 0 {
+		return 48000
+	}
+	return w.cfg.AudioRateHz
+}
+
+func (w *TranscodeWorker) audioChannels() int {
+	if w.cfg.AudioChannels != 1 && w.cfg.AudioChannels != 2 {
+		return 2
+	}
+	return w.cfg.AudioChannels
 }
 
 func humanMB(b int64) string { return fmt.Sprintf("%.1f MB", float64(b)/(1024*1024)) }

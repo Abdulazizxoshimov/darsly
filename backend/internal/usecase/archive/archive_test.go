@@ -70,6 +70,19 @@ func (e *env) rec(t *testing.T, id, status, key string, ended time.Duration) *en
 	return r
 }
 
+// recAt — yozuv boshlanishi darsdan `delay` keyin va boshidan `trimmed` soniya
+// kesilgan. Vaqt shkalasi testlari uchun (`PlaybackZero`).
+func (e *env) recAt(t *testing.T, id string, delay time.Duration, trimmed int) {
+	t.Helper()
+	end := startedAt.Add(time.Hour)
+	require.NoError(t, e.recs.Create(context.Background(), &entity.Recording{
+		ID: id, LessonID: lessonID, EgressID: "eg-" + id, ObjectKey: "rec/" + id + ".mp4",
+		Status: entity.RecordingStatusReady, DurationSec: 3600, SizeBytes: 123456,
+		StartedAt: startedAt.Add(delay), EndedAt: &end, CreatedAt: startedAt,
+		ContentOffsetSec: trimmed,
+	}))
+}
+
 // ─── Egalik ──────────────────────────────────────────────────────────────────
 
 func TestGet_Egalik(t *testing.T) {
@@ -163,6 +176,51 @@ func TestGet_OffsetYozuvdanHisoblanadi(t *testing.T) {
 	a, err := e.uc.Get(context.Background(), mentorID, lessonID)
 	require.NoError(t, err)
 	require.Equal(t, 90, a.Chat[0].OffsetSec)
+}
+
+// ⭐ Yozuv DARSDAN KEYINROQ boshlangan: nol nuqta yozuvniki bo'lishi kerak.
+//
+// Egress birinchi trek e'lon qilinganda ishga tushadi, ya'ni darsdan bir necha
+// soniya/daqiqa keyin. Sakrash dars boshidan hisoblansa xabar videoning
+// noto'g'ri joyiga olib borardi.
+func TestGet_OffsetYozuvBoshidanHisoblanadi(t *testing.T) {
+	e := newEnv(t)
+	e.recAt(t, "r1", 40*time.Second, 0) // egress 40 s kechikdi
+	e.msg(t, "m1", "guest_a", "Ali", "salom", 100*time.Second, nil, nil)
+
+	a, err := e.uc.Get(context.Background(), mentorID, lessonID)
+	require.NoError(t, err)
+	require.Equal(t, 60, a.Chat[0].OffsetSec,
+		"100 s (dars boshidan) − 40 s (egress kechikishi) = videoda 60 s")
+}
+
+// ⭐ TRANSKOD BOSHINI KESGAN: sakrash shu qadar surilishi kerak.
+//
+// Aynan shu holat 2026-08-03 da qo'shilgan «boshidagi qora va jim qismni
+// kesish» tufayli paydo bo'ldi. Busiz butun chat kesilgan miqdorga siljib,
+// har bir xabar noto'g'ri lahzaga olib borardi.
+func TestGet_OffsetKesilganBoshniHisobgaOladi(t *testing.T) {
+	e := newEnv(t)
+	e.recAt(t, "r1", 0, 13) // transkod boshidan 13 s kesdi
+	e.msg(t, "m1", "guest_a", "Ali", "kesishdan oldin", 5*time.Second, nil, nil)
+	e.msg(t, "m2", "guest_a", "Ali", "kesishdan keyin", 73*time.Second, nil, nil)
+
+	a, err := e.uc.Get(context.Background(), mentorID, lessonID)
+	require.NoError(t, err)
+	require.Equal(t, 0, a.Chat[0].OffsetSec,
+		"kesilgan qismdagi xabar 0 ga qisiladi (manfiy bo'lmaydi)")
+	require.Equal(t, 60, a.Chat[1].OffsetSec, "73 s − 13 s kesildi = videoda 60 s")
+}
+
+// Kechikish VA kesish birga — ikkalasi ham qo'shilib hisoblanadi.
+func TestGet_OffsetKechikishVaKesishBirga(t *testing.T) {
+	e := newEnv(t)
+	e.recAt(t, "r1", 20*time.Second, 13)
+	e.msg(t, "m1", "guest_a", "Ali", "savol", 93*time.Second, nil, nil)
+
+	a, err := e.uc.Get(context.Background(), mentorID, lessonID)
+	require.NoError(t, err)
+	require.Equal(t, 60, a.Chat[0].OffsetSec, "93 − 20 − 13 = 60")
 }
 
 // Na dars, na yozuv boshlanish vaqtini bilmasa — 0 (noto'g'ri sakrashdan ko'ra

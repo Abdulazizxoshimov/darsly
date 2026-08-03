@@ -11,6 +11,7 @@ import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -64,6 +65,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.TopAppBar
 import androidx.compose.ui.text.style.TextOverflow
+import kotlinx.coroutines.delay
 import uz.darsly.mentor.BuildConfig
 import uz.darsly.mentor.data.livekit.LessonSessionHolder
 import androidx.core.content.ContextCompat
@@ -72,6 +74,13 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import uz.darsly.mentor.data.store.PrefsUiPrefs
 import uz.darsly.mentor.service.ShareFrameOverlay
 import uz.darsly.mentor.ui.theme.neonGlow
+import uz.darsly.mentor.util.findActivity
+
+/**
+ * Toast ko'rinib ulgurishi va fonga o'tish keskin bo'lmasligi uchun pauza (№25).
+ * Yarim soniyadan kam — ustoz kutayotganini sezmaydi.
+ */
+private const val SHARE_BACKGROUND_DELAY_MS = 450L
 
 /**
  * R0 spike xonasi. Bu ATAYLAB chiroyli emas — maqsad ekran ulashishning
@@ -195,6 +204,35 @@ fun RoomScreen(
     val uiPrefs = remember { PrefsUiPrefs.create(ctx) }
     var shareTipOpen by rememberSaveable { mutableStateOf(false) }
     var tipMuted by rememberSaveable { mutableStateOf(false) }
+    // №25: "ulashishda ilova fonga o'tsin" sozlamasi — «Ko'proq» panelida
+    // o'zgartiriladi. Compose uchun nusxa kerak (SharedPreferences oqim emas),
+    // haqiqiy manba baribir `uiPrefs` — ViewModel ham o'shandan o'qiydi.
+    var autoBackground by remember { mutableStateOf(uiPrefs.autoBackgroundOnShare) }
+
+    /**
+     * ⭐ ULASHISH BOSHLANDI → ILOVA FONGA (№25, Zoom naqshi).
+     *
+     * Qaror ViewModel'da chiqarilgan ([ShareBackgroundPlan]); bu yerda faqat
+     * bajarilishi, chunki `moveTaskToBack` Activity'ni talab qiladi.
+     *
+     * Xabar ATAYLAB Toast: Snackbar xona ekranida chiziladi va biz aynan shu
+     * ekranni yopmoqchimiz — ustoz uni umuman ko'rmasdi. Toast esa tizim
+     * oynasi bo'lib, boshqa ilova ustida ham qoladi.
+     */
+    val activity = remember(ctx) { ctx.findActivity() }
+    LaunchedEffect(state.shareBackground) {
+        val decision = state.shareBackground ?: return@LaunchedEffect
+        decision.message?.let { Toast.makeText(ctx, it, Toast.LENGTH_LONG).show() }
+        if (decision.moveToBack) {
+            // Qisqa pauza — Toast chizilishga ulgursin va o'tish keskin
+            // bo'lmasin (ekran shu zahoti g'oyib bo'lsa ustoz "ilova yiqildi"
+            // deb o'ylaydi). Fon rejimida ham dars uzilmaydi: LiveKit sessiyasi
+            // `LessonSessionHolder` + foreground servisda yashaydi.
+            delay(SHARE_BACKGROUND_DELAY_MS)
+            activity?.moveTaskToBack(true)
+        }
+        vm.shareBackgroundShown()
+    }
 
     /**
      * Ekran ulashishni boshlash: kerak bo'lsa avval tushuntirish, keyin tizim dialogi.
@@ -280,6 +318,19 @@ fun RoomScreen(
                             "so'ng \"Boshlash\" ni bosing.",
                         style = MaterialTheme.typography.bodyMedium,
                     )
+                    // №25: ustoz nima bo'lishini OLDINDAN bilsin. Aks holda
+                    // ilovaning o'zini fonga olishi "ilova yopilib ketdi" deb
+                    // tushunilardi va u darhol qaytib kelib, o'quvchilarga
+                    // yana Jonly interfeysini ko'rsatardi.
+                    if (autoBackground) {
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            "Ulashish boshlangach Jonly o'zi fonga o'tadi — siz darhol " +
+                                "materialingizni ochasiz. Qaytish uchun bildirishnomani bosing " +
+                                "(buni \"Ko'proq\" panelidan o'chirib qo'ysa ham bo'ladi).",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
                     Spacer(Modifier.height(16.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = tipMuted, onCheckedChange = { tipMuted = it })
@@ -536,6 +587,11 @@ fun RoomScreen(
                 onDismiss = { showMore = false },
                 onReaction = { emoji -> vm.sendReaction(emoji) },
                 onOpenPoll = { showPoll = true },
+                autoBackground = autoBackground,
+                onAutoBackgroundChange = {
+                    autoBackground = it
+                    uiPrefs.autoBackgroundOnShare = it
+                },
             )
         }
 

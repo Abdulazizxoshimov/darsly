@@ -2061,10 +2061,18 @@ h1, h2, h3 { margin: 0; letter-spacing: -0.02em; }
 }
 .arch-video__player {
   display: block;
-  width: 100%;
-  /* Yozuvlar 16:9 — qora fon bilan letterbox boshqa nisbatda ham chiroyli. */
-  aspect-ratio: 16 / 9;
+  /* ⭐ NISBAT MANBADAN (2026-08-03, docs/PRODUCT.md «Yozuv sifati»).
+     Avval bu yerda qat'iy `aspect-ratio: 16/9` turardi. Endi yozuv TIK ham
+     bo'lishi mumkin (telefon ekrani ulashilganda) va 16:9 ga majburlash aynan
+     backend'da olib tashlangan qora yo'llarni pleyer ichida qaytarardi.
+     `auto 16 / 9` — metama'lumot kelguncha 16:9, kelgach manbanikini oladi. */
+  aspect-ratio: auto 16 / 9;
+  width: auto;
+  max-width: 100%;
   max-height: 68vh;
+  margin-inline: auto;
+  /* Kadr baribir qutiga sig'masa (juda tik yozuv) qirqilmasin. */
+  object-fit: contain;
   background: var(--video-bg);
 }
 .arch-video__note {
@@ -2316,7 +2324,10 @@ h1, h2, h3 { margin: 0; letter-spacing: -0.02em; }
 @media (max-width: 1024px) {
   .arch-grid { grid-template-columns: 1fr; }
   .arch-chat { max-height: 460px; }
-  .arch-video__player { max-height: none; }
+  /* Tor ekranda video kengroq bo'lsin, lekin TIK yozuv butun sahifani
+     egallab, chatni pastga surib yubormasin — shuning uchun cheklov
+     olib tashlanmaydi, faqat bo'shatiladi. */
+  .arch-video__player { max-height: 80vh; }
 }
 
 /* ── Telegram bog'lanishi (profil) ───────────────────────────────────────── */

@@ -113,7 +113,17 @@ type RecordingRepository interface {
 	// Qayta kodlash navbati (CRF) — `worker.TranscodeWorker` ishlatadi.
 	EnqueueTranscode(ctx context.Context, egressID string) error
 	ClaimTranscode(ctx context.Context) (*entity.Recording, error)
-	FinishTranscode(ctx context.Context, id string, newSize, originalSize int64) error
+	// FinishTranscode — muvaffaqiyatli natija.
+	//
+	// durationSec > 0 bo'lsa davomiylik ham yangilanadi: transkod yozuv
+	// boshidagi "o'lik" (qora va jim) qismni kesishi mumkin va u holda
+	// webhook'dan kelgan eski davomiylik arxiv sahifasida noto'g'ri
+	// ko'rsatilardi. 0 → tegilmaydi.
+	//
+	// trimmedSec — fayl boshidan kesilgan soniyalar; `content_offset_sec` ga
+	// QO'SHILADI. Busiz arxivdagi chat sakrashi kesilgan miqdorga siljib
+	// ketardi (izoh: [entity.Recording.PlaybackZero]). 0 → tegilmaydi.
+	FinishTranscode(ctx context.Context, id string, newSize, originalSize int64, durationSec, trimmedSec int) error
 	FailTranscode(ctx context.Context, id string) error
 	RequeueStaleTranscodes(ctx context.Context, olderThan time.Time) (int64, error)
 }

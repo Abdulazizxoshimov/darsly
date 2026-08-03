@@ -356,7 +356,10 @@ func Load() *Config {
 			APISecret:     getEnv("LIVEKIT_API_SECRET", ""),
 			WebhookAPIKey: getEnv("LIVEKIT_WEBHOOK_API_KEY", ""),
 			TokenTTL:      getEnvDuration("LIVEKIT_TOKEN_TTL", 6*time.Hour),
-			EgressLayout:  getEnv("LIVEKIT_EGRESS_LAYOUT", "speaker"),
+			// Default ATAYLAB bo'sh: yagona manba — `livekit.DefaultEgressLayout`
+			// (hozir "single-speaker"). Bu yerda nom takrorlansa ikki joy
+			// ajralib ketardi va env'siz muhitda eski layout ishlab qolardi.
+			EgressLayout: getEnv("LIVEKIT_EGRESS_LAYOUT", ""),
 		},
 		Lesson: LessonConfig{
 			MaxDuration:   getEnvDuration("LESSON_MAX_DURATION", 4*time.Hour),

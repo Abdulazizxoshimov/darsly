@@ -213,17 +213,27 @@ func (uc *useCase) signedFile(ctx context.Context, m *entity.ChatMessage) *entit
 
 // timeBase — `offset_sec` hisobining nol nuqtasi.
 //
-// Mahsulot qoidasi: `created_at − lesson.started_at`. Dars boshlanish vaqti
-// yo'q bo'lsa (eski qatorlar, jonli bo'lmagan dars) yozuvning boshlanishiga
-// tushamiz — pleyer vaqti aynan o'shanda nol bo'ladi. Ikkalasi ham bo'lmasa
-// nol vaqt qaytadi va `offsetSec` hammasini 0 qiladi: noto'g'ri sakrashdan
-// ko'ra sakramaslik yaxshi.
+// ## ⭐ NEGA YOZUV BIRINCHI, DARS EMAS
+// `offset_sec` ning yagona vazifasi — pleyerni to'g'ri lahzaga sakratish.
+// Demak nol nuqta VIDEO FAYLINING boshi bo'lishi shart. Dars boshlanishi esa
+// undan oldinroq: egress birinchi trek e'lon qilinganda ishga tushadi va
+// transkod fayl boshidagi o'lik qismni kesadi ([entity.Recording.PlaybackZero]).
+//
+// Ilgari bu yerda `lesson.started_at` birinchi turardi va shu sababli barcha
+// xabarlar o'nlab soniyaga siljigan holda ko'rsatilardi (2026-08-03 da yozuv
+// boshini kesish qo'shilganda farq yanada kattalashdi).
+//
+// Yozuv yo'q bo'lsagina darsning boshlanish vaqtiga tushamiz: video ham yo'q,
+// ya'ni sakraydigan joy yo'q va `offset_sec` faqat «dars boshidan qancha
+// o'tgan» degan ma'noni bildiradi. Ikkalasi ham bo'lmasa nol vaqt qaytadi va
+// `offsetSec` hammasini 0 qiladi — noto'g'ri sakrashdan ko'ra sakramaslik
+// yaxshi.
 func (uc *useCase) timeBase(l *entity.Lesson, rec *entity.Recording) time.Time {
+	if zero, ok := rec.PlaybackZero(); ok {
+		return zero
+	}
 	if l.StartedAt != nil {
 		return *l.StartedAt
-	}
-	if rec != nil && !rec.StartedAt.IsZero() {
-		return rec.StartedAt
 	}
 	return time.Time{}
 }

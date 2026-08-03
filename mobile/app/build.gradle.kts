@@ -64,7 +64,7 @@ android {
         applicationId = "uz.darsly.mentor"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
+        versionCode = 5
         // DIQQAT (M42): bu qiymat `GET /api/v1/app-config` dagi `min_version` bilan
         // solishtiriladi. Serverda hozir min_version=1.0.0 — spike'dagi "0.1.0-spike"
         // qolsa ilova o'zini bloklab qo'yardi. R1 bloki = 1.0.0.
@@ -72,7 +72,10 @@ android {
         //         parol tiklash · kutish xonasi.
         // 1.2.0 — yozib olish default yoniq va avtomatik boshlanadi; ekran
         //         ulashishda simulcast (past internet uchun past qatlam).
-        versionName = "1.2.0"
+        // 1.3.0 — Zoom pariteti (docs/PRODUCT.md «Yozuv sifati»): ulashish
+        //         manbasi qurilma nisbatidan (qora yo'l yo'q) va ulashish
+        //         boshlanishida ilova o'zini fonga oladi.
+        versionName = "1.3.0"
     }
 
     buildFeatures {

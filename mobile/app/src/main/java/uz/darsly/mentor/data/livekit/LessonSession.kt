@@ -6,6 +6,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.util.DisplayMetrics
+import android.view.WindowManager
 import androidx.core.content.ContextCompat
 import io.livekit.android.LiveKit
 import io.livekit.android.RoomOptions
@@ -16,8 +18,8 @@ import io.livekit.android.room.track.CameraPosition
 import io.livekit.android.room.track.LocalAudioTrack
 import io.livekit.android.room.track.LocalVideoTrack
 import io.livekit.android.room.track.LocalVideoTrackOptions
-import io.livekit.android.room.track.ScreenSharePresets
 import io.livekit.android.room.track.Track
+import io.livekit.android.room.track.VideoCaptureParameter
 import io.livekit.android.room.track.screencapture.ScreenCaptureParams
 import io.livekit.android.util.LKLog
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -44,9 +46,13 @@ class LessonSession(
     private val ctx = appContext.applicationContext
 
     /**
-     * Ekran ulashish sifati: 720p / 15 fps (roadmap M18 "matn rejimi").
+     * Ekran ulashish sifati: 15 fps (roadmap M18 "matn rejimi").
      * Slayd/kod matni o'qiladigan bo'lishi uchun rezolyutsiya muhim, fps emas —
      * shuning uchun 15 fps da bitrate matn keskinligiga ketadi.
+     *
+     * ⭐ O'LCHAM ENDI QOTIB QOLMAGAN (№23): u qurilma ekranining NISBATIDAN
+     * hisoblanadi ([ScreenCaptureSize]). Avvalgi qat'iy 1280×720 tik telefonda
+     * kadrning 78% ini qora yo'lga sarflardi — `docs/PRODUCT.md` da o'lchangan.
      */
     val room: Room = LiveKit.create(
         appContext = ctx,
@@ -56,7 +62,7 @@ class LessonSession(
             videoTrackCaptureDefaults = LocalVideoTrackOptions(position = CameraPosition.FRONT),
             screenShareTrackCaptureDefaults = LocalVideoTrackOptions(
                 isScreencast = true,
-                captureParams = MediaTuning.SCREEN_HIGH.capture,
+                captureParams = screenCaptureParams(ctx),
             ),
             // Ekran ulashish va ovoz sozlamalari — past internetli hududlar uchun.
             // Sabablar va raqamlar `MediaTuning` da (u sof va testlar ostida).
@@ -337,5 +343,43 @@ class LessonSession(
 
         /** Mikrofon bilan birga ketganda — ustoz ovozi ustidan eshitilishi uchun. */
         const val SCREEN_AUDIO_GAIN_MIXED = 0.6f
+
+        /**
+         * Ekran ulashish manbasining o'lchami — qurilma nisbatidan (№23).
+         *
+         * Nisbat qurilma bo'yicha o'zgarmas (burilish faqat tomonlarni
+         * almashtiradi, uni SDK o'zi qiladi), shuning uchun bir marta —
+         * sessiya yaratilganda — hisoblansa yetarli.
+         */
+        fun screenCaptureParams(ctx: Context): VideoCaptureParameter {
+            val (w, h) = realDisplaySize(ctx)
+            return ScreenCaptureSize.forDisplay(
+                displayWidth = w,
+                displayHeight = h,
+                // Kadr chastotasi o'lchamdan mustaqil qaror — u `MediaTuning` da
+                // qoladi (narvonning tepa pog'onasi bilan bir xil).
+                maxFps = MediaTuning.SCREEN_HIGH.capture.maxFps,
+            )
+        }
+
+        /**
+         * Ekranning HAQIQIY piksel o'lchami.
+         *
+         * ATAYLAB eskirgan `defaultDisplay.getRealMetrics` ishlatilgan:
+         * LiveKit SDK `LocalScreencastVideoTrack.startCapture()` da aynan shu
+         * manbadan o'qiydi va bizning qiymat bilan solishtiradi
+         * (`displayWidth > displayHeight` → tomonlarni almashtiradi). Boshqa
+         * API (`WindowMetrics`, `resources.displayMetrics`) ba'zi qurilmada
+         * boshqacha son beradi — ikki manbaning farqi esa aynan orientatsiya
+         * chegarasida jimgina noto'g'ri kadrga olib kelardi.
+         */
+        @Suppress("DEPRECATION")
+        fun realDisplaySize(ctx: Context): Pair<Int, Int> {
+            val wm = ctx.getSystemService(Context.WINDOW_SERVICE) as? WindowManager
+                ?: return 0 to 0
+            val metrics = DisplayMetrics()
+            wm.defaultDisplay.getRealMetrics(metrics)
+            return metrics.widthPixels to metrics.heightPixels
+        }
     }
 }
