@@ -315,6 +315,41 @@ kamerali (ulashishsiz) dars yozuvida kadr kvadrat KESILADI — chap/o'ng
 chetlari yo'qoladi. Asosiy stsenariy ekran ulashish bo'lgani uchun bu qabul
 qilingan; kamera-only darslar muhim bo'lsa qayta ko'riladi.
 
+### Kechikish: o'lchangan (2026-08-04, emulyator → brauzer)
+
+Ustoz ekranida xost soatiga sinxronlangan millisekundli raqam turdi, o'quvchi
+brauzerida qabul qilingan kadr suratga olindi va farq hisoblandi. Soat HTTP
+orqali sinxronlangan — **aniqlik ±9 ms** (`adb shell date` bilan ±53 ms edi,
+ya'ni kechikishning o'zi bilan bir tartibda va yaroqsiz).
+
+| | Qiymat |
+|---|---|
+| Shishadan-shishagacha | min **189** · o'rtacha **456** · maks **629** ms |
+| Tarmoq RTT | **226 ms** (bir tomonlama ~113) |
+| Jitter-bufer | **395 ms** |
+| Dekod | 0.2 ms |
+| Kadr yo'qotish | **0** (nack=1, pli=4) |
+| Rezolyutsiya | 576×1280 — o'quvchi to'liq oqim oldi |
+
+**Tarkibi:** 113 (tarmoq) + 395 (bufer) ≈ 508 ms — bu o'lchangan medianga
+(517 ms) mos tushadi, ya'ni hisob yopiladi.
+
+⚠️ **Bu raqam EMULYATORNIKI, mahsulotniki emas.** Buferning kattaligi
+emulyator kadrlarni notekis berayotganidan: 2–18 fps (o'rtacha 11), holbuki
+manba 15 fps bo'lishi kerak. WebRTC buferni kadrlar kelishidagi tartibsizlikka
+qarab kattalashtiradi. Haqiqiy telefonda oqim tekis bo'ladi va bufer ancha
+kichrayishi kutiladi — loyihaning oldingi lokal o'lchovida (haqiqiy sozlama)
+shishadan-shishagacha 85 ms, bufer 6 ms chiqqan edi.
+
+**Mahsulotga tegishli yagona qat'iy raqam — RTT 226 ms**: bu serverning
+jismoniy masofasi va uni faqat serverni foydalanuvchilarga yaqinlashtirish
+kamaytiradi.
+
+`services/livekit/livekit.yaml` dagi `playout_delay.max: 500` ishlayapti:
+bufer 395-464 da to'xtadi, cheksiz o'smadi.
+
+**Aniq raqam uchun haqiqiy qurilma kerak** — tartib `tests/manual/README.md` da.
+
 ### ⏳ O'tkazilmagan sinov: «bitta ustozga server yetadimi»
 
 Yozuv hozirgacha faqat **bitta ishtirokchi** bilan sinalgan. Haqiqiy dars —
