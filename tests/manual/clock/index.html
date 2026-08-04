@@ -1,0 +1,49 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Kechikish o'lchagich</title>
+<style>
+  body{margin:0;background:#fff;color:#000;font-family:ui-monospace,Menlo,monospace;
+       display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh}
+  #t{font-size:96px;font-weight:700;letter-spacing:4px;line-height:1}
+  #b{width:86vw;height:80px;margin-top:22px;background:#000}
+  .l{font-size:15px;color:#555;margin-top:14px;text-align:center}
+</style>
+<div id="t">-----</div>
+<div id="b"></div>
+<div class="l">XOST soatiga sinxronlangan (ms, 100 s davri)<br><span id="s">sinxronlanmoqda…</span></div>
+<script>
+  // NTP uslubidagi sinxronlash — busiz o'lchov YAROQSIZ bo'ladi.
+  //
+  // Qurilma va xost soatlari orasidagi noma'lum farq kechikishga to'g'ridan-
+  // to'g'ri qo'shilib ketardi. `adb shell date` bilan o'lchaganda aniqlik
+  // atigi ±53 ms chiqqan edi — kechikishning o'zi shu tartibda, ya'ni
+  // o'lchov ma'nosiz. HTTP orqali ±9 ms ga tushadi.
+  let offset = 0;
+  async function sync() {
+    let best = 1e9;
+    for (let i = 0; i < 30; i++) {
+      const t0 = Date.now();
+      let T;
+      try {
+        const r = await fetch('/time?' + Math.random());
+        T = parseInt(await r.text(), 10);
+      } catch { continue }
+      const t1 = Date.now();
+      const rt = t1 - t0;
+      if (rt < best) { best = rt; offset = T - (t0 + t1) / 2; }
+    }
+    document.getElementById('s').textContent =
+      'farq ' + Math.round(offset) + ' ms · aniqlik ±' + Math.round(best / 2) + ' ms';
+  }
+  const t = document.getElementById('t'), b = document.getElementById('b');
+  function tick() {
+    const now = Date.now() + offset;
+    t.textContent = String(Math.round(now) % 100000).padStart(5, '0');
+    // Rang bloki — kadr YANGILANAYOTGANINI ko'z bilan tekshirish uchun
+    // (raqam qotib qolsa ulashish to'xtaganini darhol bildiradi).
+    b.style.background = (Math.floor(now / 500) % 2) ? '#000' : '#0c0';
+    requestAnimationFrame(tick);
+  }
+  sync(); tick(); setInterval(sync, 30000);
+</script>

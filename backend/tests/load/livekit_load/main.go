@@ -36,14 +36,28 @@ func main() {
 	lkSecret := flag.String("lk-secret", "secret_at_least_32_characters_long_000000", "livekit api secret")
 	batch := flag.Int("batch", 25, "bir to'lqinda ochiladigan ulanishlar soni")
 	batchDelay := flag.Duration("batch-delay", 1500*time.Millisecond, "to'lqinlar orasidagi pauza")
+	// -slug: MAVJUD darsga qo'shilish.
+	//
+	// Busiz vosita o'zi bo'sh dars yasardi va o'quvchilar HECH NARSAGA obuna
+	// bo'lmasdi — SFU deyarli ish qilmasdi va o'lchov haqiqiy darsni
+	// ko'rsatmasdi. Haqiqiy ustoz (ekran+ovoz) va yozuv ishlab turgan darsga
+	// ulansak, server yuki dars payti bilan bir xil bo'ladi.
+	joinSlug := flag.String("slug", "", "mavjud darsning join_slug'i (bo'sh → yangi dars yasaladi)")
+	lessonIDFlag := flag.String("lesson", "", "-slug bilan birga: xona nomi uchun dars ID'si")
 	flag.Parse()
 
-	access := login(*base, *email, *password)
-	lessonID, slug := createLesson(*base, access)
-	fmt.Printf("lesson=%s slug=%s\n", lessonID, slug)
-
-	// Host token — xonani ochadi (dars live bo'ladi).
-	postJSON(*base+"/api/v1/lessons/"+lessonID+"/token", access, nil)
+	var lessonID, slug string
+	if *joinSlug != "" {
+		slug = *joinSlug
+		lessonID = *lessonIDFlag
+		fmt.Printf("mavjud darsga ulanamiz: slug=%s lesson=%s\n", slug, lessonID)
+	} else {
+		access := login(*base, *email, *password)
+		lessonID, slug = createLesson(*base, access)
+		fmt.Printf("lesson=%s slug=%s\n", lessonID, slug)
+		// Host token — xonani ochadi (dars live bo'ladi).
+		postJSON(*base+"/api/v1/lessons/"+lessonID+"/token", access, nil)
+	}
 	roomName := "lesson_" + lessonID
 
 	var connected int64

@@ -315,6 +315,22 @@ kamerali (ulashishsiz) dars yozuvida kadr kvadrat KESILADI — chap/o'ng
 chetlari yo'qoladi. Asosiy stsenariy ekran ulashish bo'lgani uchun bu qabul
 qilingan; kamera-only darslar muhim bo'lsa qayta ko'riladi.
 
+### ⏳ O'tkazilmagan sinov: «bitta ustozga server yetadimi»
+
+Yozuv hozirgacha faqat **bitta ishtirokchi** bilan sinalgan. Haqiqiy dars —
+ustoz ekran ulashadi + yozuv ketadi + **N o'quvchi** oqimni oladi, hammasi
+bitta 4 yadroli serverda. Yozuv esa allaqachon chegarada ishlaydi (yuqoridagi
+«Server sig'imi» jadvali), shuning uchun javob **taxmin qilib bo'lmaydi**.
+
+To'liq tartib, o'lchov mezonlari va qaror chegaralari: **`tests/manual/README.md`**.
+Qisqasi: `-n` ni 10 → 25 → 50 bosqichi bilan oshirib, har bosqichda
+`recordings.status` ni tekshirish. Birinchi `failed` chiqqan son — shu
+serverning chegarasi.
+
+Sinovni o'tkazish uchun `backend/tests/load/livekit_load` ga `-slug` bayrog'i
+qo'shildi: busiz vosita o'z bo'sh darsini yasardi va o'quvchilar hech narsaga
+obuna bo'lmasdi — SFU deyarli ish qilmasdi, ya'ni o'lchov yolg'on chiqardi.
+
 ## Qurilishi kerak (javoblardan kelib chiqqan yangi ishlar)
 
 | # | Ish | Manba savol | Hajm |
