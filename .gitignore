@@ -58,3 +58,7 @@ coverage.out
 *.wav
 *.mp4
 *.webm
+
+# Noto'g'ri joyga qurilgan yuklama-test binarlari
+/backend/livekit_load
+/backend/publish_probe

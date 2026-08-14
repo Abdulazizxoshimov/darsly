@@ -262,8 +262,7 @@ data class UnreadCount(
  * Dars yozuvi — entity.Recording.
  *
  * `object_key` backend'da `json:"-"` — MinIO ichidagi yo'l hech qachon klientga
- * kelmaydi; yuklab olish faqat vaqtinchalik imzolangan havola orqali
- * ([RecordingDownload]).
+ * kelmaydi.
  */
 @JsonClass(generateAdapter = true)
 data class Recording(
@@ -285,15 +284,6 @@ data class Recording(
      * o'tmagan" degani EMAS.
      */
     @Json(name = "expires_at") val expiresAt: String? = null,
-)
-
-/** `GET /api/v1/recordings/{id}/download` — vaqtinchalik presigned havola. */
-@JsonClass(generateAdapter = true)
-data class RecordingDownload(
-    @Json(name = "url") val url: String,
-    @Json(name = "expires_in_s") val expiresInS: Int = 0,
-    @Json(name = "duration_sec") val durationSec: Int = 0,
-    @Json(name = "size_bytes") val sizeBytes: Long = 0,
 )
 
 /** `POST /recordings/{id}/upload-url` — telefon→MinIO to'g'ridan PUT havolasi. */

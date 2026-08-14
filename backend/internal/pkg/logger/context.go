@@ -28,14 +28,3 @@ func WithTrace(ctx context.Context, traceID, spanID string) context.Context {
 func WithUser(ctx context.Context, userID interface{}) context.Context {
 	return context.WithValue(ctx, userIDKey, userID)
 }
-
-// TraceFromContext extracts tracing IDs.
-// Outgoing gRPC/HTTP so'rovlarga header qo'shish uchun ishlatiladi.
-//
-//	traceID, spanID := logger.TraceFromContext(ctx)
-//	md := metadata.Pairs("x-trace-id", traceID, "x-span-id", spanID)
-func TraceFromContext(ctx context.Context) (traceID, spanID string) {
-	traceID, _ = ctx.Value(traceIDKey).(string)
-	spanID, _ = ctx.Value(spanIDKey).(string)
-	return
-}

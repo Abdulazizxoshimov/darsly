@@ -33,7 +33,6 @@ sentry = "7.18.0"
 hilt = "2.52"
 # androidx.hilt — Compose navigatsiyasida `hiltViewModel()` uchun.
 hiltNavigationCompose = "1.2.0"
-datastore = "1.1.1"
 # androidx.media3 — arxiv yozuvini ilova ichida o'ynatish (ExoPlayer). 1.4.1
 # barqaror (2024) va AGP 8.7 + composeBom 2024.10 bilan mos.
 media3 = "1.4.1"
@@ -55,7 +54,6 @@ androidx-compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "u
 androidx-compose-material3 = { group = "androidx.compose.material3", name = "material3" }
 androidx-compose-material-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended" }
 androidx-security-crypto = { group = "androidx.security", name = "security-crypto", version.ref = "securityCrypto" }
-androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
 
 retrofit = { group = "com.squareup.retrofit2", name = "retrofit", version.ref = "retrofit" }
 retrofit-converter-moshi = { group = "com.squareup.retrofit2", name = "converter-moshi", version.ref = "retrofit" }

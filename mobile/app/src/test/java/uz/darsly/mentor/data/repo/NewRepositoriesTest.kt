@@ -198,42 +198,6 @@ class NewRepositoriesTest {
         assertEquals("/api/v1/notifications/n1/read", request.path)
     }
 
-    // ─── Yozuvlar ─────────────────────────────────────────────────────────────
-
-    @Test
-    fun `yozuvlar royxati sahifalanmagan konvertdan oqiladi`() {
-        // ⚠️ Backend `hs.Success(items)` ishlatadi — `total` YO'Q. Bu yerda
-        // `ListEnvelope` kutilsa ro'yxat jimgina bo'sh chiqardi.
-        val repo = RecordingsRepository(api)
-        enqueue(200, """{"data":[{"id":"r1","status":"ready","size_bytes":1048576,"duration_sec":600}]}""")
-
-        val items = runBlocking { repo.list("l1") }.getOrThrow()
-
-        assertEquals(1, items.size)
-        assertEquals(1_048_576L, items.first().sizeBytes)
-        assertEquals("/api/v1/lessons/l1/recordings", server.takeRequest().path)
-    }
-
-    @Test
-    fun `yuklab olish havolasi va muddati oqiladi`() {
-        val repo = RecordingsRepository(api)
-        enqueue(200, """{"data":{"url":"https://files.example/rec.mp4?sig=x","expires_in_s":900}}""")
-
-        val dl = runBlocking { repo.downloadUrl("r1") }.getOrThrow()
-
-        assertEquals("https://files.example/rec.mp4?sig=x", dl.url)
-        assertEquals(900, dl.expiresInS)
-    }
-
-    @Test
-    fun `bosh konvert xato sifatida qaytadi`() {
-        // Server 200 berib, `data` ni bermasa — bu ilova uchun xato holat va
-        // `null` bilan davom etish `NullPointerException` bo'lardi.
-        val repo = RecordingsRepository(api)
-        enqueue(200, """{}""")
-        assertTrue(runBlocking { repo.downloadUrl("r1") }.isFailure)
-    }
-
     // ─── Kutish xonasi ────────────────────────────────────────────────────────
 
     @Test

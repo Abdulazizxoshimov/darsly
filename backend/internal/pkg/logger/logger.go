@@ -40,11 +40,6 @@ func SafeEmail(key, email string) Field {
 	return zap.String(key, MaskEmail(email))
 }
 
-// SafePhone masks phone before logging: +998901234567 → ***********67
-func SafePhone(key, phone string) Field {
-	return zap.String(key, MaskPhone(phone))
-}
-
 // SafeString applies full PII masking to any free-form string.
 func SafeString(key, value string) Field {
 	return zap.String(key, MaskPII(value))
@@ -144,20 +139,6 @@ func (l *loggerImpl) fromCtx(ctx context.Context, extra []Field) []Field {
 
 // ─── Utility functions ────────────────────────────────────────────────────────
 
-func GetNamed(l Logger, name string) Logger {
-	if v, ok := l.(*loggerImpl); ok {
-		return &loggerImpl{zap: v.zap.Named(name), lokiCore: v.lokiCore}
-	}
-	return l
-}
-
-func WithFields(l Logger, fields ...Field) Logger {
-	if v, ok := l.(*loggerImpl); ok {
-		return &loggerImpl{zap: v.zap.With(fields...), lokiCore: v.lokiCore}
-	}
-	return l
-}
-
 // Cleanup flushes buffered log entries (stdout + Loki). Call on shutdown.
 func Cleanup(l Logger) error {
 	if v, ok := l.(*loggerImpl); ok {
@@ -167,16 +148,6 @@ func Cleanup(l Logger) error {
 		return v.zap.Sync()
 	}
 	return nil
-}
-
-func GetZapLogger(l Logger) *zap.Logger {
-	if l == nil {
-		return newZapLogger(LevelInfo)
-	}
-	if v, ok := l.(*loggerImpl); ok {
-		return v.zap
-	}
-	return newZapLogger(LevelInfo)
 }
 
 // ─── Zap internals ────────────────────────────────────────────────────────────

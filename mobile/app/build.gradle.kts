@@ -277,7 +277,6 @@ dependencies {
 
     implementation(libs.sentry.android)
     implementation(libs.androidx.security.crypto)
-    implementation(libs.androidx.datastore.preferences)
 
     // ── Testlar ───────────────────────────────────────────────────────────────
     testImplementation(libs.junit)

@@ -53,9 +53,6 @@ type TelegramConfig struct {
 	FileRoot string `json:"file_root"`
 }
 
-// Enabled — integratsiya sozlanganmi.
-func (t TelegramConfig) Enabled() bool { return strings.TrimSpace(t.BotToken) != "" }
-
 // LessonConfig — dars hayoti (PRODUCT.md «Dars hayoti», №2).
 //
 // Ikkala qoida ham SERVER tomonda: mentorning ilovasi yopilishi, telefoni

@@ -143,7 +143,7 @@ button {
 .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hidden { display: none !important; }
 .full { width: 100%; }
-.mt-1 { margin-top: 4px; } .mt-2 { margin-top: 8px; } .mt-4 { margin-top: 16px; }
+.mt-2 { margin-top: 8px; } .mt-4 { margin-top: 16px; }
 .cap { text-transform: capitalize; }
 
 /* ---------- Typography ---------- */
@@ -292,14 +292,6 @@ h1, h2, h3 { margin: 0; letter-spacing: -0.02em; }
   gap: 12px;
   color: var(--text-3);
   font-size: 14px;
-}
-
-/* ---------- Skeleton ---------- */
-.skeleton {
-  background: linear-gradient(90deg, var(--elevated) 25%, var(--hover) 50%, var(--elevated) 75%);
-  background-size: 200% 100%;
-  animation: shimmer 1.3s infinite;
-  border-radius: var(--r-md);
 }
 
 /* ---------- Modal ---------- */
@@ -560,23 +552,6 @@ h1, h2, h3 { margin: 0; letter-spacing: -0.02em; }
   justify-content: center;
   padding: 24px;
 }
-
-/* ---------- Dashboard ---------- */
-.grid-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 16px;
-}
-.lesson-card {
-  background: var(--card);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--r-2xl);
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  transition: border-color 0.15s;
-}
-.lesson-card:hover { border-color: var(--border-muted); }
 
 /* ---------- Stat-kartalar ---------- */
 .stats {
@@ -1668,7 +1643,6 @@ h1, h2, h3 { margin: 0; letter-spacing: -0.02em; }
 
 /* ---------- Animations ---------- */
 @keyframes spin { to { transform: rotate(360deg); } }
-@keyframes shimmer { to { background-position: -200% 0; } }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes pulseDot { 0%, 100% { opacity: 0.35; transform: scale(0.85); } 50% { opacity: 1; transform: scale(1.1); } }
 @keyframes blinkRec { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }

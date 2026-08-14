@@ -5,11 +5,8 @@ import (
 	"context"
 	"fmt"
 	"html/template"
-	"net"
 	"net/smtp"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/zoom/darsly/internal/pkg/config"
 	"github.com/zoom/darsly/internal/pkg/logger"
@@ -40,16 +37,6 @@ type emailSender struct {
 	log logger.Logger
 }
 
-// Ping dials the SMTP server to verify connectivity. Used at startup.
-func Ping(cfg config.EmailConfig) error {
-	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
-	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
-	if err != nil {
-		return fmt.Errorf("smtp ping %s: %w", addr, err)
-	}
-	conn.Close()
-	return nil
-}
 
 type nopSender struct{}
 

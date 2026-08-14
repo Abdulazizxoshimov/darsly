@@ -1,7 +1,7 @@
 // @title           Jonly API
 // @version         1.0
 // @description     Jonly — jonli video-dars platformasi backend API.
-// @host            localhost:8080
+// @host            localhost:8087
 // @BasePath        /
 // @securityDefinitions.apikey BearerAuth
 // @in header

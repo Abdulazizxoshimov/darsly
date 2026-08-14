@@ -97,14 +97,6 @@ func Unauthorized(msg string) *AppError {
 	}
 }
 
-func Validation(msg string) *AppError {
-	return &AppError{
-		HTTPStatus: http.StatusUnprocessableEntity,
-		Code:       CodeValidation,
-		Message:    msg,
-	}
-}
-
 func BadRequest(msg string) *AppError {
 	return &AppError{
 		HTTPStatus: http.StatusBadRequest,
@@ -140,15 +132,6 @@ func Internal(err error) *AppError {
 	}
 }
 
-func Wrap(err error, msg string) *AppError {
-	return &AppError{
-		HTTPStatus: http.StatusInternalServerError,
-		Code:       CodeInternal,
-		Message:    msg,
-		Err:        err,
-	}
-}
-
 // ─── Type checks ──────────────────────────────────────────────────────────────
 
 func As(err error) *AppError {
@@ -169,11 +152,6 @@ func IsConflict(err error) bool {
 	return ae != nil && ae.Code == CodeConflict
 }
 
-func IsValidation(err error) bool {
-	ae := As(err)
-	return ae != nil && ae.Code == CodeValidation
-}
-
 func IsForbidden(err error) bool {
 	ae := As(err)
 	return ae != nil && ae.Code == CodeForbidden
@@ -186,3 +164,4 @@ func IsBadRequest(err error) bool {
 	ae := As(err)
 	return ae != nil && ae.Code == CodeBadRequest
 }
+

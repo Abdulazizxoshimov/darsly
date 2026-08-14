@@ -45,13 +45,3 @@ func MaskEmail(email string) string {
 	}
 	return string(parts[0][0]) + "***@" + parts[1]
 }
-
-// MaskPhone keeps only the last 2 digits.
-//
-//	MaskPhone("+998901234567")  →  "***********67"
-func MaskPhone(phone string) string {
-	if len(phone) < 3 {
-		return "***"
-	}
-	return strings.Repeat("*", len(phone)-2) + phone[len(phone)-2:]
-}

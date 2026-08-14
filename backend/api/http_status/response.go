@@ -128,11 +128,6 @@ func Forbidden(c *gin.Context, msg string) {
 	c.JSON(http.StatusForbidden, errorResponse{Code: "FORBIDDEN", Message: msg})
 }
 
-// NotFound sends a 404 response.
-func NotFound(c *gin.Context, msg string) {
-	c.JSON(http.StatusNotFound, errorResponse{Code: "NOT_FOUND", Message: msg})
-}
-
 // InternalError sends a 500 response.
 func InternalError(c *gin.Context) {
 	c.JSON(http.StatusInternalServerError, errorResponse{Code: "INTERNAL_ERROR", Message: "internal server error"})

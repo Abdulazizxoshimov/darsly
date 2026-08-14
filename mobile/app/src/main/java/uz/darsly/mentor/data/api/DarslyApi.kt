@@ -313,27 +313,9 @@ interface DarslyApi {
     @POST("api/v1/notifications/read-all")
     suspend fun markAllNotificationsRead()
 
-    // ─── Yozuvlar (Egress → MinIO) ────────────────────────────────────────────
-
-    /** `hs.Success(items)` — sahifalanmagan ro'yxat, `total` yo'q. */
-    @GET("api/v1/lessons/{id}/recordings")
-    suspend fun recordings(@Path("id") lessonId: String): Envelope<List<Recording>>
-
     /** Dars arxivi (video + chat + materiallar) — YAGONA so'rov. */
     @GET("api/v1/lessons/{id}/archive")
     suspend fun lessonArchive(@Path("id") lessonId: String): Envelope<LessonArchiveDto>
-
-    /** Yozib olishni boshlaydi — 201 + yaratilgan yozuv. */
-    @POST("api/v1/lessons/{id}/recording/start")
-    suspend fun startRecording(@Path("id") lessonId: String): Envelope<Recording>
-
-    /** To'xtatadi (204). Status `processing` ga o'tadi, keyin webhook `ready` qiladi. */
-    @POST("api/v1/recordings/{id}/stop")
-    suspend fun stopRecording(@Path("id") recordingId: String)
-
-    /** Vaqtinchalik (presigned) yuklab olish havolasi. */
-    @GET("api/v1/recordings/{id}/download")
-    suspend fun recordingDownload(@Path("id") recordingId: String): Envelope<RecordingDownload>
 
     // ─── Client-side (lokal) yozuv — «Zoom local recording» ─────────────────
     /** Lokal yozuv boshlanganda yozuv qatorini yaratadi (201 + Recording). */
