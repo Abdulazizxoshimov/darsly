@@ -269,6 +269,7 @@ func Run(cfg *config.Config) error {
 		RecordingRetention: cfg.Recording.Retention,
 		Telegram:           tgClient,
 		RecordingCacheTTL:  cfg.Recording.CacheTTL,
+		RecordingLocalMode: cfg.LiveKit.RecordingLocalMode,
 	})
 
 	h := BuildHandler(uc, hub, lkClient, cfg)
@@ -362,7 +363,7 @@ func Run(cfg *config.Config) error {
 	go func() {
 		defer workersWG.Done()
 		worker.NewTelegramUploadWorker(
-			store.Recording, store.Lesson, minioClient, tgClient,
+			store.Recording, store.Lesson, store.User, minioClient, tgClient,
 			uc.Notification, botWorker, worker.DefaultTelegramUploadConfig(), log,
 		).Run(workerCtx)
 	}()

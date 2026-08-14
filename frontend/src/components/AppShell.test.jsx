@@ -37,7 +37,7 @@ describe('AppShell', () => {
     // "Darslar" topbar sarlavhasida ham bor — shuning uchun link roli bilan.
     expect(screen.getByRole('link', { name: 'Darslar' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Jadval' })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Yozuvlar' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Arxiv' })).toBeInTheDocument()
     expect(screen.queryByText('Foydalanuvchilar')).not.toBeInTheDocument()
   })
 

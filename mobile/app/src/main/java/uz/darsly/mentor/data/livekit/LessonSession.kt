@@ -16,6 +16,9 @@ import io.livekit.android.room.Room
 import io.livekit.android.room.participant.VideoTrackPublishDefaults
 import io.livekit.android.room.track.CameraPosition
 import io.livekit.android.room.track.LocalAudioTrack
+import io.livekit.android.room.track.AudioTrack
+import io.livekit.android.room.track.LocalScreencastVideoTrack
+import java.io.File
 import io.livekit.android.room.track.LocalVideoTrack
 import io.livekit.android.room.track.LocalVideoTrackOptions
 import io.livekit.android.room.track.Track
@@ -227,6 +230,62 @@ class LessonSession(
         room.localParticipant.setScreenShareEnabled(false)
         _screenShareOn.value = false
     }
+
+    // ─── Client-side (lokal) yozib olish ────────────────────────────────────────
+
+    private var localRecorder: LocalRecorder? = null
+    private var localRecFile: File? = null
+
+    /**
+     * Telefon ekranни (va ovozни) LOKAL faylga yozishni boshlaydi — ekran
+     * ulashish MediaProjection'idan IKKINCHI VirtualDisplay olib. Ovoz LiveKit
+     * audio treklaridan (ustoz + o'quvchilar) [AudioTrack.addSink] orqali.
+     *
+     * @return yozuv fayli (muvaffaqiyat) yoki null (qo'llab-quvvatlanmadi →
+     *         chaqiruvchi server egress fallback'iga o'tadi).
+     */
+    fun startLocalRecording(lessonId: String, bitrate: Int): File? {
+        // Ekran-ulashish VIDEO trekini olamiz — LocalRecorder unga VideoSink
+        // ulab kadrlarni oladi (Android 14+ 2-VirtualDisplayni bloklaydi).
+        val screenTrack = room.localParticipant
+            .getTrackPublication(Track.Source.SCREEN_SHARE)?.track as? LocalScreencastVideoTrack ?: return null
+
+        val localAudio = room.localParticipant
+            .getTrackPublication(Track.Source.MICROPHONE)?.track as? AudioTrack
+        val remoteAudio = room.remoteParticipants.values
+            .flatMap { it.audioTrackPublications }
+            .mapNotNull { it.second as? AudioTrack }
+
+        val dir = File(ctx.filesDir, "recordings").apply { mkdirs() }
+        val file = File(dir, "$lessonId.mp4")
+
+        val rec = LocalRecorder(file)
+        return if (rec.start(screenTrack, bitrate, localAudio, remoteAudio)) {
+            localRecorder = rec
+            localRecFile = file
+            file
+        } else {
+            null
+        }
+    }
+
+    /** Lokal yozuvни to'xtatadi va faylni qaytaradi (yuklash uchun). */
+    fun stopLocalRecording(): File? {
+        val rec = localRecorder ?: return null
+        localRecorder = null
+        rec.stop()
+        val file = localRecFile
+        localRecFile = null
+        return file?.takeIf { it.exists() && it.length() > 0 }
+    }
+
+    /** O'quvchi dars o'rtasida qo'shilsa/chiqsa — lokal yozuvга ovozини ulash/uzish. */
+    fun localRecordingOnRemoteAudio(track: AudioTrack, added: Boolean) {
+        val rec = localRecorder ?: return
+        if (added) rec.addRemoteAudio(track) else rec.removeRemoteAudio(track)
+    }
+
+    fun isLocalRecording(): Boolean = localRecorder != null
 
     /**
      * Ekran ulashish bayrog'ini LiveKit'dagi HAQIQIY holat bilan tenglashtiradi.

@@ -40,7 +40,11 @@ type useCase struct {
 	// cacheTTL — Telegramdan tiklangan nusxa MinIO'da qancha turadi
 	// (RECORDING_CACHE_TTL_HOURS). 0 → default 24 soat.
 	cacheTTL time.Duration
-	log      logger.Logger
+	// localMode — client-side (telefon) yozuv rejimi (RECORDING_MODE=local).
+	// true bo'lsa server egress AVTOMATIK boshlanmaydi — telefon o'zi yozib
+	// yuklaydi. Qo'lda `StartRecording` (egress) baribir ishlaydi (fallback).
+	localMode bool
+	log       logger.Logger
 }
 
 func New(
@@ -53,6 +57,7 @@ func New(
 	retention time.Duration,
 	tgc Telegram,
 	cacheTTL time.Duration,
+	localMode bool,
 	log logger.Logger,
 ) UseCase {
 	if cacheTTL <= 0 {
@@ -60,7 +65,8 @@ func New(
 	}
 	return &useCase{
 		repo: repo, lessonRepo: lessonRepo, livekit: lk, minio: mc, s3: s3,
-		cache: cache, retention: retention, telegram: tgc, cacheTTL: cacheTTL, log: log,
+		cache: cache, retention: retention, telegram: tgc, cacheTTL: cacheTTL,
+		localMode: localMode, log: log,
 	}
 }
 
@@ -112,6 +118,13 @@ func (uc *useCase) activeFor(ctx context.Context, lessonID string) *entity.Recor
 // EnsureRecording — majburiy yozib olishning kirish nuqtasi. Izohni
 // [UseCase.EnsureRecording] da qara.
 func (uc *useCase) EnsureRecording(ctx context.Context, lessonID string) error {
+	if uc.localMode {
+		// Client-side rejim: yozuvni TELEFON o'zi qiladi (to'liq sifat, lokal),
+		// server egress'ini AVTOMATIK boshlamaymiz. Telefon `LocalStart` bilan
+		// yozuv qatorini yaratadi. (Qo'lda `StartRecording` egress fallbacki
+		// baribir ochiq qoladi.)
+		return nil
+	}
 	if !uc.livekit.Enabled() {
 		// Video servis sozlanmagan — bu dev muhitida odatiy holat, xato emas.
 		return nil
@@ -299,6 +312,101 @@ func (uc *useCase) startEgress(ctx context.Context, lessonID string) (*entity.Re
 
 	metrics.RecordingsStarted.Inc()
 	return rec, nil
+}
+
+// ─── Client-side (lokal) yozuv ─────────────────────────────────────────────
+
+// LocalStart — telefon lokal yozuvni boshlaganda yozuv qatorini yaratadi.
+func (uc *useCase) LocalStart(ctx context.Context, mentorID, lessonID string) (*entity.Recording, error) {
+	l, err := shared.OwnedLesson(ctx, uc.lessonRepo, mentorID, lessonID)
+	if err != nil {
+		return nil, err
+	}
+	if l.Status != entity.LessonStatusLive {
+		return nil, apperr.BadRequest("dars jonli emas")
+	}
+	// Idempotent: shu dars uchun allaqachon faol yozuv bo'lsa o'shani qaytar
+	// (telefon qayta ulanib LocalStart'ni takror chaqirsa dublikat bo'lmasin).
+	if active := uc.activeFor(ctx, lessonID); active != nil {
+		return active, nil
+	}
+	recID := uuid.NewString()
+	now := time.Now().UTC()
+	rec := &entity.Recording{
+		ID:       recID,
+		LessonID: lessonID,
+		// Sintetik egress_id: NOT NULL+UNIQUE cheklovni qondiradi va mavjud
+		// egress-kalitли metodlar (MarkReady/EnqueueTranscode/EnqueueTelegram)
+		// migratsiyasiz qayta ishlatiladi. `local:` prefiksi haqiqiy egress
+		// ID'laridan (`EG_...`) ajratib turadi.
+		EgressID:  "local:" + recID,
+		ObjectKey: fmt.Sprintf("recordings/%s/%s.mp4", lessonID, recID),
+		Status:    entity.RecordingStatusRecording,
+		StartedAt: now,
+		CreatedAt: now,
+	}
+	if err := uc.repo.Create(ctx, rec); err != nil {
+		uc.log.Error(ctx, "recording.LocalStart: db error", logger.SafeString("err", err.Error()))
+		return nil, err
+	}
+	metrics.RecordingsStarted.Inc()
+	uc.log.Info(ctx, "recording.LocalStart: telefon lokal yozuvi boshlandi",
+		logger.String("lesson_id", lessonID), logger.String("recording_id", recID))
+	return rec, nil
+}
+
+// LocalUploadURL — telefon faylni to'g'ridan MinIO'ga PUT qilishi uchun havola.
+func (uc *useCase) LocalUploadURL(ctx context.Context, mentorID, recordingID string) (string, error) {
+	rec, err := uc.owned(ctx, mentorID, recordingID)
+	if err != nil {
+		return "", err
+	}
+	u, err := uc.minio.PresignedPutURL(ctx, rec.ObjectKey, downloadTTL)
+	if err != nil {
+		uc.log.Error(ctx, "recording.LocalUploadURL: presign put failed",
+			logger.String("recording_id", recordingID), logger.SafeString("err", err.Error()))
+		return "", apperr.Internal(err)
+	}
+	return u, nil
+}
+
+// LocalComplete — telefon yuklab bo'lgach yozuvni tayyor qiladi + navbatga qo'yadi.
+func (uc *useCase) LocalComplete(ctx context.Context, mentorID, recordingID string, durationSec int, endedAt time.Time) error {
+	rec, err := uc.owned(ctx, mentorID, recordingID)
+	if err != nil {
+		return err
+	}
+	// ⭐ TASDIQLASH: fayl haqiqatan MinIO'da bormi va o'lchamи. Telefon
+	// "yukladim" desa ham, ishonch server tekshiruvidan keladi — aks holda
+	// bo'sh/yo'q faylni "tayyor" deb belgilab, retention server nusxasini
+	// o'chirishга ruxsat berardi (ma'lumot yo'qolishi).
+	size, err := uc.minio.Stat(ctx, rec.ObjectKey)
+	if err != nil {
+		uc.log.Warn(ctx, "recording.LocalComplete: fayl MinIO'da topilmadi",
+			logger.String("recording_id", recordingID), logger.SafeString("err", err.Error()))
+		return apperr.BadRequest("yozuv fayli topilmadi — qayta yuklang")
+	}
+	if endedAt.IsZero() {
+		endedAt = time.Now().UTC()
+	}
+	// Egress `completed` shoxi bilan AYNAN bir xil (sintetik egress_id bilan).
+	if err := uc.repo.MarkReady(ctx, rec.EgressID, rec.ObjectKey, durationSec, size, endedAt); err != nil {
+		uc.log.Error(ctx, "recording.LocalComplete: mark ready failed", logger.SafeString("err", err.Error()))
+		return err
+	}
+	if err := uc.repo.EnqueueTranscode(ctx, rec.EgressID); err != nil {
+		uc.log.Warn(ctx, "recording.LocalComplete: enqueue transcode failed",
+			logger.String("recording_id", rec.ID), logger.SafeString("err", err.Error()))
+	}
+	if uc.telegramEnabled() {
+		if err := uc.repo.EnqueueTelegram(ctx, rec.EgressID); err != nil {
+			uc.log.Warn(ctx, "recording.LocalComplete: enqueue telegram failed",
+				logger.String("recording_id", rec.ID), logger.SafeString("err", err.Error()))
+		}
+	}
+	uc.log.Info(ctx, "recording.LocalComplete: yozuv tayyor",
+		logger.String("recording_id", rec.ID), logger.String("size_bytes", fmt.Sprint(size)))
+	return nil
 }
 
 func (uc *useCase) StopRecording(ctx context.Context, mentorID, recordingID string) error {

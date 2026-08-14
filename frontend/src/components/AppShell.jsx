@@ -13,22 +13,24 @@ import BrandMark from './BrandMark'
 const NAV = [
   { to: '/app', label: 'Darslar', icon: LayoutGrid, end: true },
   { to: '/app/schedule', label: 'Jadval', icon: Calendar },
-  { to: '/app/recordings', label: 'Yozuvlar', icon: Film },
+  // «Arxiv» — o'tgan darslar (video + chat). Ilgari «Yozuvlar» deb nomlangan.
+  { to: '/app/recordings', label: 'Arxiv', icon: Film },
   // Qora ro'yxat — mentorning doimiy bloklari (darsdan «Doimiy» chiqarilganlar).
   { to: '/app/blocklist', label: "Qora ro'yxat", icon: ShieldOff },
 ]
 
 const ADMIN_NAV = [{ to: '/app/users', label: 'Foydalanuvchilar', icon: Users }]
 
-const EXTRA_NAV = [
-  { to: '/app/notifications', label: 'Bildirishnomalar', icon: Bell },
-  { to: '/app/profile', label: 'Profil', icon: User },
-]
+// Bildirishnomalar bu yerda EMAS — u alohida bo'lim emas, faqat topbar
+// qo'ng'irog'idan ochiladi (mobil va boshqa ilovalardagi naqsh).
+const EXTRA_NAV = [{ to: '/app/profile', label: 'Profil', icon: User }]
 
 function pageTitle(pathname, isAdmin) {
   // Arxiv sahifasi sidebar bo'limi EMAS (unga dars qatoridan kiriladi), lekin
   // topbar sarlavhasiz qolmasin.
   if (pathname.endsWith('/archive')) return 'Dars arxivi'
+  // Bildirishnomalar — qo'ng'iroqdan ochiladi, nav ro'yxatida yo'q.
+  if (pathname.endsWith('/notifications')) return 'Bildirishnomalar'
   const all = [...NAV, ...(isAdmin ? ADMIN_NAV : []), ...EXTRA_NAV]
   // Eng aniq (uzun) mos kelgan yo'l g'olib — '/app' hammaga mos kelmasin.
   const hit = all

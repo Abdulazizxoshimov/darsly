@@ -19,6 +19,14 @@ type Client interface {
 	// Chaqiruvchi `Close()` qilishi SHART.
 	Get(ctx context.Context, objectName string) (io.ReadCloser, error)
 	PresignedURL(ctx context.Context, objectName string, expires time.Duration) (string, error)
+	// PresignedPutURL — klient (telefon) to'g'ridan-to'g'ri obyektni YUKLASHi
+	// uchun imzolangan PUT havolasi. Katta fayllar (dars yozuvi ~1 GB) uchun
+	// server-proxy multipart o'rniga: telefon → MinIO to'g'ridan.
+	PresignedPutURL(ctx context.Context, objectName string, expires time.Duration) (string, error)
+	// Stat — obyekt mavjudligini va o'lchamini qaytaradi (client upload'ni
+	// TASDIQLASH uchun: telefon "yukladim" desa, backend haqiqatan borligini
+	// va o'lchamini tekshiradi). Obyekt yo'q → xato.
+	Stat(ctx context.Context, objectName string) (int64, error)
 	Delete(ctx context.Context, objectName string) error
 	EnsureBucket(ctx context.Context) error
 }
@@ -41,6 +49,12 @@ func (nopClient) Get(_ context.Context, _ string) (io.ReadCloser, error) {
 }
 func (nopClient) PresignedURL(_ context.Context, _ string, _ time.Duration) (string, error) {
 	return "", fmt.Errorf("minio: not configured")
+}
+func (nopClient) PresignedPutURL(_ context.Context, _ string, _ time.Duration) (string, error) {
+	return "", fmt.Errorf("minio: not configured")
+}
+func (nopClient) Stat(_ context.Context, _ string) (int64, error) {
+	return 0, fmt.Errorf("minio: not configured")
 }
 func (nopClient) Delete(_ context.Context, _ string) error {
 	return fmt.Errorf("minio: not configured")
@@ -116,6 +130,26 @@ func (c *minioClient) PresignedURL(ctx context.Context, objectName string, expir
 		return "", fmt.Errorf("minio: presign %q: %w", objectName, err)
 	}
 	return u.String(), nil
+}
+
+func (c *minioClient) PresignedPutURL(ctx context.Context, objectName string, expires time.Duration) (string, error) {
+	client := c.mc
+	if c.presign != nil {
+		client = c.presign // ochiq endpointga imzolash (telefon yeta oladigan)
+	}
+	u, err := client.PresignedPutObject(ctx, c.bucket, objectName, expires)
+	if err != nil {
+		return "", fmt.Errorf("minio: presign put %q: %w", objectName, err)
+	}
+	return u.String(), nil
+}
+
+func (c *minioClient) Stat(ctx context.Context, objectName string) (int64, error) {
+	info, err := c.mc.StatObject(ctx, c.bucket, objectName, minio.StatObjectOptions{})
+	if err != nil {
+		return 0, fmt.Errorf("minio: stat %q: %w", objectName, err)
+	}
+	return info.Size, nil
 }
 
 func (c *minioClient) Delete(ctx context.Context, objectName string) error {

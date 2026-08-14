@@ -419,7 +419,8 @@ func (w *TelegramBotWorker) shareVideo(ctx context.Context, cb *tg.CallbackQuery
 	}
 
 	w.answer(ctx, cb.ID, "Yuborilmoqda…")
-	if _, err := w.bot.SendVideoByFileID(ctx, chatID, *rec.TelegramFileID, archiveCaption(rec, l)); err != nil {
+	// Mentorning O'Z o'quvchilar guruhiga ulashish — mentor nomi ortiqcha (bo'sh).
+	if _, err := w.bot.SendVideoByFileID(ctx, chatID, *rec.TelegramFileID, archiveCaption(rec, l, "")); err != nil {
 		w.log.Warn(ctx, "telegram bot: guruhga yuborilmadi",
 			logger.String("recording_id", recID), logger.SafeString("err", err.Error()))
 		w.editDone(ctx, cb, "Yuborib bo'lmadi: "+truncateErr(err.Error(), 200))

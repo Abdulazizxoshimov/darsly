@@ -35,6 +35,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import uz.darsly.mentor.ui.common.NotificationBell
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -66,6 +67,8 @@ import uz.darsly.mentor.ui.theme.neonGlow
 @Composable
 fun ScheduleScreen(
     onOpenLesson: (Lesson) -> Unit,
+    unread: Int,
+    onOpenNotifications: () -> Unit,
     vm: ScheduleViewModel = hiltViewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
@@ -83,7 +86,12 @@ fun ScheduleScreen(
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
-        topBar = { TopAppBar(title = { Text("Jadval") }) },
+        topBar = {
+            TopAppBar(
+                title = { Text("Jadval") },
+                actions = { NotificationBell(unread = unread, onClick = onOpenNotifications) },
+            )
+        },
         floatingActionButton = {
             // Ekranning asosiy harakati — Darslar FAB'i bilan bir xil B uslubi.
             ExtendedFloatingActionButton(

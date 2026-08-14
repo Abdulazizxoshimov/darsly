@@ -10,11 +10,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarMonth
-import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.VideoCall
-import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
+import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -35,8 +33,9 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import uz.darsly.mentor.data.livekit.LessonSessionHolder
-import uz.darsly.mentor.data.repo.NotificationsBadge
 import uz.darsly.mentor.service.LessonService
+import uz.darsly.mentor.ui.archive.ArchiveDetailScreen
+import uz.darsly.mentor.ui.archive.ArchiveListScreen
 import uz.darsly.mentor.ui.auth.PasswordResetScreen
 import uz.darsly.mentor.ui.blocklist.BlocklistScreen
 import uz.darsly.mentor.data.api.Lesson
@@ -45,14 +44,12 @@ import uz.darsly.mentor.ui.lessons.LessonsScreen
 import uz.darsly.mentor.ui.login.LoginScreen
 import uz.darsly.mentor.ui.notifications.NotificationsScreen
 import uz.darsly.mentor.ui.profile.ProfileScreen
-import uz.darsly.mentor.ui.recordings.RecordingsScreen
 import uz.darsly.mentor.ui.room.RoomScreen
 import uz.darsly.mentor.ui.schedule.ScheduleScreen
 import androidx.hilt.navigation.compose.hiltViewModel
 import uz.darsly.mentor.ui.AppViewModel
 import uz.darsly.mentor.ui.theme.DarslyTheme
 import uz.darsly.mentor.ui.update.UpdateGate
-import uz.darsly.mentor.util.NotificationFormat
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -77,8 +74,12 @@ private object Routes {
     // Pastki paneldagi to'rt bo'lim.
     const val LESSONS = "lessons"
     const val SCHEDULE = "schedule"
-    const val NOTIFICATIONS = "notifications"
+    const val ARCHIVE = "archive"
     const val PROFILE = "profile"
+
+    // Bildirishnomalar pastki panelda EMAS — asosiy ekranlarning o'ng-tepasidagi
+    // qo'ng'iroqdan ochiladi (to'liq ekran, "orqaga" bilan qaytadi).
+    const val NOTIFICATIONS = "notifications"
 
     const val ROOM = "room/{lessonId}"
     fun room(id: String) = "room/$id"
@@ -87,13 +88,12 @@ private object Routes {
     const val BLOCKLIST = "blocklist"
 
     /**
-     * Yozuvlar ekrani sarlavhada dars NOMINI ko'rsatadi, shuning uchun u
-     * argument sifatida uzatiladi. Nom ichida `/` yoki `?` bo'lishi mumkin —
-     * shu sabab `Uri.encode` majburiy, aks holda marshrut bo'linib ketardi
-     * ("Algebra 1/2" nomli dars ekranni ochmasdi).
+     * Arxiv detali — video (ilova ichida) + chat. Sarlavhada dars NOMI, shuning
+     * uchun argument. Nom ichida `/` yoki `?` bo'lishi mumkin → `Uri.encode`
+     * majburiy, aks holda marshrut bo'linardi.
      */
-    const val RECORDINGS = "recordings/{lessonId}?title={title}"
-    fun recordings(id: String, title: String) = "recordings/$id?title=" + Uri.encode(title)
+    const val ARCHIVE_DETAIL = "archive/{lessonId}?title={title}"
+    fun archiveDetail(id: String, title: String) = "archive/$id?title=" + Uri.encode(title)
 }
 
 /** Pastki paneldagi bitta bo'lim. */
@@ -106,15 +106,14 @@ private data class Tab(
 /**
  * Pastki panel — Zoom naqshi: eng ko'p ishlatiladigan bo'limlar bir bosishda.
  *
- * Nega aynan shu to'rttasi: **Darslar** (kunlik ish), **Jadval** (rejalashtirish),
- * **Xabarlar** (nima o'tkazib yuborildi), **Kabinet** (sozlamalar va chiqish).
- * Yozuvlar bu yerda YO'Q — ular har doim aniq bir darsga tegishli, shuning uchun
- * dars kartasidagi menyudan ochiladi.
+ * **Darslar** (kunlik ish), **Jadval** (rejalashtirish), **Arxiv** (o'tgan
+ * darslar — video + chat), **Kabinet** (sozlamalar va chiqish). Bildirishnomalar
+ * bu yerda YO'Q — ular o'ng-tepadagi qo'ng'iroqda.
  */
 private val TABS = listOf(
     Tab(Routes.LESSONS, "Darslar", Icons.Default.VideoCall),
     Tab(Routes.SCHEDULE, "Jadval", Icons.Default.CalendarMonth),
-    Tab(Routes.NOTIFICATIONS, "Xabarlar", Icons.Default.Notifications),
+    Tab(Routes.ARCHIVE, "Arxiv", Icons.Default.VideoLibrary),
     Tab(Routes.PROFILE, "Kabinet", Icons.Default.Person),
 )
 
@@ -153,12 +152,15 @@ private fun AppNav(vm: AppViewModel = hiltViewModel()) {
     val showBottomBar = TABS.any { it.route == currentRoute }
     val unread by vm.unreadCount.collectAsStateWithLifecycle()
 
+    // Bildirishnomalar ekraniga o'tish — qo'ng'iroqdan (asosiy ekranlarda).
+    val openNotifications: () -> Unit = { nav.navigate(Routes.NOTIFICATIONS) }
+
     Scaffold(
         bottomBar = {
-            // Panel FAQAT asosiy bo'limlarda. Xona, yozuvlar va login ekranlarida
-            // u ekrandan joy o'g'irlardi va dars paytida chalg'itardi.
+            // Panel FAQAT asosiy bo'limlarda. Xona, arxiv detali va login
+            // ekranlarida u ekrandan joy o'g'irlardi va dars paytida chalg'itardi.
             if (showBottomBar) {
-                BottomBar(nav = nav, currentRoute = currentRoute, unread = unread)
+                BottomBar(nav = nav, currentRoute = currentRoute)
             }
         },
     ) { padding ->
@@ -204,7 +206,8 @@ private fun AppNav(vm: AppViewModel = hiltViewModel()) {
                     LessonActions.Primary.START,
                     LessonActions.Primary.RESUME,
                     -> nav.navigate(Routes.room(l.id))
-                    LessonActions.Primary.RECORDINGS -> nav.navigate(Routes.recordings(l.id, l.title))
+                    // Yakunlangan dars → arxiv (video + chat).
+                    LessonActions.Primary.RECORDINGS -> nav.navigate(Routes.archiveDetail(l.id, l.title))
                     LessonActions.Primary.NONE -> Unit // bekor qilingan dars
                 }
             }
@@ -212,12 +215,26 @@ private fun AppNav(vm: AppViewModel = hiltViewModel()) {
             composable(Routes.LESSONS) {
                 LessonsScreen(
                     onOpenLesson = openLesson,
-                    onOpenRecordings = { nav.navigate(Routes.recordings(it.id, it.title)) },
+                    onOpenRecordings = { nav.navigate(Routes.archiveDetail(it.id, it.title)) },
+                    unread = unread,
+                    onOpenNotifications = openNotifications,
                 )
             }
 
             composable(Routes.SCHEDULE) {
-                ScheduleScreen(onOpenLesson = openLesson)
+                ScheduleScreen(
+                    onOpenLesson = openLesson,
+                    unread = unread,
+                    onOpenNotifications = openNotifications,
+                )
+            }
+
+            composable(Routes.ARCHIVE) {
+                ArchiveListScreen(
+                    onOpen = { nav.navigate(Routes.archiveDetail(it.id, it.title)) },
+                    unread = unread,
+                    onOpenNotifications = openNotifications,
+                )
             }
 
             composable(Routes.NOTIFICATIONS) {
@@ -243,9 +260,9 @@ private fun AppNav(vm: AppViewModel = hiltViewModel()) {
                 RoomScreen(lessonId = lessonId, onLeave = { nav.popBackStack() })
             }
 
-            composable(Routes.RECORDINGS) { entry ->
+            composable(Routes.ARCHIVE_DETAIL) { entry ->
                 val lessonId = entry.arguments?.getString("lessonId") ?: return@composable
-                RecordingsScreen(
+                ArchiveDetailScreen(
                     lessonId = lessonId,
                     lessonTitle = entry.arguments?.getString("title").orEmpty(),
                     onBack = { nav.popBackStack() },
@@ -256,7 +273,7 @@ private fun AppNav(vm: AppViewModel = hiltViewModel()) {
 }
 
 @Composable
-private fun BottomBar(nav: NavHostController, currentRoute: String?, unread: Int) {
+private fun BottomBar(nav: NavHostController, currentRoute: String?) {
     NavigationBar {
         TABS.forEach { tab ->
             val selected = currentRoute == tab.route
@@ -273,19 +290,7 @@ private fun BottomBar(nav: NavHostController, currentRoute: String?, unread: Int
                         restoreState = true
                     }
                 },
-                icon = {
-                    if (tab.route == Routes.NOTIFICATIONS) {
-                        BadgedBox(
-                            badge = {
-                                NotificationFormat.badgeLabel(unread)?.let { Badge { Text(it) } }
-                            },
-                        ) {
-                            Icon(tab.icon, contentDescription = tab.label)
-                        }
-                    } else {
-                        Icon(tab.icon, contentDescription = tab.label)
-                    }
-                },
+                icon = { Icon(tab.icon, contentDescription = tab.label) },
                 label = { Text(tab.label) },
             )
         }

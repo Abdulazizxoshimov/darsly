@@ -11,6 +11,16 @@ const (
 	DefaultLanguage = "uz"
 )
 
+// Rollar — JWT `role` claim va Casbin subject qiymatlari. `admin` mentor'ni
+// (u orqali student'ni) meros oladi; ownership tekshiruvida admin egalikdan
+// qat'i nazar boshqara oladi (masalan istalgan darsni o'chirish).
+const (
+	RoleAdmin   = "admin"
+	RoleMentor  = "mentor"
+	RoleStudent = "student"
+	RoleGuest   = "guest"
+)
+
 type User struct {
 	ID           string  `json:"id"`
 	Email        string  `json:"email"`

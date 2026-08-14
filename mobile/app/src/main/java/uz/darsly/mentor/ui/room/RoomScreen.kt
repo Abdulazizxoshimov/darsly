@@ -125,6 +125,15 @@ fun RoomScreen(
         }
     }
 
+    // Record tugmasi hinti (masalan "avval ekran ulashing") — Toast: ekran
+    // ulashilganda ilova fonda bo'lishi mumkin, Snackbar ko'rinmasdi.
+    LaunchedEffect(state.recordHint) {
+        state.recordHint?.let {
+            Toast.makeText(ctx, it, Toast.LENGTH_SHORT).show()
+            vm.recordHintShown()
+        }
+    }
+
     // 1) Media ruxsatlari (kamera, mikrofon, Android 13+ bildirishnoma).
     val permissions = buildList {
         add(Manifest.permission.CAMERA)
@@ -407,7 +416,13 @@ fun RoomScreen(
     // ro'yxati va monospace jurnal. Endi Zoom naqshi: sarlavha → sahna → boshqaruv.
     Scaffold(
         snackbarHost = { SnackbarHost(waitingSnackbar) },
-        topBar = { RoomTopBar(state, onLeave = { if (state.lessonActive) confirmLeave = true else { vm.leave(); onLeave() } }) },
+        topBar = {
+            RoomTopBar(
+                state,
+                onToggleRecording = { vm.toggleRecording() },
+                onLeave = { if (state.lessonActive) confirmLeave = true else { vm.leave(); onLeave() } },
+            )
+        },
         bottomBar = {
             ControlBar(
                 micOn = state.micOn,
@@ -587,6 +602,9 @@ fun RoomScreen(
                 onDismiss = { showMore = false },
                 onReaction = { emoji -> vm.sendReaction(emoji) },
                 onOpenPoll = { showPoll = true },
+                recording = state.isRecording,
+                canRecord = state.screenOn,
+                onToggleRecording = { vm.toggleRecording() },
                 autoBackground = autoBackground,
                 onAutoBackgroundChange = {
                     autoBackground = it
@@ -616,7 +634,7 @@ fun RoomScreen(
  * ular maketni buzib, satr o'rtasidan uzilib ketardi (QA topilmasi B-7).
  */
 @Composable
-private fun RoomTopBar(state: RoomUiState, onLeave: () -> Unit) {
+private fun RoomTopBar(state: RoomUiState, onToggleRecording: () -> Unit, onLeave: () -> Unit) {
     TopAppBar(
         navigationIcon = {
             IconButton(onClick = onLeave) {
@@ -643,12 +661,12 @@ private fun RoomTopBar(state: RoomUiState, onLeave: () -> Unit) {
             }
         },
         actions = {
-            // Yozuv indikatori — darsning O'Z sozlamasidan (`is_recording_enabled`).
-            // Yozib olish default yoniq va server uni avtomatik boshlaydi, lekin
-            // ustoz o'chirgan bo'lsa indikator ham yonmasligi kerak: maxfiylik
-            // masalasida interfeys yolg'on gapirmasligi shart.
-            if (state.connState == "connected" && state.recordingEnabled) {
+            // Yozuv indikatori — HAQIQIY holatdan (`isRecording`), sozlamadan emas.
+            // Ustoz Record bilan yozuvni boshqaradi; indikator yolg'on gapirmasligi
+            // shart (maxfiylik). Bosilsa — yozuvni to'xtatadi (tez kirish).
+            if (state.connState == "connected" && state.isRecording) {
                 Surface(
+                    onClick = onToggleRecording,
                     color = MaterialTheme.colorScheme.error,
                     shape = RoundedCornerShape(percent = 50),
                     // LIVE/REC indikatori — glow'ga ruxsat berilgan uch joydan biri.

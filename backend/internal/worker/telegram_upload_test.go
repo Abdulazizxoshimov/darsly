@@ -42,6 +42,9 @@ func newUploadEnv(t *testing.T) *uploadEnv {
 	notifRepo := testutil.NewFakeNotifRepo()
 	bot := testutil.NewFakeTelegram()
 
+	userRepo := testutil.NewFakeUserRepo()
+	require.NoError(t, userRepo.Create(ctx, &entity.User{ID: "mentor1", FullName: "Ali Valiyev", Role: entity.RoleMentor}))
+
 	ended := time.Now().UTC().Add(-time.Hour)
 	require.NoError(t, recRepo.Create(ctx, &entity.Recording{
 		ID: uploadRecID, LessonID: retLessonID, EgressID: "eg-up",
@@ -55,7 +58,7 @@ func newUploadEnv(t *testing.T) *uploadEnv {
 	cfg.Backoff = []time.Duration{0, 0, 0} // 3 urinish, kutishsiz
 
 	return &uploadEnv{
-		w: worker.NewTelegramUploadWorker(recRepo, lrepo, mc, bot,
+		w: worker.NewTelegramUploadWorker(recRepo, lrepo, userRepo, mc, bot,
 			notification.New(notifRepo, ws.NewHub(testutil.NewLogger()), testutil.NewLogger()),
 			nil, cfg, testutil.NewLogger()),
 		recRepo: recRepo, bot: bot, notif: notifRepo, minio: mc,
@@ -80,6 +83,9 @@ func TestTelegramUpload_Success(t *testing.T) {
 	require.NotNil(t, rec.TelegramSentAt, "muvaffaqiyat tasdiqlanishi kerak")
 	require.NotNil(t, rec.TelegramFileID, "file_id siz yozuvni tiklab bo'lmaydi")
 	require.Equal(t, 1, e.bot.Sent[e.bot.ArchiveID], "arxiv guruhiga bir marta yuborilishi kerak")
+	require.Len(t, e.bot.VideoCaptions, 1)
+	require.Contains(t, e.bot.VideoCaptions[0], "Ali Valiyev", "caption mentor nomini o'z ichiga olishi kerak")
+	require.Contains(t, e.bot.VideoCaptions[0], "Algebra", "caption dars nomini o'z ichiga olishi kerak")
 }
 
 // ⭐ Yozuv IKKI MARTA yuborilmaydi: birinchi muvaffaqiyatdan keyin navbatdan

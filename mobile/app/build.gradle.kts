@@ -64,7 +64,7 @@ android {
         applicationId = "uz.darsly.mentor"
         minSdk = 26
         targetSdk = 35
-        versionCode = 5
+        versionCode = 8
         // DIQQAT (M42): bu qiymat `GET /api/v1/app-config` dagi `min_version` bilan
         // solishtiriladi. Serverda hozir min_version=1.0.0 — spike'dagi "0.1.0-spike"
         // qolsa ilova o'zini bloklab qo'yardi. R1 bloki = 1.0.0.
@@ -75,7 +75,10 @@ android {
         // 1.3.0 — Zoom pariteti (docs/PRODUCT.md «Yozuv sifati»): ulashish
         //         manbasi qurilma nisbatidan (qora yo'l yo'q) va ulashish
         //         boshlanishida ilova o'zini fonga oladi.
-        versionName = "1.3.0"
+        // 1.4.0 — «Arxiv» bo'limi: o'tgan darslar video (ilova ichida pleyer) +
+        //         Telegram-uslub chat paneli; bildirishnomalar endi o'ng-tepadagi
+        //         qo'ng'iroqda (alohida bo'lim emas).
+        versionName = "1.6.0"
     }
 
     buildFeatures {
@@ -258,6 +261,10 @@ dependencies {
 
     // Video (SFU)
     implementation(libs.livekit.android)
+
+    // Arxiv yozuvini ilova ichida o'ynatish (ExoPlayer + PlayerView).
+    implementation(libs.androidx.media3.exoplayer)
+    implementation(libs.androidx.media3.ui)
 
     // M1 — token EncryptedSharedPreferences'da (androidx.security:security-crypto 1.1.0).
     // Crash-hisobotlari (M15). `sentry-android` NDK handler'ini ham olib keladi —

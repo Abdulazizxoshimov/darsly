@@ -296,6 +296,70 @@ data class RecordingDownload(
     @Json(name = "size_bytes") val sizeBytes: Long = 0,
 )
 
+/** `POST /recordings/{id}/upload-url` — telefon→MinIO to'g'ridan PUT havolasi. */
+@JsonClass(generateAdapter = true)
+data class UploadUrl(
+    @Json(name = "url") val url: String,
+)
+
+/** `POST /recordings/{id}/complete` so'rovi (lokal yozuv yakuni). */
+@JsonClass(generateAdapter = true)
+data class CompleteRecordingReq(
+    @Json(name = "duration_sec") val durationSec: Int,
+    @Json(name = "ended_at") val endedAt: String? = null,
+)
+
+// ─── Dars arxivi (video + chat + materiallar) — entity.LessonArchive ──────────
+
+/** `GET /api/v1/lessons/{id}/archive` — dars arxivining YAGONA so'rovdagi surati. */
+@JsonClass(generateAdapter = true)
+data class LessonArchiveDto(
+    @Json(name = "lesson") val lesson: Lesson,
+    /** Yozuv topilmasa `null` (klient «yozuv yo'q» ko'rsatadi). */
+    @Json(name = "recording") val recording: ArchiveRecordingDto? = null,
+    /** ESKIDAN YANGIGA tartiblangan, o'chirilganlarsiz. */
+    @Json(name = "chat") val chat: List<ArchiveChatMessageDto> = emptyList(),
+    @Json(name = "materials") val materials: List<ArchiveMaterialDto> = emptyList(),
+)
+
+/** Arxivdagi yozuv — pleyer + holat. `url`/`telegramUrl` presigned/deep-link. */
+@JsonClass(generateAdapter = true)
+data class ArchiveRecordingDto(
+    @Json(name = "id") val id: String,
+    @Json(name = "status") val status: String = "processing",
+    @Json(name = "duration_sec") val durationSec: Int = 0,
+    @Json(name = "size_bytes") val sizeBytes: Long = 0,
+    /** Faqat `ready` da to'ladi (presigned). `expired` da `null`. */
+    @Json(name = "url") val url: String? = null,
+    @Json(name = "expires_at") val expiresAt: String? = null,
+    /** Arxiv guruhidagi videoga `t.me/c/...` havola; `null` → tugma ko'rsatilmaydi. */
+    @Json(name = "telegram_url") val telegramUrl: String? = null,
+)
+
+/** Arxivdagi chat xabari (`ChatFileDto` fayl uchun qayta ishlatiladi). */
+@JsonClass(generateAdapter = true)
+data class ArchiveChatMessageDto(
+    @Json(name = "id") val id: String,
+    @Json(name = "sender_identity") val senderIdentity: String = "",
+    @Json(name = "sender_name") val senderName: String = "",
+    @Json(name = "body") val body: String = "",
+    @Json(name = "to_identity") val toIdentity: String? = null,
+    @Json(name = "file") val file: ChatFileDto? = null,
+    @Json(name = "created_at") val createdAt: String = "",
+    /** Dars boshlanishidan necha soniya keyin (web sinxroni uchun; mobil ishlatmaydi). */
+    @Json(name = "offset_sec") val offsetSec: Int = 0,
+)
+
+/** Arxivda ulashilgan material (chatdagi fayl xabaridan). */
+@JsonClass(generateAdapter = true)
+data class ArchiveMaterialDto(
+    @Json(name = "name") val name: String = "",
+    @Json(name = "size") val size: Long = 0,
+    @Json(name = "mime") val mime: String = "",
+    @Json(name = "url") val url: String = "",
+    @Json(name = "created_at") val createdAt: String = "",
+)
+
 /**
  * Kutish xonasidagi kirish so'rovi — entity.WaitingRoomRequest (M27).
  *

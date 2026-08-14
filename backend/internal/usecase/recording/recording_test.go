@@ -3,6 +3,7 @@ package recording_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -50,7 +51,7 @@ func setupFull(t *testing.T) (
 	tgFake := testutil.NewFakeTelegram()
 	mc := testutil.NewFakeMinio()
 	uc := recording.New(rrepo, lrepo, lk, mc, livekit.S3Config{}, testutil.NewFakeCache(),
-		testRetention, tgFake, testCacheTTL, testutil.NewLogger())
+		testRetention, tgFake, testCacheTTL, false, testutil.NewLogger())
 	return uc, rrepo, lrepo, lk, tgFake, mc
 }
 
@@ -382,4 +383,52 @@ func TestDownloadURL_ExpiredRecording(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, apperr.IsBadRequest(err))
 	require.Contains(t, err.Error(), "expired")
+}
+
+// ─── Client-side (lokal) yozuv oqimi ────────────────────────────────────────
+
+func TestLocalRecording_Flow(t *testing.T) {
+	uc, rrepo, _, _, tg, mc := setupFull(t)
+	tg.Disabled = false // Telegram yoqilgan
+	ctx := context.Background()
+
+	// 1. LocalStart → yozuv qatori (status=recording, sintetik egress_id).
+	rec, err := uc.LocalStart(ctx, "mentor1", testLessonID)
+	require.NoError(t, err)
+	require.Equal(t, entity.RecordingStatusRecording, rec.Status)
+	require.True(t, strings.HasPrefix(rec.EgressID, "local:"), "egress_id sintetik bo'lishi kerak")
+	require.NotEmpty(t, rec.ObjectKey)
+
+	// 2. Upload URL (presigned PUT) — obyekt yo'lini o'z ichiga oladi.
+	url, err := uc.LocalUploadURL(ctx, "mentor1", rec.ID)
+	require.NoError(t, err)
+	require.Contains(t, url, rec.ObjectKey)
+
+	// 3. Telefon faylni yukladi (fake MinIO'ga qo'yamiz).
+	mc.Objects[rec.ObjectKey] = true
+	mc.Contents[rec.ObjectKey] = []byte("phone-recorded-video-bytes")
+
+	// 4. LocalComplete → ready + o'lcham server tekshiruvidan.
+	require.NoError(t, uc.LocalComplete(ctx, "mentor1", rec.ID, 120, time.Now().UTC()))
+	got, err := rrepo.GetByID(ctx, rec.ID)
+	require.NoError(t, err)
+	require.Equal(t, entity.RecordingStatusReady, got.Status)
+	require.Equal(t, int64(len("phone-recorded-video-bytes")), got.SizeBytes)
+	require.Equal(t, 120, got.DurationSec)
+}
+
+func TestLocalStart_Ownership(t *testing.T) {
+	uc, _, _, _, _, _ := setupFull(t)
+	_, err := uc.LocalStart(context.Background(), "intruder", testLessonID)
+	require.True(t, apperr.IsForbidden(err), "begona mentor rad etilsin")
+}
+
+func TestLocalComplete_NoFile_Rejected(t *testing.T) {
+	uc, _, _, _, _, _ := setupFull(t)
+	ctx := context.Background()
+	rec, err := uc.LocalStart(ctx, "mentor1", testLessonID)
+	require.NoError(t, err)
+	// Fayl MinIO'ga yuklanmagan → "tayyor" deb belgilamaydi (BadRequest).
+	err = uc.LocalComplete(ctx, "mentor1", rec.ID, 10, time.Now().UTC())
+	require.True(t, apperr.IsBadRequest(err))
 }

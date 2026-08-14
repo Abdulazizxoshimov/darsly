@@ -33,7 +33,7 @@ func TestLesson_InvalidUUID_NotFound(t *testing.T) {
 			require.True(t, apperr.IsNotFound(err), "Update(%q) → 404 kutilgan, oldi: %v", id, err)
 		})
 		t.Run("delete/"+id, func(t *testing.T) {
-			require.True(t, apperr.IsNotFound(uc.Delete(ctx, "mentor1", id)), "Delete(%q) → 404 kutilgan", id)
+			require.True(t, apperr.IsNotFound(uc.Delete(ctx, "mentor1", entity.RoleMentor, id)), "Delete(%q) → 404 kutilgan", id)
 		})
 	}
 }

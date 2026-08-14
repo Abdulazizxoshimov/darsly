@@ -74,6 +74,9 @@ type Deps struct {
 	// RecordingCacheTTL — Telegramdan tiklangan nusxa serverda qancha turadi.
 	// 0 → 24 soat (default).
 	RecordingCacheTTL time.Duration
+	// RecordingLocalMode — client-side (telefon) yozuv rejimi (RECORDING_MODE=local).
+	// true bo'lsa server egress AVTOMATIK boshlanmaydi.
+	RecordingLocalMode bool
 }
 
 func New(d Deps) *UseCases {
@@ -86,7 +89,7 @@ func New(d Deps) *UseCases {
 	if tgClient == nil {
 		tgClient = tgc.NewNop()
 	}
-	recordingUC := recording.New(d.Store.Recording, d.Store.Lesson, d.LiveKit, d.Minio, d.RecordingS3, d.Cache, d.RecordingRetention, tgClient, d.RecordingCacheTTL, d.Log)
+	recordingUC := recording.New(d.Store.Recording, d.Store.Lesson, d.LiveKit, d.Minio, d.RecordingS3, d.Cache, d.RecordingRetention, tgClient, d.RecordingCacheTTL, d.RecordingLocalMode, d.Log)
 	// roomstate `room`dan OLDIN yasaladi: `room` unga bog'liq (ruxsat berilganda
 	// qo'lni tushirish, dars tugaganda tozalash), teskarisi esa yo'q.
 	roomStateUC := roomstate.New(d.Store.Lesson, d.LiveKit, d.Cache, recordingUC, d.Log)

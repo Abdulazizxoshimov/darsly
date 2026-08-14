@@ -147,8 +147,8 @@ func (uc *useCase) Update(ctx context.Context, mentorID, id string, req *entity.
 	return l, nil
 }
 
-func (uc *useCase) Delete(ctx context.Context, mentorID, id string) error {
-	if _, err := shared.OwnedLesson(ctx, uc.repo, mentorID, id); err != nil {
+func (uc *useCase) Delete(ctx context.Context, actorID, actorRole, id string) error {
+	if _, err := shared.OwnedLessonOrAdmin(ctx, uc.repo, actorID, actorRole, id); err != nil {
 		return err
 	}
 	if err := uc.repo.SoftDelete(ctx, id); err != nil {

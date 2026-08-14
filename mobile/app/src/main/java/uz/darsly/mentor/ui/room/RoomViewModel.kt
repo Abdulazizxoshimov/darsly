@@ -15,6 +15,8 @@ import io.livekit.android.room.track.Track
 import io.livekit.android.room.track.VideoTrack
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -23,6 +25,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import uz.darsly.mentor.data.api.ApiErrors
 import uz.darsly.mentor.data.repo.LessonsRepository
+import uz.darsly.mentor.data.repo.LocalRecordingRepository
 import uz.darsly.mentor.data.repo.ModerationRepository
 import uz.darsly.mentor.data.repo.RoomChatRepository
 import uz.darsly.mentor.data.repo.RoomRepository
@@ -142,6 +145,17 @@ data class RoomUiState(
      * bo'lardi (va maxfiylik masalasida yolg'on eng yomoni).
      */
     val recordingEnabled: Boolean = false,
+    /**
+     * HOZIR haqiqatan yozib olinyaptimi (lokal recorder ishlayaptimi).
+     *
+     * [recordingEnabled] darsning SOZLAMASI (avto-yozuv yoniqmi) bo'lsa, bu —
+     * ustoz Record tugmasi bilan boshqaradigan JORIY holat. Tepadagi REC
+     * indikatori aynan shunga bog'lanadi: sozlama yoniq bo'lsa-yu, ustoz
+     * yozuvni to'xtatgan bo'lsa, indikator yonmasligi kerak (maxfiylik).
+     */
+    val isRecording: Boolean = false,
+    /** Record bosildi-yu, yozib bo'lmadi (masalan, ekran ulashilmagan) — o'tkinchi hint. */
+    val recordHint: String? = null,
     val error: String? = null,
     /** B-2: mikrofonga ruxsat berilmadi — dars boshlanmaydi. */
     val micDenied: Boolean = false,
@@ -263,6 +277,10 @@ data class RoomUiState(
  */
 private const val MAX_CHAT = 200
 
+/** Lokal yozuv video bitreyti (bps). Ekran/slayd kontenti yaxshi siqiladi —
+ *  2 Mbps Zoom-darajа ravshanlik + mo''tadil hajm (soatiga ~0.4–0.9 GB). */
+private const val LOCAL_REC_BITRATE = 2_000_000
+
 @HiltViewModel
 class RoomViewModel @Inject constructor(
     @ApplicationContext private val appContext: Context,
@@ -270,8 +288,13 @@ class RoomViewModel @Inject constructor(
     private val moderation: ModerationRepository,
     private val chatRepo: RoomChatRepository,
     private val lessons: LessonsRepository,
+    private val localRec: LocalRecordingRepository,
     private val uiPrefs: UiPrefs,
 ) : ViewModel() {
+
+    // Client-side (lokal) yozuv holati.
+    private var localRecId: String? = null
+    private var localRecStartMs = 0L
 
     private val _state = MutableStateFlow(RoomUiState())
     val state: StateFlow<RoomUiState> = _state.asStateFlow()
@@ -563,6 +586,9 @@ class RoomViewModel @Inject constructor(
         // to'g'ridan-to'g'ri chaqirsak o'zimizni bekor qilib, tozalashni yarim
         // yo'lda qoldirardik.
         viewModelScope.launch {
+            // Lokal yozuvni AVVAL to'xtatib yuklash navbatiga qo'yamiz (ekran
+            // ulashish/projection bo'shatilishidan oldin fayl finalize bo'lsin).
+            stopAndUploadLocalRecording(s)
             runCatching { s.stopScreenShare() }
                 .onFailure { log("ulashishni to'xtatish XATO: ${it.message}") }
             releaseSession()
@@ -1123,13 +1149,103 @@ class RoomViewModel @Inject constructor(
     fun startScreenShare(resultData: Intent) = viewModelScope.launch {
         val s = session ?: run { log("ekran: sessiya yo'q"); return@launch }
         screenShare.start(s, resultData)
+        maybeStartLocalRecording(s)
         notifySignals(vibrate = false)
     }
 
     fun stopScreenShare() = viewModelScope.launch {
         val s = session ?: return@launch
+        stopAndUploadLocalRecording(s)
         screenShare.stop(s)
         notifySignals(vibrate = false)
+    }
+
+    // ─── Client-side (lokal) yozuv orkestratsiyasi ─────────────────────────────
+
+    /**
+     * AVTO-yozuv: dars sozlamasi (`is_recording_enabled`) yoniq bo'lsa, ekran
+     * ulashilganда yozuvni o'zi boshlaydi. O'chirilgan bo'lsa hech narsa qilmaydi —
+     * ustoz xohlasa Record tugmasi bilan [toggleRecording] orqali qo'lда boshlaydi.
+     */
+    private fun maybeStartLocalRecording(s: LessonSession) {
+        if (!_state.value.recordingEnabled) return
+        beginLocalRecording(s)
+    }
+
+    /**
+     * ⭐ RECORD tugmasi (Zoom kabi) — yozuvni QO'LDA boshlash/to'xtatish.
+     *
+     * Yozuv EKRANni yozadi, shuning uchun ekran ulashilmagan bo'lsa boshlab
+     * bo'lmaydi — ustozga hint ko'rsatiladi (avval ulashsin).
+     */
+    fun toggleRecording() {
+        val s = session ?: return
+        when {
+            s.isLocalRecording() -> stopAndUploadLocalRecording(s)
+            _state.value.screenOn -> beginLocalRecording(s)
+            else -> _state.update {
+                it.copy(recordHint = "Yozib olish ekranni yozadi — avval ekran ulashing")
+            }
+        }
+    }
+
+    /** UI hint'ni ko'rsatdi — tozalanadi. */
+    fun recordHintShown() = _state.update { it.copy(recordHint = null) }
+
+    /**
+     * Lokal yozuvni boshlaydi (avto yoki qo'lda). Server RECORDING_MODE=local
+     * bo'lsa egress boshlanmaydi — yozuv shu telefonda. Ekran treki hali
+     * chiqmagan bo'lishi mumkin, shuning uchun qisqa retry.
+     */
+    private fun beginLocalRecording(s: LessonSession) {
+        if (s.isLocalRecording()) return
+        val lessonId = s.roomToken.lessonId
+        if (lessonId.isBlank()) return
+        viewModelScope.launch {
+            val id = localRec.localStart(lessonId).getOrElse {
+                log("lokal yozuv: local-start XATO: ${it.message}")
+                _state.update { it.copy(recordHint = "Yozib olishni boshlab bo'lmadi") }
+                return@launch
+            }
+            // Ekran treki tayyor bo'lishini kutamiz (3 urinish).
+            repeat(3) { attempt ->
+                val file = s.startLocalRecording(lessonId, LOCAL_REC_BITRATE)
+                if (file != null) {
+                    localRecId = id
+                    localRecStartMs = System.currentTimeMillis()
+                    _state.update { it.copy(isRecording = true) }
+                    log("lokal yozuv boshlandi: ${file.name}")
+                    return@launch
+                }
+                delay(400)
+            }
+            log("lokal yozuv qo'llab-quvvatlanmadi (ekran treki chiqmadi)")
+            _state.update { it.copy(recordHint = "Yozib olishni boshlab bo'lmadi") }
+        }
+    }
+
+    /** Lokal yozuvni to'xtatadi va app-scoped korutinada serverga yuklaydi. */
+    @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
+    private fun stopAndUploadLocalRecording(s: LessonSession) {
+        if (!s.isLocalRecording()) return
+        _state.update { it.copy(isRecording = false) }
+        val id = localRecId
+        val startMs = localRecStartMs
+        localRecId = null
+        val file = s.stopLocalRecording()
+        if (id == null || file == null) {
+            file?.delete()
+            return
+        }
+        val durationSec = ((System.currentTimeMillis() - startMs) / 1000).toInt().coerceAtLeast(1)
+        val endedAt = java.time.Instant.now().toString()
+        // App-scoped: xonadan chiqilgach ham yuklash davom etsin (MVP; keyinroq
+        // WorkManager bilan qattiqlashtiriladi — ilova o'ldirilsa omon qolsin).
+        GlobalScope.launch(Dispatchers.IO) {
+            localRec.upload(id, file, durationSec, endedAt)
+                .onSuccess { file.delete() }
+                .onFailure { android.util.Log.e("RoomVM", "lokal yozuv yuklash XATO", it) }
+        }
     }
 
     /**
@@ -1200,6 +1316,11 @@ class RoomViewModel @Inject constructor(
     /** Darsni tark etish (xonani yopmaydi — bu `POST /lessons/:id/end` ishi). */
     fun leave() {
         ShareFrameOverlay.hide()
+        // Lokal yozuvni AVVAL finalize qilib yuklash navbatiga qo'yamiz — aks holda
+        // `cancelObservers()` disconnect kuzatuvchisini o'chirib, `session=null` esa
+        // `onDisconnected()` dagi to'xtatishni ham chetlab o'tardi → fayl `moov`siz
+        // yaroqsiz qolardi (Yakunlash yo'li yozuvni orfan qilib qo'yardi).
+        session?.let { stopAndUploadLocalRecording(it) }
         cancelObservers()
         LessonSessionHolder.stop()
         session = null

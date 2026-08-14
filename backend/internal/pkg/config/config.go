@@ -137,6 +137,10 @@ type LiveKitConfig struct {
 	// "pipeline frozen" bilan yo'qoldi (o'lchangan). Kuchli serverda 25
 	// qo'yilsa Zoom pariteti qaytadi.
 	RecordingFPS int `json:"recording_fps"`
+	// RecordingLocalMode — client-side (telefon) yozuv rejimi. RECORDING_MODE=local
+	// bo'lsa true: server egress AVTOMATIK boshlanmaydi, telefon o'zi yozib
+	// yuklaydi (Zoom «local recording»). Default (bo'sh/egress) — hozirgi xulq.
+	RecordingLocalMode bool `json:"recording_local_mode"`
 }
 
 type SentryConfig struct {
@@ -374,8 +378,9 @@ func Load() *Config {
 			// ajralib ketardi va env'siz muhitda eski layout ishlab qolardi.
 			EgressLayout: getEnv("LIVEKIT_EGRESS_LAYOUT", ""),
 			// 0 → `livekit.recCanvasSide` (1280). Kuchsiz serverda 1024 qo'ying.
-			RecordingCanvas: getEnvInt("RECORDING_CANVAS", 0),
-			RecordingFPS:    getEnvInt("RECORDING_FPS", 0),
+			RecordingCanvas:    getEnvInt("RECORDING_CANVAS", 0),
+			RecordingFPS:       getEnvInt("RECORDING_FPS", 0),
+			RecordingLocalMode: getEnv("RECORDING_MODE", "") == "local",
 		},
 		Lesson: LessonConfig{
 			MaxDuration:   getEnvDuration("LESSON_MAX_DURATION", 4*time.Hour),

@@ -2,6 +2,7 @@ package recording
 
 import (
 	"context"
+	"time"
 
 	"github.com/zoom/darsly/internal/entity"
 	"github.com/zoom/darsly/internal/infrastructure/livekit"
@@ -123,4 +124,22 @@ type UseCase interface {
 	DownloadURL(ctx context.Context, mentorID, recordingID string) (*entity.RecordingDownload, error)
 	// HandleEgress — LiveKit Egress webhook'idan kelgan yakuniy holatni qayta ishlaydi.
 	HandleEgress(ctx context.Context, egressID string, completed bool, objectKey string, durationSec int, sizeBytes int64) error
+
+	// ─── Client-side (lokal) yozuv — «Zoom local recording» ─────────────────
+	//
+	// Telefon darsni O'ZI to'liq sifatda yozadi va tugagach serverga yuklaydi.
+	// Server egress (Chrome-composite, 4 yadroli VPS'da bo'g'iladi) o'rniga.
+	// Undan keyingi zanjir (transkod → Telegram → arxiv) O'ZGARMAYDI.
+
+	// LocalStart — telefon lokal yozuvni boshlaganда `recordings` qatorini
+	// yaratadi (`status=recording`). `egress_id` sintetik (`local:<id>`) —
+	// mavjud egress-kalitли metodlar (MarkReady/Enqueue*) qayta ishlatiladi.
+	LocalStart(ctx context.Context, mentorID, lessonID string) (*entity.Recording, error)
+	// LocalUploadURL — telefon faylni to'g'ridan MinIO'ga yuklashi uchun
+	// imzolangan PUT havolasi (dars OXIRIDA so'raladi — TTL tugamasin).
+	LocalUploadURL(ctx context.Context, mentorID, recordingID string) (string, error)
+	// LocalComplete — telefon yuklaб bo'lgach: MinIO'da fayl borligini
+	// TASDIQLAB (Stat), yozuvni `ready` qiladi va transkod/Telegram navbatiga
+	// qo'yadi (HandleEgress'ning `completed` shoxi bilan bir xil).
+	LocalComplete(ctx context.Context, mentorID, recordingID string, durationSec int, endedAt time.Time) error
 }

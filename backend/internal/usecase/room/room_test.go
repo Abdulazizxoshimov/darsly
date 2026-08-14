@@ -217,6 +217,60 @@ func TestEndLesson_StopsRecording(t *testing.T) {
 	}
 }
 
+// ctxAwareLessonRepo — FakeLessonRepo, lekin Update bekor qilingan contextni
+// haqiqiy pgx kabi hurmat qiladi. Regressiya testini ma'noli qiladi: fake'ning
+// o'zi ctx'ni e'tiborsiz qoldiradi, shuning uchun usiz test eski (buggy) kodda
+// ham o'tib ketardi.
+type ctxAwareLessonRepo struct {
+	*testutil.FakeLessonRepo
+}
+
+func (r *ctxAwareLessonRepo) Update(ctx context.Context, l *entity.Lesson) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return r.FakeLessonRepo.Update(ctx, l)
+}
+
+// Regressiya: mobil ilova "tugatish" bosgach xona ekranini darhol yopadi va shu
+// bilan `POST /lessons/:id/end` so'rovini BEKOR qiladi. Yakunlash o'sha bekor
+// qilingan contextga bog'liq bo'lsa, Update `context canceled` qaytaradi,
+// funksiya erta chiqadi va teardown umuman ishlamaydi — egress to'xtamay
+// serverda CPU yeb qolardi. EndLesson bekor qilishni yutib, darsni baribir
+// yakunlashi va yozuvni to'xtatishi shart.
+func TestEndLesson_SurvivesCanceledRequest(t *testing.T) {
+	rec := newFakeRecorder()
+	lrepo := &ctxAwareLessonRepo{testutil.NewFakeLessonRepo()}
+	urepo := testutil.NewFakeUserRepo()
+	require.NoError(t, urepo.Create(context.Background(), &entity.User{ID: "mentor1", FullName: "Dilnoza", Role: "mentor"}))
+	require.NoError(t, lrepo.Create(context.Background(), &entity.Lesson{ID: testLessonID, MentorID: "mentor1", Status: entity.LessonStatusScheduled}))
+	lk := testutil.NewFakeLiveKit()
+	cache := testutil.NewFakeCache()
+	hands := roomstate.New(lrepo, lk, cache, nil, testutil.NewLogger())
+	uc := room.New(lrepo, urepo, lk, cache, testutil.NewLogger(), rec, hands, testutil.NewFakeBlocklistRepo())
+
+	_, err := uc.HostToken(context.Background(), "mentor1", testLessonID)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // so'rov allaqachon bekor qilingan — mobil ekran yopilgani kabi
+
+	require.NoError(t, uc.EndLesson(ctx, "mentor1", testLessonID),
+		"bekor qilingan so'rov ham darsni yakunlashi kerak (aks holda egress serverda qoladi)")
+
+	l, _ := lrepo.GetByID(context.Background(), testLessonID)
+	require.Equal(t, entity.LessonStatusEnded, l.Status, "dars ended bo'lishi shart")
+	require.NotNil(t, l.EndedAt)
+	require.GreaterOrEqual(t, lk.Calls["DeleteRoom"], 1, "xona yopilishi kerak")
+
+	select {
+	case id := <-rec.stopped:
+		require.Equal(t, testLessonID, id)
+	case <-time.After(2 * time.Second):
+		t.Fatal("bekor qilingan so'rovda yozuv to'xtatilmadi — egress serverda qolib ketardi")
+	}
+}
+
 func TestHostToken_NilRecorderIsSafe(t *testing.T) {
 	// Yozib olish sozlanmagan muhit (masalan lokal dev) ilovani yiqitmasligi kerak.
 	uc, _, _ := setup(t)

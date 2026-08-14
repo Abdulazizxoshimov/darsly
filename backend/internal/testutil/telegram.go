@@ -31,6 +31,8 @@ type FakeTelegram struct {
 
 	// Sent — arxivga yuborilgan videolar (chat ID → nechta).
 	Sent map[int64]int
+	// VideoCaptions — `SendVideo` bilan yuborilgan barcha caption'lar (tartibda).
+	VideoCaptions []string
 	// Forwarded — `file_id` bilan qayta yuborilganlar.
 	Forwarded []string
 	// Documents — yuborilgan hujjatlar (fayl nomlari).
@@ -83,12 +85,13 @@ func (f *FakeTelegram) EditMessageText(context.Context, int64, int64, string, *t
 }
 func (f *FakeTelegram) AnswerCallbackQuery(context.Context, string, string) error { return nil }
 
-func (f *FakeTelegram) SendVideo(_ context.Context, chatID int64, _, _ string, _ int) (*tg.Message, error) {
+func (f *FakeTelegram) SendVideo(_ context.Context, chatID int64, _, caption string, _ int) (*tg.Message, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.SendVideoErr != nil {
 		return nil, f.SendVideoErr
 	}
+	f.VideoCaptions = append(f.VideoCaptions, caption)
 	f.Sent[chatID]++
 	msg := &tg.Message{MessageID: int64(100 + f.Sent[chatID]), Chat: tg.Chat{ID: chatID}}
 	if !f.EmptyFileID {

@@ -319,6 +319,10 @@ interface DarslyApi {
     @GET("api/v1/lessons/{id}/recordings")
     suspend fun recordings(@Path("id") lessonId: String): Envelope<List<Recording>>
 
+    /** Dars arxivi (video + chat + materiallar) — YAGONA so'rov. */
+    @GET("api/v1/lessons/{id}/archive")
+    suspend fun lessonArchive(@Path("id") lessonId: String): Envelope<LessonArchiveDto>
+
     /** Yozib olishni boshlaydi — 201 + yaratilgan yozuv. */
     @POST("api/v1/lessons/{id}/recording/start")
     suspend fun startRecording(@Path("id") lessonId: String): Envelope<Recording>
@@ -330,6 +334,22 @@ interface DarslyApi {
     /** Vaqtinchalik (presigned) yuklab olish havolasi. */
     @GET("api/v1/recordings/{id}/download")
     suspend fun recordingDownload(@Path("id") recordingId: String): Envelope<RecordingDownload>
+
+    // ─── Client-side (lokal) yozuv — «Zoom local recording» ─────────────────
+    /** Lokal yozuv boshlanganda yozuv qatorini yaratadi (201 + Recording). */
+    @POST("api/v1/lessons/{id}/recording/local-start")
+    suspend fun localStartRecording(@Path("id") lessonId: String): Envelope<Recording>
+
+    /** Telefon faylni to'g'ridan MinIO'ga PUT qilishi uchun imzolangan havola. */
+    @POST("api/v1/recordings/{id}/upload-url")
+    suspend fun recordingUploadUrl(@Path("id") recordingId: String): Envelope<UploadUrl>
+
+    /** Yuklab bo'lgach yozuvni tayyor qiladi (server MinIO'da faylni tekshiradi). */
+    @POST("api/v1/recordings/{id}/complete")
+    suspend fun completeRecording(
+        @Path("id") recordingId: String,
+        @Body body: CompleteRecordingReq,
+    )
 
     // ─── Kutish xonasi (M27) ──────────────────────────────────────────────────
 

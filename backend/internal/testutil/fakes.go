@@ -639,6 +639,18 @@ func (m *FakeMinio) Upload(_ context.Context, name, _ string, r io.Reader, _ int
 func (m *FakeMinio) PresignedURL(_ context.Context, name string, _ time.Duration) (string, error) {
 	return "https://minio.test/" + name + "?sig=fake", nil
 }
+func (m *FakeMinio) PresignedPutURL(_ context.Context, name string, _ time.Duration) (string, error) {
+	return "https://minio.test/" + name + "?put=fake", nil
+}
+func (m *FakeMinio) Stat(_ context.Context, name string) (int64, error) {
+	if !m.Objects[name] {
+		return 0, fmt.Errorf("minio(fake): %q not found", name)
+	}
+	if b, ok := m.Contents[name]; ok {
+		return int64(len(b)), nil
+	}
+	return int64(len("fake-video")), nil
+}
 func (m *FakeMinio) Get(_ context.Context, name string) (io.ReadCloser, error) {
 	if !m.Objects[name] {
 		return nil, fmt.Errorf("minio(fake): %q not found", name)

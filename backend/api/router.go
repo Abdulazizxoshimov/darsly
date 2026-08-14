@@ -314,6 +314,8 @@ func NewRouter(h *handlers.Handler, tokenMaker token.Maker, enforcer *casbin.Enf
 		// Yozib olish
 		lessons.POST("/:id/recording/start", v1.StartRecording(h))
 		lessons.GET("/:id/recordings", v1.ListRecordings(h))
+		// Client-side (telefon) lokal yozuv — «Zoom local recording».
+		lessons.POST("/:id/recording/local-start", v1.LocalStartRecording(h))
 	}
 
 	// So'rovnoma yopish (host)
@@ -333,6 +335,9 @@ func NewRouter(h *handlers.Handler, tokenMaker token.Maker, enforcer *casbin.Enf
 		recordings.GET("/:id", v1.GetRecording(h))
 		// Telegram arxividan qaytarib olish (202 + poll).
 		recordings.POST("/:id/restore", v1.RestoreRecording(h))
+		// Client-side lokal yozuv: telefon → MinIO to'g'ridan (presigned PUT), keyin finalize.
+		recordings.POST("/:id/upload-url", v1.LocalUploadURL(h))
+		recordings.POST("/:id/complete", v1.LocalCompleteRecording(h))
 	}
 
 	// Telegram bog'lanishi (mentor). `/me/...` ostida, chunki bu FOYDALANUVCHI

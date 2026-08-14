@@ -43,6 +43,11 @@ type ArchiveRecording struct {
 	// ExpiresAt — yozuv qachon serverdan o'chadi (retention). Hisoblanadigan
 	// maydon — `entity.Recording.ExpiresAt` izohiga qara.
 	ExpiresAt *time.Time `json:"expires_at"`
+	// TelegramURL — arxiv guruhidagi videoga havola (`t.me/c/<id>/<msg>`).
+	// Faqat yozuv Telegramga arxivlangan (`telegram_sent_at` to'lgan) va guruh
+	// superguruh bo'lganda to'ldiriladi; havola guruh A'ZOLARIGA ochiladi.
+	// `null` → klient «Telegramda ochish» tugmasini KO'RSATMAYDI.
+	TelegramURL *string `json:"telegram_url,omitempty"`
 }
 
 // ArchiveChatMessage — arxivdagi chat xabari + videoga bog'lash uchun siljish.

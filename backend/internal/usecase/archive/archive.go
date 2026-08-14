@@ -2,6 +2,9 @@ package archive
 
 import (
 	"context"
+	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/zoom/darsly/internal/entity"
@@ -162,6 +165,9 @@ func (uc *useCase) archiveRecording(ctx context.Context, rec *entity.Recording) 
 		DurationSec: rec.DurationSec,
 		SizeBytes:   rec.SizeBytes,
 		ExpiresAt:   uc.expiresAt(rec),
+		// Telegram havolasi holatдан QAT'I NAZAR (hatto `expired` da ham):
+		// Telegramdagi nusxa abadiy, server nusxasi o'chsa ham ochiladi.
+		TelegramURL: telegramArchiveURL(rec),
 	}
 	// Havola FAQAT `ready` da. `expired` da fayl MinIO'dan o'chirilgan va
 	// presigned havola 404 beradigan "ishlaydigan" URL bo'lardi — klient uni
@@ -178,6 +184,28 @@ func (uc *useCase) archiveRecording(ctx context.Context, rec *entity.Recording) 
 	}
 	out.URL = &url
 	return out
+}
+
+// telegramArchiveURL — arxiv guruhidagi videoga `t.me/c/<id>/<msg>` havolasi.
+//
+// Faqat SUPERGURUH/kanal uchun ishlaydi: ularning chat ID'si `-100XXXXXXXXXX`
+// ko'rinishida bo'ladi va `t.me/c/` uchun boshidagi `-100` olib tashlanadi.
+// Oddiy guruhlar (kichik manfiy ID) uchun bunday havola yo'q → nil.
+// Havola faqat guruh A'ZOLARIGA ochiladi (private guruh).
+func telegramArchiveURL(rec *entity.Recording) *string {
+	if rec.TelegramMessageID == nil || rec.TelegramChatID == nil {
+		return nil
+	}
+	chat := *rec.TelegramChatID
+	if chat >= 0 {
+		return nil
+	}
+	digits := strconv.FormatInt(-chat, 10)
+	if !strings.HasPrefix(digits, "100") || len(digits) <= 3 {
+		return nil
+	}
+	url := fmt.Sprintf("https://t.me/c/%s/%d", digits[3:], *rec.TelegramMessageID)
+	return &url
 }
 
 // expiresAt — yozuv qachon serverdan o'chadi (`recording.withExpiry` bilan

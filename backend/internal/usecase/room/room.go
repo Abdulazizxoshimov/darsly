@@ -248,15 +248,26 @@ func (uc *useCase) EndLesson(ctx context.Context, mentorID, lessonID string) err
 		return apperr.Forbidden("you are not the host of this lesson")
 	}
 
+	// Yakunlashni so'rov hayotidan AJRATAMIZ. Mobil ilova "tugatish" bosgach
+	// xona ekranini darhol yopadi va bu bilan HTTP so'rovni bekor qiladi
+	// (`context canceled`). Agar Update va teardown so'rov contextiga bog'liq
+	// bo'lsa, ular yarim yo'lda uzilib, egress TO'XTAMAY serverda CPU yeb
+	// ishlab qolardi — ustoz "tugatdim, baribir ishlayapti" holatini ko'radi.
+	// Aynan shu sabab egressni BOSHLASH ham `context.Background()` ustida
+	// bajariladi (`recording.startEgress`). `WithoutCancel` trace/log
+	// qiymatlarini saqlaydi, lekin bekor qilishni yutadi.
+	opCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 25*time.Second)
+	defer cancel()
+
 	now := time.Now().UTC()
 	l.Status = entity.LessonStatusEnded
 	l.EndedAt = &now
-	if err := uc.lessonRepo.Update(ctx, l); err != nil {
+	if err := uc.lessonRepo.Update(opCtx, l); err != nil {
 		uc.log.Error(ctx, "room.EndLesson: update failed", logger.String("lesson_id", l.ID), logger.SafeString("err", err.Error()))
 		return err
 	}
 
-	uc.teardown(ctx, l.ID)
+	uc.teardown(opCtx, l.ID)
 	uc.log.Info(ctx, "room.EndLesson: ended", logger.String("lesson_id", l.ID))
 	return nil
 }

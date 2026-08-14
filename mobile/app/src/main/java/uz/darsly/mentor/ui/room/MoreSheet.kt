@@ -16,7 +16,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.Poll
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -47,6 +51,11 @@ fun MoreSheet(
     onDismiss: () -> Unit,
     onReaction: (String) -> Unit,
     onOpenPoll: () -> Unit,
+    /** Hozir yozib olinyaptimi (Record tugmasi holati). */
+    recording: Boolean,
+    /** Yozuvni boshlash mumkinmi (ekran ulashilganmi). */
+    canRecord: Boolean,
+    onToggleRecording: () -> Unit,
     autoBackground: Boolean,
     onAutoBackgroundChange: (Boolean) -> Unit,
 ) {
@@ -84,6 +93,43 @@ fun MoreSheet(
                         Text(emoji, fontSize = 22.sp)
                     }
                 }
+            }
+
+            // ⭐ RECORD — dars yozib olishni QO'LDA boshqarish (Zoom kabi).
+            //
+            // Avto-yozuv dars sozlamasida yoniq bo'lsa yozuv o'zi boshlanadi, lekin
+            // ustoz istagan payt shu tugma bilan to'xtatishi/qayta boshlashi mumkin.
+            // Yozuv EKRANni yozadi — shuning uchun ekran ulashilmagan bo'lsa tugma
+            // o'chiq (bosilganda RoomViewModel ustozga "avval ekran ulashing" deydi).
+            Spacer(Modifier.height(20.dp))
+            Text("Dars yozib olish", style = MaterialTheme.typography.titleMedium)
+            Text(
+                if (recording) "Hozir yozib olinyapti — telefoningizda to'liq sifatda."
+                else "Ekranni to'liq sifatda yozadi. Tugagach Arxivга tushadi.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(8.dp))
+            Button(
+                onClick = {
+                    onToggleRecording()
+                    onDismiss()
+                },
+                enabled = recording || canRecord,
+                colors = if (recording) {
+                    ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                } else {
+                    ButtonDefaults.buttonColors()
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(
+                    if (recording) Icons.Default.Stop else Icons.Default.FiberManualRecord,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(if (recording) "Yozib olishni to'xtatish" else "Yozib olishni boshlash")
             }
 
             Spacer(Modifier.height(20.dp))

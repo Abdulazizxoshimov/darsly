@@ -83,10 +83,30 @@ func TestDelete_Ownership(t *testing.T) {
 	uc := newLessonUC(repo)
 	l, _ := uc.Create(context.Background(), "owner", &entity.CreateLessonReq{Title: "X"})
 
-	require.True(t, apperr.IsForbidden(uc.Delete(context.Background(), "intruder", l.ID)))
-	require.NoError(t, uc.Delete(context.Background(), "owner", l.ID))
+	require.True(t, apperr.IsForbidden(uc.Delete(context.Background(), "intruder", entity.RoleMentor, l.ID)))
+	require.NoError(t, uc.Delete(context.Background(), "owner", entity.RoleMentor, l.ID))
 	_, err := uc.GetByID(context.Background(), "owner", l.ID)
 	require.Error(t, err, "o'chirilgach topilmasligi kerak")
+}
+
+func TestDelete_AdminBypass(t *testing.T) {
+	repo := testutil.NewFakeLessonRepo()
+	uc := newLessonUC(repo)
+	l, _ := uc.Create(context.Background(), "owner", &entity.CreateLessonReq{Title: "X"})
+
+	// Boshqa mentor — bloklanadi; admin esa egasi bo'lmasa ham o'chira oladi.
+	require.True(t, apperr.IsForbidden(uc.Delete(context.Background(), "intruder", entity.RoleMentor, l.ID)))
+	require.NoError(t, uc.Delete(context.Background(), "some-admin", entity.RoleAdmin, l.ID))
+	_, err := uc.GetByID(context.Background(), "owner", l.ID)
+	require.Error(t, err, "admin o'chirgach topilmasligi kerak")
+}
+
+func TestDelete_AdminMissingLesson_NotFound(t *testing.T) {
+	uc := newLessonUC(testutil.NewFakeLessonRepo())
+	// Admin bo'lsa ham mavjud bo'lmagan dars 404 (egalik chetlab o'tilsa ham
+	// mavjudlik tekshiruvi qoladi).
+	err := uc.Delete(context.Background(), "some-admin", entity.RoleAdmin, "00000000-0000-0000-0000-000000000000")
+	require.True(t, apperr.IsNotFound(err), "yo'q dars → 404, oldi: %v", err)
 }
 
 func TestCreate_RecordingDefaultsOn(t *testing.T) {

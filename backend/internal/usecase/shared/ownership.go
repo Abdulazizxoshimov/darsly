@@ -26,3 +26,23 @@ func OwnedLesson(ctx context.Context, repo repository.LessonRepository, mentorID
 	}
 	return l, nil
 }
+
+// OwnedLessonOrAdmin — OwnedLesson kabi, lekin actorRole `admin` bo'lsa egalik
+// tekshiruvini chetlab o'tadi: admin istalgan darsni boshqara oladi (masalan
+// o'chirish). Dars baribir yuklanadi — yo'q bo'lsa NotFound, yaroqsiz UUID
+// ham DB'ga yetmaydi. Bu OwnedLesson'dan ALOHIDA: egalik-operatsiyalarining
+// ko'pchiligi (tahrirlash, yakunlash) faqat egaga qoladi, admin istisnosi
+// faqat uni ATAYLAB so'ragan joyga beriladi.
+func OwnedLessonOrAdmin(ctx context.Context, repo repository.LessonRepository, actorID, actorRole, lessonID string) (*entity.Lesson, error) {
+	if err := ValidateID(lessonID, "lesson"); err != nil {
+		return nil, err
+	}
+	l, err := repo.GetByID(ctx, lessonID)
+	if err != nil {
+		return nil, err
+	}
+	if actorRole != entity.RoleAdmin && l.MentorID != actorID {
+		return nil, apperr.Forbidden("you do not own this lesson")
+	}
+	return l, nil
+}

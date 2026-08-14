@@ -71,6 +71,7 @@ type TelegramPrompter interface {
 type TelegramUploadWorker struct {
 	repo       repository.RecordingRepository
 	lessonRepo repository.LessonRepository
+	userRepo   repository.UserRepository
 	minio      minio.Client
 	bot        tg.Client
 	notif      Notifier
@@ -82,6 +83,7 @@ type TelegramUploadWorker struct {
 func NewTelegramUploadWorker(
 	repo repository.RecordingRepository,
 	lessonRepo repository.LessonRepository,
+	userRepo repository.UserRepository,
 	mc minio.Client,
 	bot tg.Client,
 	notif Notifier,
@@ -96,7 +98,7 @@ func NewTelegramUploadWorker(
 		cfg.Backoff = DefaultTelegramUploadConfig().Backoff
 	}
 	return &TelegramUploadWorker{
-		repo: repo, lessonRepo: lessonRepo, minio: mc, bot: bot,
+		repo: repo, lessonRepo: lessonRepo, userRepo: userRepo, minio: mc, bot: bot,
 		notif: notif, prompter: prompter, cfg: cfg, log: log,
 	}
 }
@@ -201,7 +203,17 @@ func (w *TelegramUploadWorker) upload(ctx context.Context, rec *entity.Recording
 		return err
 	}
 
-	msg, err := w.bot.SendVideo(ctx, w.bot.ArchiveChatID(), local, archiveCaption(rec, l), rec.DurationSec)
+	// Mentor nomi — umumiy jamoa arxivida qaysi ustoz o'tgani ajralib tursin
+	// (bir guruhga bir necha mentor darsi tushadi). Xato JIM: nom kosmetik,
+	// uni deb yozuvni yubormay qo'yish noto'g'ri bo'lardi.
+	mentorName := ""
+	if l != nil {
+		if u, uerr := w.userRepo.GetByID(ctx, l.MentorID); uerr == nil && u != nil {
+			mentorName = strings.TrimSpace(u.FullName)
+		}
+	}
+
+	msg, err := w.bot.SendVideo(ctx, w.bot.ArchiveChatID(), local, archiveCaption(rec, l, mentorName), rec.DurationSec)
 	if err != nil {
 		return err
 	}
@@ -336,7 +348,7 @@ func (w *TelegramUploadWorker) notifyMentor(ctx context.Context, rec *entity.Rec
 //
 // Sana MAJBURIY: arxiv guruhida yuzlab video to'planadi va ularni faqat
 // sarlavha bo'yicha ajratib bo'lmaydi (bir dars har hafta takrorlanadi).
-func archiveCaption(rec *entity.Recording, l *entity.Lesson) string {
+func archiveCaption(rec *entity.Recording, l *entity.Lesson, mentorName string) string {
 	title := "Dars yozuvi"
 	if l != nil && strings.TrimSpace(l.Title) != "" {
 		title = l.Title
@@ -348,6 +360,10 @@ func archiveCaption(rec *entity.Recording, l *entity.Lesson) string {
 	parts := []string{title, when.Format("2006-01-02 15:04")}
 	if rec.DurationSec > 0 {
 		parts = append(parts, fmt.Sprintf("%d daq", rec.DurationSec/60))
+	}
+	// Mentor nomi — umumiy arxivda kim o'tgani ko'rinsin (bo'sh bo'lsa tashlanadi).
+	if mentorName != "" {
+		parts = append(parts, "👤 "+mentorName)
 	}
 	return strings.Join(parts, " · ")
 }

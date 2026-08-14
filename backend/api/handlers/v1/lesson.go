@@ -121,8 +121,9 @@ func UpdateLesson(h *handlers.Handler) gin.HandlerFunc {
 func DeleteLesson(h *handlers.Handler) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		mentorID := c.GetString(middleware.CtxUserID)
+		role := c.GetString(middleware.CtxRole)
 		id := c.Param("id")
-		if err := h.Lesson.Delete(c.Request.Context(), mentorID, id); err != nil {
+		if err := h.Lesson.Delete(c.Request.Context(), mentorID, role, id); err != nil {
 			hs.Error(c, err)
 			return
 		}

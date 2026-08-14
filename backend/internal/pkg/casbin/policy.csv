@@ -79,6 +79,9 @@ p, mentor, /api/v1/recordings/:id/stop,         POST
 p, mentor, /api/v1/recordings/:id/download,     GET
 p, mentor, /api/v1/recordings/:id,              GET
 p, mentor, /api/v1/recordings/:id/restore,      POST
+p, mentor, /api/v1/lessons/:id/recording/local-start, POST
+p, mentor, /api/v1/recordings/:id/upload-url,   POST
+p, mentor, /api/v1/recordings/:id/complete,     POST
 
 # ─── mentor — Telegram arxivi (bog'lash oqimi) ───────────────────────────────
 # Faqat mentor: arxiv va guruhga tarqatish butunlay mentorning ishi

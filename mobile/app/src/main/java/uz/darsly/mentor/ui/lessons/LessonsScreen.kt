@@ -56,6 +56,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import uz.darsly.mentor.ui.common.NotificationBell
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -90,6 +91,8 @@ import uz.darsly.mentor.util.Share
 fun LessonsScreen(
     onOpenLesson: (Lesson) -> Unit,
     onOpenRecordings: (Lesson) -> Unit,
+    unread: Int,
+    onOpenNotifications: () -> Unit,
     vm: LessonsViewModel = hiltViewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
@@ -119,14 +122,17 @@ fun LessonsScreen(
         // ekrandagi doimiy "Chiqish" tugmasi tasodifan bosiladigan va hech qachon
         // kerak bo'lmaydigan tugma edi.
         topBar = {
-            TopAppBar(title = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    // Brend har ekranda: puls belgisi sarlavha yonida (B tili).
-                    PulseMark(size = 22.dp)
-                    Spacer(Modifier.width(10.dp))
-                    Text("Darslar")
-                }
-            })
+            TopAppBar(
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        // Brend har ekranda: puls belgisi sarlavha yonida (B tili).
+                        PulseMark(size = 22.dp)
+                        Spacer(Modifier.width(10.dp))
+                        Text("Darslar")
+                    }
+                },
+                actions = { NotificationBell(unread = unread, onClick = onOpenNotifications) },
+            )
         },
         floatingActionButton = {
             // Asosiy harakat — glow'ga ruxsat berilgan uch joydan biri.

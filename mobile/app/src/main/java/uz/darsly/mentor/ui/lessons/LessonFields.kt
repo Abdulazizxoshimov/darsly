@@ -186,13 +186,14 @@ fun LessonFields(
             onChange = { v -> onEdit { it.copy(waitingRoom = v) } },
         )
 
-        // Yozib olish — DEFAULT YONIQ, lekin o'chirsa bo'ladi.
+        // Avtomatik yozib olish — DEFAULT YONIQ, lekin o'chirsa bo'ladi.
+        // O'chiq bo'lsa ham ustoz dars ichida Record tugmasi bilan qo'lda yoza oladi.
         LessonSwitchRow(
-            title = "Yozib olish",
+            title = "Avtomatik yozib olish",
             subtitle = if (input.recording) {
-                "Dars boshlanishi bilan avtomatik yoziladi — hech narsa bosish shart emas"
+                "Ekran ulashilishi bilan o'zi yoziladi — dars ichida Record bilan boshqarasiz"
             } else {
-                "O'chirilgan — bu dars yozilmaydi"
+                "Avto o'chiq — istasangiz dars ichida Record tugmasi bilan qo'lda yozasiz"
             },
             checked = input.recording,
             onChange = { v -> onEdit { it.copy(recording = v) } },
