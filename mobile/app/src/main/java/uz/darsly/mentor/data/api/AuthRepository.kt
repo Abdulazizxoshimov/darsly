@@ -36,17 +36,6 @@ class AuthRepository @Inject constructor(
     }
 
     /**
-     * `DELETE /users/me` → akkauntni o'chirish (M5). Muvaffaqiyatda lokal
-     * sessiya ham tozalanadi (login ekraniga qaytadi). Server xatosi bo'lsa
-     * `Result.failure` qaytadi va lokal holat SAQLANADI — foydalanuvchi hisobi
-     * o'chmagan bo'lsa, uni "chiqarib yubormaymiz".
-     */
-    suspend fun deleteAccount(): Result<Unit> = runCatching {
-        api.deleteAccount()
-        session.forceLogout()
-    }
-
-    /**
      * Parolni tiklash xatini so'raydi.
      *
      * Backend **har doim 204** qaytaradi — hisob bor-yo'qligidan qat'i nazar

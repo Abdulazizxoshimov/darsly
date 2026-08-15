@@ -26,6 +26,8 @@ data class ProfileUiState(
     val errors: ProfileForm.Errors = ProfileForm.Errors(),
     val showErrors: Boolean = false,
     val saving: Boolean = false,
+    /** Bir martalik signal: profil saqlandi → ism dialogi yopiladi. */
+    val profileSaved: Boolean = false,
 
     val passwordInput: ProfileForm.PasswordInput = ProfileForm.PasswordInput(),
     val passwordErrors: ProfileForm.PasswordErrors = ProfileForm.PasswordErrors(),
@@ -43,8 +45,6 @@ data class ProfileUiState(
     val passwordChanged: Boolean = false,
 
     val loggingOut: Boolean = false,
-    /** M5 — akkaunt o'chirilmoqda. */
-    val deletingAccount: Boolean = false,
     /** Bir martalik xabar (snackbar). */
     val notice: String? = null,
 ) {
@@ -151,6 +151,7 @@ class ProfileViewModel @Inject constructor(
                             input = input,
                             errors = ProfileForm.validate(input),
                             notice = "Profil saqlandi",
+                            profileSaved = true,
                         )
                     }
                 }
@@ -236,24 +237,8 @@ class ProfileViewModel @Inject constructor(
         }
     }
 
-    /**
-     * M5 — akkauntni o'chirish. Muvaffaqiyatda sessiya tozalanadi (ekran o'zi
-     * login'ga qaytadi). Xato bo'lsa hisob o'chmagan — foydalanuvchini chiqarib
-     * yubormaymiz, faqat xabar ko'rsatamiz.
-     */
-    fun deleteAccount() {
-        if (_state.value.deletingAccount) return
-        _state.update { it.copy(deletingAccount = true) }
-        viewModelScope.launch {
-            val result = auth.deleteAccount()
-            _state.update {
-                it.copy(
-                    deletingAccount = false,
-                    notice = if (result.isFailure) "Akkauntni o'chirib bo'lmadi — qaytadan urinib ko'ring" else it.notice,
-                )
-            }
-        }
-    }
+    /** Ism dialogi yopilgach — profil-saqlandi signali iste'mol qilindi. */
+    fun profileSavedHandled() = _state.update { it.copy(profileSaved = false) }
 
     /** Parol oynasi yopilgach — signal iste'mol qilindi. */
     fun passwordChangeHandled() = _state.update { it.copy(passwordChanged = false) }

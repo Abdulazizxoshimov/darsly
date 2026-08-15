@@ -2,9 +2,11 @@
 
 package uz.darsly.mentor.ui.profile
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,15 +18,17 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.Block
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.Icon
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -45,6 +49,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -53,15 +58,18 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.hilt.navigation.compose.hiltViewModel
 import uz.darsly.mentor.BuildConfig
 import uz.darsly.mentor.data.api.User
+import uz.darsly.mentor.ui.common.rememberHapticClick
 import uz.darsly.mentor.util.LessonFormat
-import java.time.ZoneId
 
 /**
- * Shaxsiy kabinet.
+ * Shaxsiy kabinet — sozlamalar-ro'yxati uslubi (iOS/Android naqshi).
  *
- * Uch bo'lim: **kim ekanligingiz** (o'zgarmas — email, rol) → **sozlamalar**
- * (ism, til, mintaqa) → **xavfsizlik va chiqish**. Tartib ataylab shunday:
- * eng ko'p qaraladigan ma'lumot yuqorida, eng xavfli amal (chiqish) pastda.
+ * Yuqorida profil boshi (avatar, ism, email, rol + "Ismni tahrirlash"), pastida
+ * guruhlangan qatorlar: **Moderatsiya** (qora ro'yxat) va **Xavfsizlik** (parol,
+ * chiqish). Ism ALOHIDA dialogда tahrirlanadi (takror yo'q).
+ *
+ * Akkaunt o'chirish bu yerda YO'Q (2026-08-15): mentor o'zini o'chira olmaydi —
+ * hisoblarni admin boshqaradi (admin paneli, `DELETE /users/:id`).
  */
 @Composable
 fun ProfileScreen(
@@ -72,7 +80,7 @@ fun ProfileScreen(
     val snackbar = remember { SnackbarHostState() }
     var passwordOpen by rememberSaveable { mutableStateOf(false) }
     var confirmLogout by rememberSaveable { mutableStateOf(false) }
-    var confirmDelete by rememberSaveable { mutableStateOf(false) }
+    var nameOpen by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { vm.start() }
     LaunchedEffect(state.notice) {
@@ -114,18 +122,32 @@ fun ProfileScreen(
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                IdentityCard(user)
-                SettingsCard(state, vm)
-                ModerationCard(onOpenBlocklist = onOpenBlocklist)
-                SecurityCard(
-                    loggingOut = state.loggingOut,
-                    onChangePassword = { passwordOpen = true },
-                    onLogout = { confirmLogout = true },
-                )
-                DangerZoneCard(
-                    deleting = state.deletingAccount,
-                    onDeleteAccount = { confirmDelete = true },
-                )
+                ProfileHeader(user = user, onEditName = { nameOpen = true })
+
+                SettingsSection("Moderatsiya") {
+                    SettingsRow(
+                        icon = Icons.Default.Block,
+                        title = "Qora ro'yxat",
+                        onClick = onOpenBlocklist,
+                    )
+                }
+
+                SettingsSection("Xavfsizlik") {
+                    SettingsRow(
+                        icon = Icons.Default.Lock,
+                        title = "Parolni o'zgartirish",
+                        onClick = { passwordOpen = true },
+                    )
+                    HorizontalDivider()
+                    SettingsRow(
+                        icon = Icons.AutoMirrored.Filled.Logout,
+                        title = "Tizimdan chiqish",
+                        onClick = { confirmLogout = true },
+                        destructive = true,
+                        loading = state.loggingOut,
+                    )
+                }
+
                 AppVersion()
             }
         }
@@ -147,6 +169,26 @@ fun ProfileScreen(
                 passwordOpen = false
                 // Kiritilgan parollar ViewModel xotirasida qolib ketmasin.
                 vm.resetPasswordForm()
+            },
+        )
+    }
+
+    // Ism saqlangach dialog o'zi yopiladi (parol naqshi kabi).
+    LaunchedEffect(state.profileSaved) {
+        if (state.profileSaved) {
+            nameOpen = false
+            vm.profileSavedHandled()
+        }
+    }
+
+    if (nameOpen) {
+        EditNameDialog(
+            state = state,
+            vm = vm,
+            onDismiss = {
+                nameOpen = false
+                // Saqlanmagan o'zgarishni bekor qilamiz — keyingi ochilishда joriy ism ko'rinsin.
+                state.user?.let { u -> vm.edit { it.copy(fullName = u.fullName) } }
             },
         )
     }
@@ -173,70 +215,142 @@ fun ProfileScreen(
         )
     }
 
-    // M5 — akkauntni o'chirish tasdiqi. Qaytarib bo'lmaydigan amal, shuning uchun
-    // ogohlantirish aniq va tugma matni "O'chirish" (adashib bosilmasin).
-    if (confirmDelete) {
-        AlertDialog(
-            onDismissRequest = { confirmDelete = false },
-            title = { Text("Akkauntni o'chirasizmi?") },
-            text = {
-                Text(
-                    "Bu amalni QAYTARIB BO'LMAYDI. Hisobingiz va unga bog'liq ma'lumotlar " +
-                        "o'chiriladi, barcha darslaringiz havolalari ishlamay qoladi. " +
-                        "Qaytadan foydalanish uchun yangi hisob ochishingiz kerak bo'ladi.",
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmDelete = false
-                    vm.deleteAccount()
-                }) { Text("O'chirish", color = MaterialTheme.colorScheme.error) }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmDelete = false }) { Text("Bekor qilish") }
-            },
-        )
-    }
 }
 
 /**
- * Kim ekanligingiz — **o'zgartirib bo'lmaydigan** maydonlar.
+ * Profil "boshi" — kim ekanligingiz + "Ismni tahrirlash" (alohida dialog).
  *
- * Email va rol ataylab tahrirlanmaydi: email o'zgartirish endpoint'i backend'da
- * yo'q, rolni esa server `PUT /users/me` da majburan tashlab yuboradi (privilege
- * escalation himoyasi, `v1/user.go:198`). Tahrirlanadigandek ko'rinadigan, lekin
- * jimgina ishlamaydigan maydon eng yomon interfeys yolg'oni bo'lardi.
+ * Email va rol ATAYLAB o'zgartirilmaydi: email uchun endpoint yo'q, rolni server
+ * `PUT /users/me` da majburan tashlaydi (privilege escalation himoyasi,
+ * `v1/user.go`). Faqat ism tahrirlanadi — u ham alohida dialogда (takror yo'q).
  */
 @Composable
-private fun IdentityCard(user: User) {
+private fun ProfileHeader(user: User, onEditName: () -> Unit) {
     Card(Modifier.fillMaxWidth()) {
-        Row(
-            Modifier.padding(16.dp),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        Column(
+            Modifier.fillMaxWidth().padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Avatar(user)
-            Column(Modifier.weight(1f)) {
-                Text(user.fullName, style = MaterialTheme.typography.titleMedium)
-                Text(
-                    user.email,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.height(6.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    RoleBadge(user.role)
-                    LessonFormat.scheduleLabel(user.createdAt)?.let {
-                        Text(
-                            "Ro'yxatdan o'tgan: $it",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+            Spacer(Modifier.height(12.dp))
+            Text(user.fullName, style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.height(2.dp))
+            Text(
+                user.email,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(10.dp))
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RoleBadge(user.role)
+                LessonFormat.scheduleLabel(user.createdAt)?.let {
+                    Text(
+                        "Ro'yxatdan: $it",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
+            }
+            Spacer(Modifier.height(16.dp))
+            OutlinedButton(onClick = rememberHapticClick(onClick = onEditName)) {
+                Text("Ismni tahrirlash")
             }
         }
     }
+}
+
+/** Sozlamalar-ro'yxati bo'limi: SARLAVHA + kartada qatorlar (iOS/Android naqshi). */
+@Composable
+private fun SettingsSection(title: String, content: @Composable ColumnScope.() -> Unit) {
+    Column {
+        Text(
+            title.uppercase(),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 4.dp, bottom = 6.dp),
+        )
+        Card(Modifier.fillMaxWidth()) {
+            Column(content = content)
+        }
+    }
+}
+
+/** Bosiladigan sozlama qatori: ikonka + matn + chevron (yoki spinner). */
+@Composable
+private fun SettingsRow(
+    icon: ImageVector,
+    title: String,
+    onClick: () -> Unit,
+    destructive: Boolean = false,
+    loading: Boolean = false,
+) {
+    val color = if (destructive) {
+        MaterialTheme.colorScheme.error
+    } else {
+        MaterialTheme.colorScheme.onSurface
+    }
+    val click = rememberHapticClick(onClick = onClick)
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(enabled = !loading) { click() }
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(22.dp))
+        Text(
+            title,
+            color = color,
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.weight(1f),
+        )
+        if (loading) {
+            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+        } else {
+            Icon(
+                Icons.Default.ChevronRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/** Ismni tahrirlash — alohida dialog (Saqlagach o'zi yopiladi, `profileSaved`). */
+@Composable
+private fun EditNameDialog(state: ProfileUiState, vm: ProfileViewModel, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = { if (!state.saving) onDismiss() },
+        title = { Text("Ismni tahrirlash") },
+        text = {
+            OutlinedTextField(
+                value = state.input.fullName,
+                onValueChange = { v -> vm.edit { it.copy(fullName = v) } },
+                label = { Text("Ism familiya") },
+                isError = state.showErrors && state.errors.fullName != null,
+                supportingText = { if (state.showErrors) state.errors.fullName?.let { Text(it) } },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { vm.save() }, enabled = state.canSave) {
+                if (state.saving) {
+                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                } else {
+                    Text("Saqlash")
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !state.saving) { Text("Bekor qilish") }
+        },
+    )
 }
 
 /**
@@ -251,7 +365,7 @@ private fun Avatar(user: User) {
     Surface(
         shape = CircleShape,
         color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.size(52.dp),
+        modifier = Modifier.size(64.dp),
     ) {
         Box(contentAlignment = Alignment.Center) {
             Text(
@@ -275,174 +389,6 @@ private fun RoleBadge(role: String) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
         )
-    }
-}
-
-@Composable
-private fun SettingsCard(state: ProfileUiState, vm: ProfileViewModel) {
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Ma'lumotlar", style = MaterialTheme.typography.titleSmall)
-
-            OutlinedTextField(
-                value = state.input.fullName,
-                onValueChange = { v -> vm.edit { it.copy(fullName = v) } },
-                label = { Text("Ism familiya") },
-                isError = state.showErrors && state.errors.fullName != null,
-                supportingText = { if (state.showErrors) state.errors.fullName?.let { Text(it) } },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                modifier = Modifier.fillMaxWidth(),
-            )
-
-            // TIL VA VAQT MINTAQASI SOZLAMADAN OLIB TASHLANDI.
-            //
-            // Ilova butunlay o'zbekcha va foydalanuvchilar O'zbekistonda — ya'ni
-            // bu ikki maydon hech qachon o'zgartirilmaydi, lekin har bir ustozga
-            // "nimadir sozlash kerakmi?" degan savol tug'dirardi. Qiymatlar
-            // `ProfileForm.DEFAULT_LANGUAGE` / `DEFAULT_TIMEZONE` dan saqlanadi.
-            Text(
-                "Dars vaqtlari Toshkent vaqtida ko'rsatiladi",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-
-            Button(
-                onClick = { vm.save() },
-                enabled = state.canSave,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                if (state.saving) {
-                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                } else {
-                    Text("Saqlash")
-                }
-            }
-        }
-    }
-}
-
-/** Ochiladigan ro'yxatli maydon — erkin matn o'rniga yopiq tanlov. */
-@Composable
-private fun PickerField(
-    label: String,
-    value: String,
-    options: List<Pair<String, String>>,
-    onSelect: (String) -> Unit,
-) {
-    var open by remember { mutableStateOf(false) }
-    Column(Modifier.fillMaxWidth()) {
-        Text(
-            label,
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.height(4.dp))
-        Box {
-            OutlinedButton(onClick = { open = true }, modifier = Modifier.fillMaxWidth()) {
-                Text(value, modifier = Modifier.weight(1f))
-                Text("▾")
-            }
-            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-                options.forEach { (code, title) ->
-                    DropdownMenuItem(
-                        text = { Text(title) },
-                        onClick = {
-                            open = false
-                            onSelect(code)
-                        },
-                    )
-                }
-            }
-        }
-    }
-}
-
-/**
- * Moderatsiya — hisobga tegishli (darsga emas) sozlamalar.
- *
- * Qora ro'yxat aynan SHU YERDA, xona ekranida emas: ban dars tugagandan keyin
- * ham kuchda qoladi va uni qaytarish odatda boshqa kuni, sovuq boshda esga
- * tushadi. Xona ichida bo'lsa, ustoz uni faqat dars paytida topa olardi.
- */
-@Composable
-private fun ModerationCard(onOpenBlocklist: () -> Unit) {
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Moderatsiya", style = MaterialTheme.typography.titleSmall)
-            Text(
-                "Doimiy ban qo'yilgan ishtirokchilar ro'yxati — qaytarib olish uchun",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            OutlinedButton(onClick = onOpenBlocklist, modifier = Modifier.fillMaxWidth()) {
-                Text("Qora ro'yxat")
-            }
-        }
-    }
-}
-
-@Composable
-private fun SecurityCard(
-    loggingOut: Boolean,
-    onChangePassword: () -> Unit,
-    onLogout: () -> Unit,
-) {
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Xavfsizlik", style = MaterialTheme.typography.titleSmall)
-            OutlinedButton(onClick = onChangePassword, modifier = Modifier.fillMaxWidth()) {
-                Text("Parolni o'zgartirish")
-            }
-            HorizontalDivider()
-            OutlinedButton(
-                onClick = onLogout,
-                enabled = !loggingOut,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                if (loggingOut) {
-                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                } else {
-                    Text("Tizimdan chiqish", color = MaterialTheme.colorScheme.error)
-                }
-            }
-        }
-    }
-}
-
-/**
- * M5 — "Xavfli hudud": akkauntni o'chirish (Play Store majburiyati).
- * Xavfsizlik kartasidan ATAYLAB ajratilgan, chunki bu qaytarib bo'lmaydigan amal.
- */
-@Composable
-private fun DangerZoneCard(
-    deleting: Boolean,
-    onDeleteAccount: () -> Unit,
-) {
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Akkaunt", style = MaterialTheme.typography.titleSmall)
-            Text(
-                "Akkauntni butunlay o'chirish — qaytarib bo'lmaydi.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            OutlinedButton(
-                onClick = onDeleteAccount,
-                enabled = !deleting,
-                colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = MaterialTheme.colorScheme.error,
-                ),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.error),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                if (deleting) {
-                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                } else {
-                    Text("Akkauntni o'chirish")
-                }
-            }
-        }
     }
 }
 
