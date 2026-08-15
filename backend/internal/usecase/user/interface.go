@@ -18,4 +18,7 @@ type UseCase interface {
 	Deactivate(ctx context.Context, id string) error
 	Activate(ctx context.Context, id string) error
 	Delete(ctx context.Context, id string) error
+	// RequestDeletion — mentor o'z hisobini o'chirishni SO'RAYDI (o'zi o'chirmaydi).
+	// Admin panelida belgi paydo bo'ladi; admin tasdiqlab `Delete` qiladi.
+	RequestDeletion(ctx context.Context, userID string, requested bool) error
 }

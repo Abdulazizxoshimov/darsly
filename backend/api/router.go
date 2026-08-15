@@ -380,8 +380,12 @@ func NewRouter(h *handlers.Handler, tokenMaker token.Maker, enforcer *casbin.Enf
 		users.GET("/me", v1.GetCurrentUser(h))
 		users.PUT("/me", v1.UpdateCurrentUser(h))
 		users.PUT("/me/password", v1.ChangeCurrentPassword(h))
-		// M5 — o'z akkauntini o'chirish (Play Store majburiyati).
+		// M5 — o'z akkauntini o'chirish endpointi (mobil ilova ISHLATMAYDI — hisoblarni
+		// admin boshqaradi). Kod compliance/kelajak uchun qoladi.
 		users.DELETE("/me", v1.DeleteCurrentUser(h))
+		// Mentor o'chirishni SO'RAYDI → admin tasdiqlab o'chiradi (2026-08-15).
+		users.POST("/me/request-deletion", v1.RequestCurrentUserDeletion(h))
+		users.DELETE("/me/request-deletion", v1.CancelCurrentUserDeletionRequest(h))
 		users.GET("/:id", v1.GetUser(h))
 		users.PUT("/:id", v1.UpdateUser(h))
 		users.DELETE("/:id", v1.DeleteUser(h))

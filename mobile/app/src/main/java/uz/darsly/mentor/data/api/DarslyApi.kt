@@ -279,6 +279,13 @@ interface DarslyApi {
     @PUT("api/v1/users/me/password")
     suspend fun changePassword(@Body req: ChangePasswordReq)
 
+    /**
+     * Hisobni o'chirishni SO'RASH — mentor o'zi o'chirmaydi, admin tasdiqlab
+     * o'chiradi. 204 qaytaradi.
+     */
+    @POST("api/v1/users/me/request-deletion")
+    suspend fun requestAccountDeletion()
+
     // ─── Parolni tiklash (ochiq endpointlar) ──────────────────────────────────
 
     /**

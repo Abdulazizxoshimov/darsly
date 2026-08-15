@@ -35,14 +35,14 @@ func NewUserRepoTx(q pg.Querier, b sq.StatementBuilderType) repository.UserRepos
 	return &userRepo{db: q, builder: b}
 }
 
-const userCols = "id, email, password_hash, full_name, avatar_url, color, role, timezone, language, is_active, last_login_at, created_at, updated_at, deleted_at"
+const userCols = "id, email, password_hash, full_name, avatar_url, color, role, timezone, language, is_active, last_login_at, deletion_requested_at, created_at, updated_at, deleted_at"
 
 func scanUser(row pgx.Row) (*entity.User, error) {
 	u := &entity.User{}
 	err := row.Scan(
 		&u.ID, &u.Email, &u.PasswordHash, &u.FullName,
 		&u.AvatarURL, &u.Color, &u.Role, &u.Timezone, &u.Language,
-		&u.IsActive, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt, &u.DeletedAt,
+		&u.IsActive, &u.LastLoginAt, &u.DeletionRequestedAt, &u.CreatedAt, &u.UpdatedAt, &u.DeletedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -199,6 +199,26 @@ func (r *userRepo) UpdateLastLogin(ctx context.Context, userID string) error {
 		ToSql()
 	if err != nil {
 		return fmt.Errorf("userRepo.UpdateLastLogin: %w", err)
+	}
+	_, err = r.db.Exec(ctx, sql, args...)
+	return err
+}
+
+// SetDeletionRequested — mentor hisobni o'chirishni so'raganda `NOW()` (yoki
+// bekor qilganда `nil`) yozadi. Admin bu belgini ko'rib tasdiqlab o'chiradi.
+func (r *userRepo) SetDeletionRequested(ctx context.Context, userID string, requested bool) error {
+	var val any
+	if requested {
+		val = sq.Expr("NOW()")
+	}
+	sql, args, err := r.builder.
+		Update("users").
+		Set("deletion_requested_at", val).
+		Set("updated_at", sq.Expr("NOW()")).
+		Where(sq.Eq{"id": userID}).
+		ToSql()
+	if err != nil {
+		return fmt.Errorf("userRepo.SetDeletionRequested: %w", err)
 	}
 	_, err = r.db.Exec(ctx, sql, args...)
 	return err

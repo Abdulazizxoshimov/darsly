@@ -59,7 +59,7 @@ func (f *FakeLiveKit) inc(op string) {
 	f.mu.Unlock()
 }
 
-func (f *FakeLiveKit) Enabled() bool { return f.IsEnabled }
+func (f *FakeLiveKit) Enabled() bool             { return f.IsEnabled }
 func (f *FakeLiveKit) ClientWSURL(string) string { return "ws://fake-livekit" }
 func (f *FakeLiveKit) AccessToken(_, identity, _ string, isHost bool) (string, error) {
 	f.inc("AccessToken")
@@ -157,6 +157,7 @@ func (f *FakeLiveKit) SetTokenRoom(room string) {
 	f.TokenRoom = room
 	f.mu.Unlock()
 }
+
 // EgressErr o'rnatilgan bo'lsa `StartRoomRecording` shu xato bilan yiqiladi —
 // "egress boshlanmadi" yo'lini (kompensatsiya, qulf bo'shatish) sinash uchun.
 func (f *FakeLiveKit) StartRoomRecording(_ context.Context, _, _ string, _ livekit.S3Config) (string, error) {
@@ -257,6 +258,20 @@ func (r *FakeUserRepo) UpdatePassword(_ context.Context, userID, hash string) er
 }
 
 func (r *FakeUserRepo) UpdateLastLogin(_ context.Context, _ string) error { return nil }
+
+func (r *FakeUserRepo) SetDeletionRequested(_ context.Context, userID string, requested bool) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if u, ok := r.byID[userID]; ok {
+		if requested {
+			now := time.Now()
+			u.DeletionRequestedAt = &now
+		} else {
+			u.DeletionRequestedAt = nil
+		}
+	}
+	return nil
+}
 
 func (r *FakeUserRepo) SoftDelete(_ context.Context, id string) error {
 	r.mu.Lock()
@@ -514,6 +529,7 @@ func (c *FakeCache) Del(_ context.Context, keys ...string) error {
 	}
 	return nil
 }
+
 // SetNX — HAQIQIY "faqat mavjud bo'lmasa yoz" semantikasi.
 //
 // Avval bu doim `true` qaytarardi, ya'ni SetNX'ga tayanadigan har qanday qulf
@@ -667,7 +683,7 @@ func (m *FakeMinio) Delete(_ context.Context, name string) error {
 	delete(m.Contents, name)
 	return nil
 }
-func (m *FakeMinio) EnsureBucket(_ context.Context) error        { return nil }
+func (m *FakeMinio) EnsureBucket(_ context.Context) error { return nil }
 
 // ─── RoomUseCase ─────────────────────────────────────────────────────────────
 

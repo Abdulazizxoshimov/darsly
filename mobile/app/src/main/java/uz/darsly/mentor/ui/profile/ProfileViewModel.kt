@@ -45,6 +45,8 @@ data class ProfileUiState(
     val passwordChanged: Boolean = false,
 
     val loggingOut: Boolean = false,
+    /** Hisobni o'chirish so'rovi yuborilmoqda. */
+    val requestingDeletion: Boolean = false,
     /** Bir martalik xabar (snackbar). */
     val notice: String? = null,
 ) {
@@ -239,6 +241,28 @@ class ProfileViewModel @Inject constructor(
 
     /** Ism dialogi yopilgach — profil-saqlandi signali iste'mol qilindi. */
     fun profileSavedHandled() = _state.update { it.copy(profileSaved = false) }
+
+    /**
+     * Hisobni o'chirishni so'rash. Mentor O'ZI o'chirmaydi — admin panelida belgi
+     * paydo bo'ladi, admin tasdiqlab o'chiradi. Natija snackbar bilan bildiriladi.
+     */
+    fun requestDeletion() {
+        if (_state.value.requestingDeletion) return
+        _state.update { it.copy(requestingDeletion = true) }
+        viewModelScope.launch {
+            val result = repo.requestAccountDeletion()
+            _state.update {
+                it.copy(
+                    requestingDeletion = false,
+                    notice = if (result.isSuccess) {
+                        "O'chirish so'rovi yuborildi — admin ko'rib chiqadi"
+                    } else {
+                        "So'rovni yuborib bo'lmadi — qaytadan urinib ko'ring"
+                    },
+                )
+            }
+        }
+    }
 
     /** Parol oynasi yopilgach — signal iste'mol qilindi. */
     fun passwordChangeHandled() = _state.update { it.copy(passwordChanged = false) }

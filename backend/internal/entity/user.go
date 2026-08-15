@@ -40,6 +40,9 @@ type User struct {
 	TelegramUsername *string    `json:"telegram_username,omitempty"`
 	TelegramLinkedAt *time.Time `json:"telegram_linked_at,omitempty"`
 	LastLoginAt      *time.Time `json:"last_login_at,omitempty"`
+	// Mentor hisobni o'chirishni so'ragan vaqt (admin tasdiqlab o'chiradi).
+	// NULL = so'rov yo'q. Admin panelida "o'chirish so'ralgan" belgisi shu bilan.
+	DeletionRequestedAt *time.Time `json:"deletion_requested_at,omitempty"`
 	CreatedAt        time.Time  `json:"created_at"`
 	UpdatedAt        time.Time  `json:"updated_at"`
 	DeletedAt        *time.Time `json:"-"`

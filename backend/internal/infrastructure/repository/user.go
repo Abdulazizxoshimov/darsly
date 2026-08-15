@@ -14,6 +14,7 @@ type UserRepository interface {
 	Update(ctx context.Context, user *entity.User) error
 	UpdatePassword(ctx context.Context, userID, passwordHash string) error
 	UpdateLastLogin(ctx context.Context, userID string) error
+	SetDeletionRequested(ctx context.Context, userID string, requested bool) error
 	SoftDelete(ctx context.Context, id string) error
 	// DeleteHard qatorni butunlay o'chiradi (email'ni bo'shatadi) — registratsiya
 	// yarim yo'lda uzilganda kompensatsiya uchun.

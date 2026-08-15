@@ -22,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -68,8 +69,9 @@ import uz.darsly.mentor.util.LessonFormat
  * guruhlangan qatorlar: **Moderatsiya** (qora ro'yxat) va **Xavfsizlik** (parol,
  * chiqish). Ism ALOHIDA dialogда tahrirlanadi (takror yo'q).
  *
- * Akkaunt o'chirish bu yerda YO'Q (2026-08-15): mentor o'zini o'chira olmaydi —
- * hisoblarni admin boshqaradi (admin paneli, `DELETE /users/:id`).
+ * Mentor o'zini O'CHIRA olmaydi (2026-08-15) — "Xavfli hudud" bo'limida faqat
+ * "Hisobni o'chirishni so'rash" bor: so'rov adminga boradi, admin tasdiqlab
+ * o'chiradi (admin paneli, `DELETE /users/:id`).
  */
 @Composable
 fun ProfileScreen(
@@ -81,6 +83,7 @@ fun ProfileScreen(
     var passwordOpen by rememberSaveable { mutableStateOf(false) }
     var confirmLogout by rememberSaveable { mutableStateOf(false) }
     var nameOpen by rememberSaveable { mutableStateOf(false) }
+    var confirmDeletionRequest by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { vm.start() }
     LaunchedEffect(state.notice) {
@@ -145,6 +148,16 @@ fun ProfileScreen(
                         onClick = { confirmLogout = true },
                         destructive = true,
                         loading = state.loggingOut,
+                    )
+                }
+
+                SettingsSection("Xavfli hudud") {
+                    SettingsRow(
+                        icon = Icons.Default.DeleteOutline,
+                        title = "Hisobni o'chirishni so'rash",
+                        onClick = { confirmDeletionRequest = true },
+                        destructive = true,
+                        loading = state.requestingDeletion,
                     )
                 }
 
@@ -215,6 +228,29 @@ fun ProfileScreen(
         )
     }
 
+    // Hisobni o'chirishni SO'RASH — mentor o'zi o'chirmaydi, admin tasdiqlaydi.
+    if (confirmDeletionRequest) {
+        AlertDialog(
+            onDismissRequest = { confirmDeletionRequest = false },
+            title = { Text("Hisobni o'chirishni so'raysizmi?") },
+            text = {
+                Text(
+                    "Hisobingizni O'ZINGIZ o'chira olmaysiz — so'rovingiz administratorga " +
+                        "yuboriladi. Administrator ko'rib chiqib tasdiqlaganidan keyin hisobingiz " +
+                        "va ma'lumotlaringiz o'chiriladi.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDeletionRequest = false
+                    vm.requestDeletion()
+                }) { Text("So'rov yuborish", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDeletionRequest = false }) { Text("Bekor qilish") }
+            },
+        )
+    }
 }
 
 /**

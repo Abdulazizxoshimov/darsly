@@ -226,6 +226,41 @@ func DeleteCurrentUser(h *handlers.Handler) gin.HandlerFunc {
 	}
 }
 
+// RequestCurrentUserDeletion godoc
+// @Summary      Mentor requests deletion of own account (admin approves)
+// @Description  Mentor o'zi o'chirmaydi — so'rov qoldiradi, admin tasdiqlab o'chiradi.
+// @Tags         users
+// @Security     BearerAuth
+// @Success      204
+// @Router       /api/v1/users/me/request-deletion [post]
+func RequestCurrentUserDeletion(h *handlers.Handler) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userID := c.GetString(middleware.CtxUserID)
+		if err := h.User.RequestDeletion(c.Request.Context(), userID, true); err != nil {
+			hs.Error(c, err)
+			return
+		}
+		hs.NoContent(c)
+	}
+}
+
+// CancelCurrentUserDeletionRequest godoc
+// @Summary      Cancel own account-deletion request
+// @Tags         users
+// @Security     BearerAuth
+// @Success      204
+// @Router       /api/v1/users/me/request-deletion [delete]
+func CancelCurrentUserDeletionRequest(h *handlers.Handler) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userID := c.GetString(middleware.CtxUserID)
+		if err := h.User.RequestDeletion(c.Request.Context(), userID, false); err != nil {
+			hs.Error(c, err)
+			return
+		}
+		hs.NoContent(c)
+	}
+}
+
 // ChangeCurrentPassword godoc
 // @Summary      Change current user password
 // @Tags         users

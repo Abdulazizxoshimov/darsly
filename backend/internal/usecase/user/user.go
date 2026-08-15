@@ -61,9 +61,9 @@ func (uc *useCase) Create(ctx context.Context, req *entity.CreateUserReq) (*enti
 		// Mahsulot O'zbekiston uchun: yangi hisob darhol Toshkent vaqtida
 		// bo'lsin. Avval "UTC" edi va ustoz profilda o'zi tuzatishi kerak edi —
 		// tuzatmasa dars vaqtlari 5 soat surilib ko'rinardi.
-		Timezone:     entity.DefaultTimezone,
-		Language:     entity.DefaultLanguage,
-		IsActive:     true,
+		Timezone: entity.DefaultTimezone,
+		Language: entity.DefaultLanguage,
+		IsActive: true,
 	}
 	if err := uc.repo.Create(ctx, u); err != nil {
 		uc.log.Error(ctx, "user.Create: db error", logger.SafeEmail("email", req.Email), logger.SafeString("err", err.Error()))
@@ -306,5 +306,21 @@ func (uc *useCase) Delete(ctx context.Context, id string) error {
 		}
 	}
 	uc.log.Info(ctx, "user deleted", logger.String("id", id))
+	return nil
+}
+
+// RequestDeletion — mentor hisobni o'chirishni so'raydi/bekor qiladi. O'zi o'chirmaydi:
+// belgi qo'yiladi, admin panelida ko'rinadi va admin tasdiqlab `Delete` qiladi.
+func (uc *useCase) RequestDeletion(ctx context.Context, userID string, requested bool) error {
+	if err := shared.ValidateID(userID, "user"); err != nil {
+		return err
+	}
+	if err := uc.repo.SetDeletionRequested(ctx, userID, requested); err != nil {
+		uc.log.Error(ctx, "user.RequestDeletion: db error",
+			logger.String("id", userID), logger.SafeString("err", err.Error()))
+		return err
+	}
+	uc.log.Info(ctx, "user deletion requested",
+		logger.String("id", userID), logger.String("requested", fmt.Sprintf("%t", requested)))
 	return nil
 }
