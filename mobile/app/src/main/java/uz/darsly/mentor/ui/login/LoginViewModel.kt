@@ -12,6 +12,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import uz.darsly.mentor.data.api.AdminNotAllowedException
 import uz.darsly.mentor.data.api.ApiErrors
 import uz.darsly.mentor.data.api.AuthRepository
 import uz.darsly.mentor.data.api.SessionManager
@@ -54,7 +55,13 @@ class LoginViewModel @Inject constructor(
             runCatching { auth.login(email, password) }
                 .onSuccess { _state.update { it.copy(loading = false, success = true) } }
                 .onFailure { t ->
-                    _state.update { it.copy(loading = false, error = ApiErrors.humanError(t)) }
+                    // Admin bloki — aniq xabar (generic "xato" emas).
+                    val msg = if (t is AdminNotAllowedException) {
+                        t.message
+                    } else {
+                        ApiErrors.humanError(t)
+                    }
+                    _state.update { it.copy(loading = false, error = msg) }
                 }
         }
     }

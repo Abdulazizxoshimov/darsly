@@ -4,6 +4,13 @@ import io.livekit.android.util.LKLog
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/**
+ * Admin mobil ilovaga kira olmaydi — u FAQAT web'da faoliyat yuritadi (kuzatuv).
+ * Mobil ilova mentorlar uchun (dars o'tish). Login'da rol admin bo'lsa shu tashlanadi.
+ */
+class AdminNotAllowedException :
+    Exception("Bu hisob administrator — mobil ilovada ishlamaydi. Iltimos, sayt (web) orqali kiring.")
+
 /** Kirish/chiqish oqimi (M1 · M3). */
 @Singleton
 class AuthRepository @Inject constructor(
@@ -16,6 +23,13 @@ class AuthRepository @Inject constructor(
         val pair = api.login(LoginReq(email, password)).data
             ?: throw IllegalStateException("Server bo'sh javob qaytardi")
         session.save(pair)
+        // Admin — faqat web (kuzatuv). Rolni tekshirib, admin bo'lsa sessiyani
+        // tozalab, aniq xabar bilan rad etamiz. `me()` uchun token endi saqlangan.
+        val role = runCatching { api.me().data?.role }.getOrNull()
+        if (role == "admin") {
+            session.forceLogout()
+            throw AdminNotAllowedException()
+        }
         return pair
     }
 
