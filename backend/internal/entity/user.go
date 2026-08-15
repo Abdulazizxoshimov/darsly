@@ -43,9 +43,9 @@ type User struct {
 	// Mentor hisobni o'chirishni so'ragan vaqt (admin tasdiqlab o'chiradi).
 	// NULL = so'rov yo'q. Admin panelida "o'chirish so'ralgan" belgisi shu bilan.
 	DeletionRequestedAt *time.Time `json:"deletion_requested_at,omitempty"`
-	CreatedAt        time.Time  `json:"created_at"`
-	UpdatedAt        time.Time  `json:"updated_at"`
-	DeletedAt        *time.Time `json:"-"`
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
+	DeletedAt           *time.Time `json:"-"`
 }
 
 type CreateUserReq struct {
@@ -99,5 +99,35 @@ func (u *User) ToShort() UserShort {
 		AvatarURL: u.AvatarURL,
 		Color:     u.Color,
 		Email:     u.Email,
+	}
+}
+
+// AdminUserRow — admin panelидаги ro'yxat qatori. `UserShort` dан farqli: rol,
+// faollik va "o'chirish so'ralgan" belgisini ham beradi (admin nazorati uchun).
+// FAQAT admin-only `GET /users` da ishlatiladi — bu maydonlar boshqa (nested)
+// javoblarga sizib chiqmasin.
+type AdminUserRow struct {
+	ID                  string     `json:"id"`
+	FullName            string     `json:"full_name"`
+	Email               string     `json:"email"`
+	AvatarURL           *string    `json:"avatar_url,omitempty"`
+	Color               string     `json:"color"`
+	Role                string     `json:"role"`
+	IsActive            bool       `json:"is_active"`
+	DeletionRequestedAt *time.Time `json:"deletion_requested_at,omitempty"`
+	CreatedAt           time.Time  `json:"created_at"`
+}
+
+func (u *User) ToAdminRow() AdminUserRow {
+	return AdminUserRow{
+		ID:                  u.ID,
+		FullName:            u.FullName,
+		Email:               u.Email,
+		AvatarURL:           u.AvatarURL,
+		Color:               u.Color,
+		Role:                u.Role,
+		IsActive:            u.IsActive,
+		DeletionRequestedAt: u.DeletionRequestedAt,
+		CreatedAt:           u.CreatedAt,
 	}
 }

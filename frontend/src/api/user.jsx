@@ -23,6 +23,18 @@ export function createUser(body) {
   return api.post('/users', body)
 }
 
+// body: {full_name?, role?, ...} — backend `UpdateUserReq`.
+export function updateUser(id, body) {
+  return api.put(`/users/${id}`, body)
+}
+
+export function deactivateUser(id) {
+  return api.post(`/users/${id}/deactivate`)
+}
+export function activateUser(id) {
+  return api.post(`/users/${id}/activate`)
+}
+
 export function deleteUser(id) {
   return api.del(`/users/${id}`)
 }

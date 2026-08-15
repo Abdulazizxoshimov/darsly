@@ -32,12 +32,13 @@ func ListUsers(h *handlers.Handler) gin.HandlerFunc {
 			hs.Error(c, err)
 			return
 		}
-		// Yengil ko'rinish — ro'yxatda to'liq User (last_login, timezone, ...) shart emas.
-		short := make([]entity.UserShort, len(users))
+		// Admin ro'yxati — rol, faollik va "o'chirish so'ralgan" belgisi bilan
+		// (ListUsers faqat admin'da). Nested javoblar hamon `UserShort` ishlatadi.
+		rows := make([]entity.AdminUserRow, len(users))
 		for i, u := range users {
-			short[i] = u.ToShort()
+			rows[i] = u.ToAdminRow()
 		}
-		hs.List(c, short, total, filter.Page, filter.GetLimit())
+		hs.List(c, rows, total, filter.Page, filter.GetLimit())
 	}
 }
 

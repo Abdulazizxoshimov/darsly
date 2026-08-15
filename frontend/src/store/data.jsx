@@ -346,3 +346,18 @@ export function useDeleteUser() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
   })
 }
+export function useUpdateUser() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, body }) => userApi.updateUser(id, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+  })
+}
+export function useSetUserActive() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, active }) =>
+      active ? userApi.activateUser(id) : userApi.deactivateUser(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+  })
+}
