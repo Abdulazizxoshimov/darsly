@@ -126,6 +126,7 @@ class LessonFormTest {
                 duration = "90",
                 passcode = "1234",
                 waitingRoom = true,
+                recording = true,
                 scheduledAtMillis = 1_774_000_000_000L,
             ),
         )
@@ -184,13 +185,11 @@ class LessonFormTest {
     }
 
     @Test
-    fun `yangi darsda yozib olish DEFAULT YONIQ`() {
-        // ⭐ Mahsulot qarori: yozuv default yoniq, lekin majburiy emas.
-        // Default yoqilgani muhim, chunki yoqishni unutish QAYTARIB
-        // BO'LMAYDIGAN yo'qotish (dars o'tib ketdi), o'chirishni unutish esa
-        // tuzatiladigan holat.
-        assertTrue(LessonForm.Input().recording)
-        assertTrue(LessonForm.toRequest(input()).isRecordingEnabled)
+    fun `yangi darsda yozib olish DEFAULT O'CHIQ`() {
+        // ⭐ Mahsulot qarori (2026-08-15): yozuv default O'CHIQ. Har dars
+        // avtomatik yozilishi shart emas — ustoz kerak bo'lganda o'zi yoqadi.
+        assertFalse(LessonForm.Input().recording)
+        assertFalse(LessonForm.toRequest(input()).isRecordingEnabled)
     }
 
     @Test

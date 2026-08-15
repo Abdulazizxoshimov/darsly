@@ -40,12 +40,12 @@ object LessonForm {
         val passcode: String = "",
         val waitingRoom: Boolean = false,
         /**
-         * Yozib olish — **default YONIQ** (shu sabab `true`).
+         * Yozib olish — **default O'CHIQ** (mahsulot qarori 2026-08-15).
          *
-         * Ustoz uni o'chira oladi: majburiy emas. Lekin yoqishni unutish eng
-         * ko'p uchraydigan pushaymonlik bo'lgani uchun default yoqilgan holda
-         * keladi va dars boshlanishi bilan server yozuvni **avtomatik**
-         * boshlaydi (`room.HostToken` → `recording.EnsureRecording`).
+         * Avval default yoniq edi, lekin har dars avtomatik yozilishi har doim
+         * ham kerak emas — ustoz kerak bo'lganda o'zi yoqadi (yaratishда yoki dars
+         * ichida Record bilan). Yoqilsa dars boshlanishi bilan server yozuvni
+         * avtomatik boshlaydi (`room.HostToken` → `recording.EnsureRecording`).
          */
         val recording: Boolean = RECORDING_DEFAULT_ON,
         /**
@@ -86,7 +86,7 @@ object LessonForm {
      * Yoqilgan bo'lsa dars boshlanishi bilan server yozuvni o'zi boshlaydi —
      * ustoz xona ichida hech narsa bosmaydi.
      */
-    const val RECORDING_DEFAULT_ON = true
+    const val RECORDING_DEFAULT_ON = false
 
     data class Errors(
         val title: String? = null,

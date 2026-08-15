@@ -457,20 +457,17 @@ class RoomViewModel @Inject constructor(
                                 identity = token.identity,
                             )
                         }
-                        // Host media: kamera + mikrofon (web useRoom.js bilan bir xil).
-                        runCatching { s.setMicrophoneEnabled(true) }
-                            .onSuccess {
-                                _state.update { st -> st.copy(micOn = true).withAudioReason() }
-                                log("mikrofon yoqildi")
-                            }
-                            .onFailure { log("mikrofon XATO: ${it.message}") }
-                        if (withCamera) {
-                            runCatching { s.setCameraEnabled(true) }
-                                .onSuccess { _state.update { st -> st.copy(camOn = true) }; log("kamera yoqildi") }
-                                .onFailure { log("kamera XATO: ${it.message}") }
-                        } else {
-                            log("kamera ruxsati yo'q — kamerasiz davom etamiz")
-                        }
+                        // Kirganda kamera va mikrofon O'CHIQ (mahsulot qarori 2026-08-15).
+                        //
+                        // Avval ikkalasi ham avtomatik yonardi (web useRoom.js bilan bir xil),
+                        // lekin bu noqulay: mentor xonaga kirgan zahoti kutilmaganda
+                        // ko'rinib/eshitilib qolardi (tayyor bo'lmagan holatda). Endi ikkalasi
+                        // o'chiq turadi va mentor tayyor bo'lgach ControlBar'dan o'zi yoqadi.
+                        //
+                        // Ruxsatlar (mic majburiy, kamera `withCamera`) join'da allaqachon
+                        // so'ralgan, shuning uchun yoqish bir bosishda ishlaydi. micOn/camOn
+                        // boshlang'ich qiymati `false` (RoomUiState) — shu holatда qoladi.
+                        log("kirildi — mic/kamera o'chiq (mentor o'zi yoqadi), kamera ruxsati=$withCamera")
                     }
                     .onFailure { t ->
                         // Asl (inglizcha, WebRTC/LiveKit) matn diagnostika jurnalida qoladi,

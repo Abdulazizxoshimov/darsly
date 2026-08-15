@@ -186,7 +186,7 @@ fun LessonFields(
             onChange = { v -> onEdit { it.copy(waitingRoom = v) } },
         )
 
-        // Avtomatik yozib olish — DEFAULT YONIQ, lekin o'chirsa bo'ladi.
+        // Avtomatik yozib olish — DEFAULT O'CHIQ (2026-08-15), lekin yoqsa bo'ladi.
         // O'chiq bo'lsa ham ustoz dars ichida Record tugmasi bilan qo'lda yoza oladi.
         LessonSwitchRow(
             title = "Avtomatik yozib olish",
