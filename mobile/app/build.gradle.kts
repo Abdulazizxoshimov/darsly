@@ -64,7 +64,7 @@ android {
         applicationId = "uz.darsly.mentor"
         minSdk = 26
         targetSdk = 35
-        versionCode = 8
+        versionCode = 9
         // DIQQAT (M42): bu qiymat `GET /api/v1/app-config` dagi `min_version` bilan
         // solishtiriladi. Serverda hozir min_version=1.0.0 — spike'dagi "0.1.0-spike"
         // qolsa ilova o'zini bloklab qo'yardi. R1 bloki = 1.0.0.
@@ -78,7 +78,10 @@ android {
         // 1.4.0 — «Arxiv» bo'limi: o'tgan darslar video (ilova ichida pleyer) +
         //         Telegram-uslub chat paneli; bildirishnomalar endi o'ng-tepadagi
         //         qo'ng'iroqda (alohida bo'lim emas).
-        versionName = "1.6.0"
+        // 1.7.0 — Kabinet qayta tuzildi (sozlamalar-ro'yxati), kirganda mic/kamera
+        //         o'chiq + recording default o'chiq, dars o'chirish 3-nuqta menyusiga,
+        //         hisob o'chirish so'rovi (admin tasdiqlaydi), LoginReq bug tuzatildi.
+        versionName = "1.7.0"
     }
 
     buildFeatures {
