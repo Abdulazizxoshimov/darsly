@@ -1,5 +1,6 @@
 import { lazy, Suspense } from 'react'
-import { Routes, Route } from 'react-router-dom'
+import { Routes, Route, Navigate } from 'react-router-dom'
+import { useApp } from './store/app'
 import { RequireAuth } from './components/RequireAuth'
 import { AppShell } from './components/AppShell'
 import { PageLoader } from './components/Spinner'
@@ -30,6 +31,14 @@ function LiveRoomLazy(props) {
   )
 }
 
+// Bosh sahifa: admin — FAQAT kuzatuv, shuning uchun dars Dashboard'iga emas,
+// foydalanuvchilar boshqaruviga tushadi. Mentor esa darslar ro'yxatiga.
+function HomeIndex() {
+  const { user } = useApp()
+  if (user?.role === 'admin') return <Navigate to="/app/users" replace />
+  return <Dashboard />
+}
+
 export default function App() {
   return (
     <Routes>
@@ -47,7 +56,7 @@ export default function App() {
       <Route element={<RequireAuth />}>
         <Route path="/app/lesson/:id/room" element={<LiveRoomLazy mode="host" />} />
         <Route path="/app" element={<AppShell />}>
-          <Route index element={<Dashboard />} />
+          <Route index element={<HomeIndex />} />
           <Route path="schedule" element={<Schedule />} />
           <Route path="recordings" element={<Recordings />} />
           {/* O'tgan dars sahifasi: video + chat + materiallar. Shell ICHIDA —

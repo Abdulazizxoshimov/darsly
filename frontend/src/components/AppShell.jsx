@@ -95,12 +95,15 @@ export function AppShell() {
           jonly
         </div>
         <nav className="nav">
-          <NavItems items={NAV} />
-          {isAdmin && (
+          {/* Admin — FAQAT kuzatuv/boshqaruv: mentor bo'limlari (dars yaratish,
+              jadval, arxiv) ko'rsatilmaydi. Admin darslarni yaratmaydi. */}
+          {isAdmin ? (
             <>
               <div className="nav__section">Boshqaruv</div>
               <NavItems items={ADMIN_NAV} />
             </>
+          ) : (
+            <NavItems items={NAV} />
           )}
         </nav>
         <div className="sidebar__foot">
@@ -176,8 +179,11 @@ export function AppShell() {
               </button>
             </div>
             <nav className="nav">
-              <NavItems items={NAV} onNavigate={() => setMenuOpen(false)} />
-              {isAdmin && <NavItems items={ADMIN_NAV} onNavigate={() => setMenuOpen(false)} />}
+              {isAdmin ? (
+                <NavItems items={ADMIN_NAV} onNavigate={() => setMenuOpen(false)} />
+              ) : (
+                <NavItems items={NAV} onNavigate={() => setMenuOpen(false)} />
+              )}
               <NavItems items={EXTRA_NAV} onNavigate={() => setMenuOpen(false)} />
               <button className="nav__item" onClick={logout} style={{ background: 'none', border: 'none', width: '100%', textAlign: 'left' }}>
                 <LogOut size={18} /> Chiqish
