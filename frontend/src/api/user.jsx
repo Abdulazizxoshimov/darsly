@@ -7,6 +7,12 @@ export function changePassword(current_password, new_password) {
   return api.put('/users/me/password', { current_password, new_password })
 }
 
+// Hisobni o'chirishni SO'RASH — mentor o'zi o'chirmaydi, admin tasdiqlab o'chiradi.
+// Faqat web'da (mobil ilovada bu imkoniyat yo'q).
+export function requestAccountDeletion() {
+  return api.post('/users/me/request-deletion')
+}
+
 /* -------- Admin (RBAC: faqat admin) -------- */
 
 // Ro'yxat `UserShort` qaytaradi: {id, full_name, email, avatar_url?, color}.

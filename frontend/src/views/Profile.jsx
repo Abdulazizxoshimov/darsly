@@ -1,7 +1,7 @@
 import { useState } from 'react'
-import { KeyRound, Save } from 'lucide-react'
+import { KeyRound, Save, Trash2 } from 'lucide-react'
 import { useApp } from '../store/app'
-import { useUpdateProfile, useChangePassword } from '../store/data'
+import { useUpdateProfile, useChangePassword, useRequestAccountDeletion } from '../store/data'
 import { errorText } from '../api/api'
 import { Field } from '../components/Field'
 import { Button } from '../components/Button'
@@ -14,6 +14,24 @@ export function Profile() {
   const { user, setUser } = useApp()
   const updateProfile = useUpdateProfile()
   const changePassword = useChangePassword()
+  const requestDeletion = useRequestAccountDeletion()
+  const isMentor = user?.role === 'mentor'
+
+  async function requestAccountDeletion() {
+    if (
+      !window.confirm(
+        "Hisobingizni o'ZINGIZ o'chira olmaysiz. So'rov administratorga yuboriladi — " +
+          'u ko\'rib chiqib tasdiqlaganidan keyin hisobingiz o\'chiriladi. So\'rov yuborilsinmi?',
+      )
+    )
+      return
+    try {
+      await requestDeletion.mutateAsync()
+      toast.success("O'chirish so'rovi yuborildi — administrator ko'rib chiqadi")
+    } catch (err) {
+      toast.error(errorText(err, "So'rovni yuborib bo'lmadi"))
+    }
+  }
 
   const [fullName, setFullName] = useState(user?.full_name || '')
   const [current, setCurrent] = useState('')
@@ -92,6 +110,25 @@ export function Profile() {
           </div>
         </form>
       </div>
+
+      {/* Hisobni o'chirish so'rovi — FAQAT web'da va FAQAT mentor uchun (admin
+          o'zini o'chirmaydi; mobil ilovada bu imkoniyat yo'q). Mentor o'zi
+          o'chirmaydi, admin tasdiqlaydi. */}
+      {isMentor && (
+        <div className="card card--pad" style={{ marginTop: 20 }}>
+          <div className="row gap-2" style={{ marginBottom: 12 }}>
+            <Trash2 size={16} color="var(--danger)" />
+            <h2 className="h2">Hisobni o'chirish</h2>
+          </div>
+          <p className="text-2" style={{ fontSize: 13.5, marginBottom: 14, maxWidth: 460, lineHeight: 1.6 }}>
+            Hisobingizni o'zingiz o'chira olmaysiz. O'chirish so'rovingiz administratorga
+            yuboriladi — u tasdiqlaganidan keyin hisobingiz o'chiriladi.
+          </p>
+          <Button variant="danger" onClick={requestAccountDeletion} loading={requestDeletion.isPending}>
+            Hisobni o'chirishni so'rash
+          </Button>
+        </div>
+      )}
 
       {/* Serverda Telegram integratsiyasi sozlanmagan bo'lsa komponent
           O'ZI hech nima chizmaydi (`enabled:false`). */}

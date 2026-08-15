@@ -307,6 +307,9 @@ export function useUpdateProfile() {
 export function useChangePassword() {
   return useMutation({ mutationFn: ({ current, next }) => userApi.changePassword(current, next) })
 }
+export function useRequestAccountDeletion() {
+  return useMutation({ mutationFn: userApi.requestAccountDeletion })
+}
 
 /* -------- Blocklist (mentor) -------- */
 export function useBlocklist() {

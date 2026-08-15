@@ -39,10 +39,6 @@ class ProfileRepository @Inject constructor(private val api: DarslyApi) {
     suspend fun changePassword(currentPassword: String, newPassword: String): Result<Unit> =
         runCatching { api.changePassword(ChangePasswordReq(currentPassword, newPassword)) }
 
-    /** Hisobni o'chirishni so'rash — admin tasdiqlab o'chiradi (mentor o'zi emas). */
-    suspend fun requestAccountDeletion(): Result<Unit> =
-        runCatching { api.requestAccountDeletion() }
-
     companion object {
     }
 }
