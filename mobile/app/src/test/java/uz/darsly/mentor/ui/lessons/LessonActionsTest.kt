@@ -38,4 +38,14 @@ class LessonActionsTest {
         assertTrue(LessonActions.canOpenRoom("paused"))
         assertEquals(LessonActions.Primary.START, LessonActions.primary(""))
     }
+
+    @Test
+    fun `tugagan va bekor qilingan dars tahrirlanmaydi`() {
+        // Tahrirlash faqat tugamagan darsda: sozlamalar sessiyaga tegishli,
+        // sessiya tugagan bo'lsa o'zgartirish ma'nosiz (2026-08-15).
+        assertFalse(LessonActions.isEditable("ended"))
+        assertFalse(LessonActions.isEditable("cancelled"))
+        assertTrue(LessonActions.isEditable("scheduled"))
+        assertTrue(LessonActions.isEditable("live"))
+    }
 }

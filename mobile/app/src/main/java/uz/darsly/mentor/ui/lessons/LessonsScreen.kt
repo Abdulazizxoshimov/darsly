@@ -31,12 +31,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
@@ -191,6 +193,7 @@ fun LessonsScreen(
                                 vm.showNotice("Havola nusxalandi")
                             }
                         },
+                        onDelete = { lesson -> vm.delete(lesson) },
                     )
                 }
             }
@@ -218,10 +221,6 @@ fun LessonsScreen(
             onSaved = {
                 editingId = null
                 vm.onLessonUpdated(it)
-            },
-            onDeleted = {
-                editingId = null
-                vm.onLessonDeleted(it)
             },
         )
     }
@@ -270,6 +269,7 @@ private fun LessonList(
     onRecordings: (Lesson) -> Unit,
     onShare: (Lesson) -> Unit,
     onCopy: (Lesson) -> Unit,
+    onDelete: (Lesson) -> Unit,
 ) {
     LazyColumn(
         Modifier.fillMaxSize(),
@@ -297,6 +297,7 @@ private fun LessonList(
                     onRecordings = { onRecordings(lesson) },
                     onShare = { onShare(lesson) },
                     onCopy = { onCopy(lesson) },
+                    onDelete = { onDelete(lesson) },
                 )
             }
         }
@@ -398,8 +399,10 @@ private fun LessonCard(
     onRecordings: () -> Unit,
     onShare: () -> Unit,
     onCopy: () -> Unit,
+    onDelete: () -> Unit,
 ) {
     var menuOpen by rememberSaveable { mutableStateOf(false) }
+    var confirmDelete by rememberSaveable { mutableStateOf(false) }
 
     // B tili: JONLI dars «nafas oladi» (neon chegara + mint nur), qolgan
     // kartalar tinch, ingichka chegarali. Glow faqat shu holatda — qoidaga qara
@@ -430,14 +433,18 @@ private fun LessonCard(
                         Icon(Icons.Default.MoreVert, contentDescription = "Boshqa amallar")
                     }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                        DropdownMenuItem(
-                            text = { Text("Tahrirlash") },
-                            leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
-                            onClick = {
-                                menuOpen = false
-                                onEdit()
-                            },
-                        )
+                        // Tahrirlash — FAQAT tugamagan darsda: tugagan darsni tahrirlash
+                        // ma'nosiz (sozlamalar sessiyaga tegishli, sessiya esa tugagan).
+                        if (LessonActions.isEditable(lesson.status)) {
+                            DropdownMenuItem(
+                                text = { Text("Tahrirlash") },
+                                leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
+                                onClick = {
+                                    menuOpen = false
+                                    onEdit()
+                                },
+                            )
+                        }
                         DropdownMenuItem(
                             text = { Text("Yozuvlar") },
                             leadingIcon = {
@@ -446,6 +453,21 @@ private fun LessonCard(
                             onClick = {
                                 menuOpen = false
                                 onRecordings()
+                            },
+                        )
+                        // O'chirish — har dars uchun, qizil. Tasodifan bosilmasin: tasdiq dialogi.
+                        DropdownMenuItem(
+                            text = { Text("O'chirish", color = MaterialTheme.colorScheme.error) },
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Default.Delete,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error,
+                                )
+                            },
+                            onClick = {
+                                menuOpen = false
+                                confirmDelete = true
                             },
                         )
                     }
@@ -552,5 +574,29 @@ private fun LessonCard(
                 }
             }
         }
+    }
+
+    // O'chirish tasdiqi — oqibatni aytadi ("havolalar o'lik bo'ladi"), bo'sh
+    // "ishonchingiz komilmi?" emas. Ikki bosqich: menyu → tasdiq.
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Darsni o'chirasizmi?") },
+            text = {
+                Text(
+                    "\"${lesson.title}\" o'chiriladi va o'quvchilarga yuborgan havolangiz " +
+                        "ishlamay qoladi. Dars yozuvlari ham ochilmaydi. Bu amalni qaytarib bo'lmaydi.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDelete = false
+                    onDelete()
+                }) { Text("O'chirish", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDelete = false }) { Text("Bekor qilish") }
+            },
+        )
     }
 }

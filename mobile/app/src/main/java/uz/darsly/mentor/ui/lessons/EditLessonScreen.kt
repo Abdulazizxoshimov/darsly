@@ -8,20 +8,17 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -30,9 +27,6 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -43,26 +37,25 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import uz.darsly.mentor.data.api.Lesson
 
 /**
- * Darsni tahrirlash va o'chirish.
+ * Darsni tahrirlash.
  *
  * Yaratish oynasi bilan bir xil naqsh (to'liq ekranli `Dialog`) — ustoz uchun
  * ikki oyna bir xil ishlaydi va navigatsiya grafigiga yangi yo'nalish qo'shilmaydi.
  *
- * O'CHIRISH ikki bosqichli: tugma → tasdiq dialogi. Dars o'chirilsa ustoz
- * yuborgan barcha havolalar o'lik bo'ladi, shuning uchun bitta tasodifiy bosish
- * yetarli bo'lmasligi kerak. Tasdiq matni **oqibatni** aytadi, "ishonchingiz
- * komilmi?" degan bo'sh savolni emas.
+ * O'CHIRISH bu yerda EMAS — u darslar ro'yxatidagi 3-nuqta menyusida
+ * (`LessonsScreen`). Sabab: tugagan dars tahrirlanmaydi (`LessonActions.isEditable`),
+ * lekin o'chiriladi — shuning uchun o'chirish tahrirlash oynasiga bog'liq bo'lmasligi
+ * kerak. Bu bir vaqtda uzun forma tubidagi "yarim ko'rinadigan" tugma muammosini
+ * ham yo'q qiladi.
  */
 @Composable
 fun EditLessonDialog(
     lesson: Lesson,
     onDismiss: () -> Unit,
     onSaved: (Lesson) -> Unit,
-    onDeleted: (Lesson) -> Unit,
     vm: EditLessonViewModel = hiltViewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
-    var confirmDelete by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(lesson.id) { vm.load(lesson) }
 
@@ -72,14 +65,11 @@ fun EditLessonDialog(
             vm.reset()
         }
     }
-    LaunchedEffect(state.deleted) {
-        if (state.deleted) {
-            onDeleted(lesson)
-            vm.reset()
-        }
-    }
 
-    val busy = state.submitting || state.deleting
+    // O'chirish endi darslar ro'yxatidagi 3-nuqta menyusida (LessonsScreen) —
+    // tugagan dars tahrirlanmaydi, lekin o'chiriladi, shuning uchun o'chirish
+    // tahrirlash oynasidan tashqarida bo'lishi kerak.
+    val busy = state.submitting
     val dismiss = {
         vm.reset()
         onDismiss()
@@ -116,6 +106,9 @@ fun EditLessonDialog(
                     .fillMaxSize()
                     .padding(padding)
                     .verticalScroll(rememberScrollState())
+                    // Edge-to-edge: kontent navigatsiya paneli ortida qolmasin
+                    // (aks holda pastki element yarim ko'rinardi).
+                    .navigationBarsPadding()
                     .padding(16.dp),
             ) {
                 LessonFields(
@@ -143,52 +136,8 @@ fun EditLessonDialog(
                         }
                     },
                 )
-
-                // O'chirish — eng pastda va boshqa rangda: tasodifan bosilmasin.
-                OutlinedButton(
-                    onClick = { confirmDelete = true },
-                    enabled = !busy,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    if (state.deleting) {
-                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                    } else {
-                        Icon(
-                            Icons.Default.Delete,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.size(18.dp),
-                        )
-                        Text("  Darsni o'chirish", color = MaterialTheme.colorScheme.error)
-                    }
-                }
             }
         }
-    }
-
-    if (confirmDelete) {
-        AlertDialog(
-            onDismissRequest = { confirmDelete = false },
-            title = { Text("Darsni o'chirasizmi?") },
-            text = {
-                Text(
-                    "\"${lesson.title}\" o'chiriladi va o'quvchilarga yuborgan havolangiz " +
-                        "ishlamay qoladi. Dars yozuvlari ham ochilmaydi. Bu amalni ilovadan " +
-                        "qaytarib bo'lmaydi.",
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmDelete = false
-                    vm.delete()
-                }) {
-                    Text("O'chirish", color = MaterialTheme.colorScheme.error)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmDelete = false }) { Text("Bekor qilish") }
-            },
-        )
     }
 }
 

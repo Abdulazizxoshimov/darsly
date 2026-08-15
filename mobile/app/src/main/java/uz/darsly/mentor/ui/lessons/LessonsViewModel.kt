@@ -28,6 +28,8 @@ data class LessonsUiState(
     val cachedAtMillis: Long = 0L,
     /** Bir martalik xabar (snackbar): "yangilanmadi", "dars yaratildi"… */
     val notice: String? = null,
+    /** Hozir o'chirilayotgan darsning ID'si (kartada spinner uchun). */
+    val deletingId: String? = null,
 )
 
 /**
@@ -161,6 +163,24 @@ class LessonsViewModel @Inject constructor(
                 lessons = st.lessons.filterNot { it.id == lesson.id },
                 notice = "Dars o'chirildi",
             )
+        }
+    }
+
+    /**
+     * Darsni o'chirish (3-nuqta menyusidan). Tasdiqlash EKRANDA (LessonCard) —
+     * bu yerga faqat tasdiqdan keyin keladi. Muvaffaqiyatda ro'yxatdan olinadi.
+     */
+    fun delete(lesson: Lesson) {
+        if (_state.value.deletingId != null) return
+        _state.update { it.copy(deletingId = lesson.id) }
+        viewModelScope.launch {
+            val result = repo.delete(lesson.id)
+            _state.update { it.copy(deletingId = null) }
+            if (result.isSuccess) {
+                onLessonDeleted(lesson)
+            } else {
+                showNotice("Darsni o'chirib bo'lmadi — qaytadan urinib ko'ring")
+            }
         }
     }
 

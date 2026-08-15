@@ -48,4 +48,11 @@ object LessonActions {
         val p = primary(status)
         return p == Primary.START || p == Primary.RESUME
     }
+
+    /**
+     * Dars tahrirlanadimi. Tugagan/bekor qilingan dars — FAQAT O'QILADI (o'chirish
+     * mumkin, tahrirlash yo'q): tahrirlash maydonlari sessiyani boshqaradi, sessiya
+     * esa allaqachon tugagan — o'zgartirish ma'nosiz va chalg'ituvchi (2026-08-15).
+     */
+    fun isEditable(status: String): Boolean = status != "ended" && status != "cancelled"
 }
