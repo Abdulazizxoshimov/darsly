@@ -205,6 +205,27 @@ func UpdateCurrentUser(h *handlers.Handler) gin.HandlerFunc {
 	}
 }
 
+// DeleteCurrentUser godoc
+// @Summary      Delete current user's own account (M5 — Play Store majburiyati)
+// @Description  Foydalanuvchi o'z akkauntini o'chiradi. Sessiyalar bekor qilinadi.
+// @Tags         users
+// @Security     BearerAuth
+// @Success      204
+// @Router       /api/v1/users/me [delete]
+func DeleteCurrentUser(h *handlers.Handler) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userID := c.GetString(middleware.CtxUserID)
+		// `User.Delete` — soft-delete + barcha sessiyalarni bekor qilish.
+		// Foydalanuvchi allaqachon autentifikatsiyadan o'tган (o'z akkaunti),
+		// shuning uchun qo'shimcha egalik tekshiruvi shart emas.
+		if err := h.User.Delete(c.Request.Context(), userID); err != nil {
+			hs.Error(c, err)
+			return
+		}
+		hs.NoContent(c)
+	}
+}
+
 // ChangeCurrentPassword godoc
 // @Summary      Change current user password
 // @Tags         users

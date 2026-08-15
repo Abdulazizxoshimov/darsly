@@ -53,6 +53,8 @@ export function AppProvider({ children }) {
         })
         .finally(() => alive && setReady(true))
     } else {
+      // Token yo'q — ilova bir martalik yuklanishida darhol "tayyor" (bootstrap).
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- bir martalik bootstrap
       setReady(true)
     }
     return () => {

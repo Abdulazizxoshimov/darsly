@@ -5,12 +5,14 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/zoom/darsly/internal/entity"
 	emailpkg "github.com/zoom/darsly/internal/infrastructure/email"
+	"github.com/zoom/darsly/internal/infrastructure/redis"
 	"github.com/zoom/darsly/internal/infrastructure/repository"
 	apperr "github.com/zoom/darsly/internal/pkg/errors"
 	"github.com/zoom/darsly/internal/pkg/hasher"
@@ -18,11 +20,28 @@ import (
 	"github.com/zoom/darsly/internal/pkg/token"
 )
 
+const (
+	// B4 — hisob darajasidagi login-lockout (IP'dan MUSTAQIL).
+	//
+	// Nega IP yetmaydi: IP rate-limit (middleware) bitta IP'ni to'xtatadi, lekin
+	// taqsimlangan hujum (botnet, ko'p IP) bitta hisobga cheksiz parol sinaydi.
+	// Bu yerdagi qulf HISOB (email) bo'yicha — hujum qayerdan kelishidan qat'i nazar.
+	//
+	// Tradeoff (ataylab qabul qilingan): hujumchi qurbonning emailiga qasddan
+	// noto'g'ri parol yuborib uni vaqtincha qulflab qo'yishi mumkin (klassik
+	// account-lockout DoS). Buni yumshatish uchun hisoblagich FAQAT MAVJUD
+	// hisoblar uchun oshiriladi — soxta email spam'i Redis'ni to'ldirmaydi.
+	maxLoginAttempts  = 5
+	loginFailWindow   = 15 * time.Minute
+	loginLockCooldown = 15 * time.Minute
+)
+
 type useCase struct {
 	userRepo    repository.UserRepository
 	authRepo    repository.AuthRepository
 	tokens      token.Maker
 	hasher      hasher.Hasher
+	cache       redis.Cache
 	resetTTL    time.Duration
 	refreshTTL  time.Duration
 	email       emailpkg.Sender
@@ -37,6 +56,7 @@ func New(
 	authRepo repository.AuthRepository,
 	tokens token.Maker,
 	h hasher.Hasher,
+	cache redis.Cache,
 	resetTTL time.Duration,
 	refreshTTL time.Duration,
 	emailSender emailpkg.Sender,
@@ -49,6 +69,7 @@ func New(
 		authRepo:    authRepo,
 		tokens:      tokens,
 		hasher:      h,
+		cache:       cache,
 		resetTTL:    resetTTL,
 		refreshTTL:  refreshTTL,
 		email:       emailSender,
@@ -72,11 +93,11 @@ func (uc *useCase) Register(ctx context.Context, req *entity.RegisterReq, ip, us
 		Color:        "#6366F1",
 		Role:         "student",
 		// Mahsulot O'zbekiston uchun — `entity.DefaultTimezone` ga qarang.
-		Timezone:     entity.DefaultTimezone,
-		Language:     entity.DefaultLanguage,
-		IsActive:     true,
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		Timezone:  entity.DefaultTimezone,
+		Language:  entity.DefaultLanguage,
+		IsActive:  true,
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
 	// TARTIB MUHIM: tokenlar DB yozuvidan OLDIN generatsiya qilinadi.
 	//
@@ -162,11 +183,26 @@ func (uc *useCase) createUserAndTokenCompensating(
 }
 
 func (uc *useCase) Login(ctx context.Context, req *entity.LoginReq, ip, userAgent string) (*entity.TokenPair, error) {
+	emailKey := normalizeEmail(req.Email)
+
+	// B4 — hisob qulflanganmi? Parol tekshiruvidan OLDIN. `cache` nil bo'lsa
+	// (test yoki Redis'siz konfiguratsiya) lockout o'chadi — login ishlayveradi.
+	if uc.cache != nil {
+		if locked, _ := uc.cache.Get(ctx, loginLockKey(emailKey)); locked != "" {
+			uc.log.Warn(ctx, "auth.Login: account locked (brute-force)", logger.SafeEmail("email", req.Email))
+			// Timing/enumeration himoyasi: qulflangan javobda ham bcrypt vaqtini sarflaymiz.
+			uc.hasher.Check(req.Password, dummyBcryptHash)
+			return nil, apperr.Unauthorized("too many failed attempts, try again later")
+		}
+	}
+
 	user, err := uc.userRepo.GetByEmail(ctx, req.Email)
 	if err != nil {
 		uc.log.Warn(ctx, "auth.Login: user not found", logger.SafeEmail("email", req.Email))
 		// Timing hujumidan himoya: user topilmasa ham bcrypt taqqoslashni bajaramiz,
 		// shunda "user bor/yo'q" javob vaqti farqidan bilib bo'lmaydi (enumeration).
+		// Hisoblagich ATAYLAB oshirilmaydi: mavjud bo'lmagan email soxta bo'lishi
+		// mumkin (Redis spam) — qulf faqat haqiqiy hisoblar uchun.
 		uc.hasher.Check(req.Password, dummyBcryptHash)
 		return nil, apperr.Unauthorized("invalid credentials")
 	}
@@ -176,7 +212,12 @@ func (uc *useCase) Login(ctx context.Context, req *entity.LoginReq, ip, userAgen
 	}
 	if !uc.hasher.Check(req.Password, user.PasswordHash) {
 		uc.log.Warn(ctx, "auth.Login: wrong password", logger.String("user_id", user.ID))
+		uc.registerFailedLogin(ctx, emailKey, req.Email)
 		return nil, apperr.Unauthorized("invalid credentials")
+	}
+	// Muvaffaqiyat — hisoblagich va qulfni tozalaymiz.
+	if uc.cache != nil {
+		_ = uc.cache.Del(ctx, loginFailKey(emailKey), loginLockKey(emailKey))
 	}
 
 	sessionID := uuid.NewString()
@@ -345,3 +386,26 @@ func hashToken(t string) string {
 	sum := sha256.Sum256([]byte(t))
 	return fmt.Sprintf("%x", sum)
 }
+
+// registerFailedLogin — noto'g'ri parol hisoblagichini oshiradi va chegaraga
+// yetganda hisobni qulflaydi (B4). Faqat MAVJUD hisoblar uchun chaqiriladi.
+func (uc *useCase) registerFailedLogin(ctx context.Context, emailKey, rawEmail string) {
+	if uc.cache == nil {
+		return
+	}
+	n, err := uc.cache.Incr(ctx, loginFailKey(emailKey), loginFailWindow)
+	if err != nil {
+		return
+	}
+	if n >= maxLoginAttempts {
+		_ = uc.cache.Set(ctx, loginLockKey(emailKey), "1", loginLockCooldown)
+		uc.log.Warn(ctx, "auth.Login: account locked after too many failed attempts",
+			logger.SafeEmail("email", rawEmail))
+	}
+}
+
+// normalizeEmail — qulf kalitini "Case" bilan chetlab o'tishning oldini oladi.
+func normalizeEmail(email string) string { return strings.ToLower(strings.TrimSpace(email)) }
+
+func loginFailKey(email string) string { return "loginfail:" + email }
+func loginLockKey(email string) string { return "loginlock:" + email }

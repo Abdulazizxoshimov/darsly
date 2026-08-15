@@ -36,7 +36,7 @@ func newAuthUCTx(
 	tokens *testutil.FakeTokenMaker,
 	tx auth.TxRunner,
 ) auth.UseCase {
-	return auth.New(users, auths, tokens, hasher.New(4), time.Hour, 720*time.Hour,
+	return auth.New(users, auths, tokens, hasher.New(4), testutil.NewFakeCache(), time.Hour, 720*time.Hour,
 		email.NewNopSender(), "http://frontend", tx, testutil.NewLogger())
 }
 
@@ -102,6 +102,26 @@ func TestLogin_WrongPassword(t *testing.T) {
 	_, err = uc.Login(context.Background(), &entity.LoginReq{Email: "l@darsly.uz", Password: "notright"}, "", "")
 	require.Error(t, err)
 	require.True(t, errors.Is(err, apperr.Unauthorized("")), "noto'g'ri parol 401 qaytarishi kerak")
+}
+
+// ⭐ B4 — hisob darajasidagi lockout: 5 noto'g'ri parol → hisob qulflanadi,
+// shundan keyin TO'G'RI parol ham (cooldown ichida) rad etiladi.
+func TestLogin_AccountLockout(t *testing.T) {
+	users, auths, tokens := testutil.NewFakeUserRepo(), testutil.NewFakeAuthRepo(), testutil.NewFakeTokenMaker()
+	uc := newAuthUC(users, auths, tokens)
+	_, err := uc.Register(context.Background(), &entity.RegisterReq{FullName: "A", Email: "lock@darsly.uz", Password: "parol12345"}, "", "")
+	require.NoError(t, err)
+
+	// 5 marta noto'g'ri parol (IP bo'sh — hisob bo'yicha, IP'dan mustaqil).
+	for range 5 {
+		_, err = uc.Login(context.Background(), &entity.LoginReq{Email: "lock@darsly.uz", Password: "notright"}, "", "")
+		require.Error(t, err)
+	}
+
+	// Endi TO'G'RI parol ham qulf tufayli rad etiladi.
+	_, err = uc.Login(context.Background(), &entity.LoginReq{Email: "lock@darsly.uz", Password: "parol12345"}, "", "")
+	require.Error(t, err, "qulflangan hisob to'g'ri parolda ham kira olmasligi kerak")
+	require.True(t, errors.Is(err, apperr.Unauthorized("")))
 }
 
 // Mavjud bo'lmagan user ham xatosiz (panic'siz) Unauthorized qaytarishi kerak (timing himoyasi).

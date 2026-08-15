@@ -43,6 +43,8 @@ data class ProfileUiState(
     val passwordChanged: Boolean = false,
 
     val loggingOut: Boolean = false,
+    /** M5 — akkaunt o'chirilmoqda. */
+    val deletingAccount: Boolean = false,
     /** Bir martalik xabar (snackbar). */
     val notice: String? = null,
 ) {
@@ -231,6 +233,25 @@ class ProfileViewModel @Inject constructor(
         viewModelScope.launch {
             auth.logout()
             _state.update { it.copy(loggingOut = false) }
+        }
+    }
+
+    /**
+     * M5 — akkauntni o'chirish. Muvaffaqiyatda sessiya tozalanadi (ekran o'zi
+     * login'ga qaytadi). Xato bo'lsa hisob o'chmagan — foydalanuvchini chiqarib
+     * yubormaymiz, faqat xabar ko'rsatamiz.
+     */
+    fun deleteAccount() {
+        if (_state.value.deletingAccount) return
+        _state.update { it.copy(deletingAccount = true) }
+        viewModelScope.launch {
+            val result = auth.deleteAccount()
+            _state.update {
+                it.copy(
+                    deletingAccount = false,
+                    notice = if (result.isFailure) "Akkauntni o'chirib bo'lmadi — qaytadan urinib ko'ring" else it.notice,
+                )
+            }
         }
     }
 

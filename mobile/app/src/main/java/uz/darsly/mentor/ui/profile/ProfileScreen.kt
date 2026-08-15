@@ -23,6 +23,8 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -70,6 +72,7 @@ fun ProfileScreen(
     val snackbar = remember { SnackbarHostState() }
     var passwordOpen by rememberSaveable { mutableStateOf(false) }
     var confirmLogout by rememberSaveable { mutableStateOf(false) }
+    var confirmDelete by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { vm.start() }
     LaunchedEffect(state.notice) {
@@ -119,6 +122,10 @@ fun ProfileScreen(
                     onChangePassword = { passwordOpen = true },
                     onLogout = { confirmLogout = true },
                 )
+                DangerZoneCard(
+                    deleting = state.deletingAccount,
+                    onDeleteAccount = { confirmDelete = true },
+                )
                 AppVersion()
             }
         }
@@ -162,6 +169,31 @@ fun ProfileScreen(
             },
             dismissButton = {
                 TextButton(onClick = { confirmLogout = false }) { Text("Bekor qilish") }
+            },
+        )
+    }
+
+    // M5 — akkauntni o'chirish tasdiqi. Qaytarib bo'lmaydigan amal, shuning uchun
+    // ogohlantirish aniq va tugma matni "O'chirish" (adashib bosilmasin).
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Akkauntni o'chirasizmi?") },
+            text = {
+                Text(
+                    "Bu amalni QAYTARIB BO'LMAYDI. Hisobingiz va unga bog'liq ma'lumotlar " +
+                        "o'chiriladi, barcha darslaringiz havolalari ishlamay qoladi. " +
+                        "Qaytadan foydalanish uchun yangi hisob ochishingiz kerak bo'ladi.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDelete = false
+                    vm.deleteAccount()
+                }) { Text("O'chirish", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDelete = false }) { Text("Bekor qilish") }
             },
         )
     }
@@ -372,6 +404,42 @@ private fun SecurityCard(
                     CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                 } else {
                     Text("Tizimdan chiqish", color = MaterialTheme.colorScheme.error)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * M5 — "Xavfli hudud": akkauntni o'chirish (Play Store majburiyati).
+ * Xavfsizlik kartasidan ATAYLAB ajratilgan, chunki bu qaytarib bo'lmaydigan amal.
+ */
+@Composable
+private fun DangerZoneCard(
+    deleting: Boolean,
+    onDeleteAccount: () -> Unit,
+) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Akkaunt", style = MaterialTheme.typography.titleSmall)
+            Text(
+                "Akkauntni butunlay o'chirish — qaytarib bo'lmaydi.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedButton(
+                onClick = onDeleteAccount,
+                enabled = !deleting,
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = MaterialTheme.colorScheme.error,
+                ),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.error),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                if (deleting) {
+                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                } else {
+                    Text("Akkauntni o'chirish")
                 }
             }
         }

@@ -3,6 +3,12 @@ package uz.darsly.mentor
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import dagger.hilt.android.AndroidEntryPoint
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
@@ -54,6 +60,10 @@ import uz.darsly.mentor.ui.update.UpdateGate
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Edge-to-edge — kontent status/navigation bar ORTIGA cho'ziladi (Android 15+
+        // da majburiy bo'lib bormoqda). Scaffold'lar o'z insetlarini o'zi qo'llaydi,
+        // shuning uchun kontent tizim panellari ostiga tushmaydi.
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         setContent {
             DarslyTheme {
@@ -168,6 +178,13 @@ private fun AppNav(vm: AppViewModel = hiltViewModel()) {
             navController = nav,
             startDestination = start,
             modifier = Modifier.fillMaxSize().padding(padding),
+            // M9 — ekranlararo yumshoq o'tish: fade + juda kichik siljish (~5%).
+            // Keskin "sakrash" o'rniga. Tab almashuvida ham, oldinga navigatsiyada
+            // ham tabiiy; to'liq slayd tablar uchun og'ir bo'lardi.
+            enterTransition = { fadeIn(tween(220)) + slideInHorizontally(tween(220)) { it / 18 } },
+            exitTransition = { fadeOut(tween(160)) },
+            popEnterTransition = { fadeIn(tween(220)) },
+            popExitTransition = { fadeOut(tween(160)) + slideOutHorizontally(tween(160)) { it / 18 } },
         ) {
             composable(Routes.LOGIN) {
                 LoginScreen(

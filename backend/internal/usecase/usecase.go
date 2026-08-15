@@ -96,7 +96,7 @@ func New(d Deps) *UseCases {
 	roomUC := room.New(d.Store.Lesson, d.Store.User, d.LiveKit, d.Cache, d.Log, recordingUC, roomStateUC, d.Store.Blocklist)
 	waitingUC := waitingroom.New(d.Store.WaitingRoom, d.Store.Lesson, roomUC, d.Hub, d.Cache, d.Log)
 	return &UseCases{
-		Auth:         auth.New(d.Store.User, d.Store.Auth, d.TokenMaker, d.Hasher, 24*time.Hour, d.RefreshTTL, d.EmailSender, d.FrontendBaseURL, d.Store, d.Log),
+		Auth:         auth.New(d.Store.User, d.Store.Auth, d.TokenMaker, d.Hasher, d.Cache, 24*time.Hour, d.RefreshTTL, d.EmailSender, d.FrontendBaseURL, d.Store, d.Log),
 		User:         user.New(d.Store.User, d.Hasher, d.TokenMaker, d.Log),
 		Lesson:       lesson.New(d.Store.Lesson, d.Hasher, d.Log),
 		Room:         roomUC,

@@ -67,8 +67,11 @@ export function AppShell() {
     navigate('/auth', { replace: true })
   }
 
-  // Marshrut o'zgarganda mobil menyu yopilsin
+  // Marshrut o'zgarganda mobil menyu yopilsin.
+  // Bu — ataylab: menyu holati navigatsiyaga reaksiya qiladigan sof UI yon-ta'siri.
+  // Kaskad render faqat menyu OCHIQ bo'lganda (kamdan-kam) bir marta sodir bo'ladi.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- navigatsiyada menyuni yopish (ataylab)
     setMenuOpen(false)
   }, [location.pathname])
 

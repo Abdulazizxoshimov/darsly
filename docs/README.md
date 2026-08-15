@@ -8,14 +8,12 @@ o'zgarmaydigan yoki sekin o'zgaradigan bilim.
 | Fayl | Nima uchun |
 |---|---|
 | [BACKLOG.md](BACKLOG.md) | **Ochiq ishlar** — yagona ro'yxat. Yangi ish shu yerga yoziladi |
+| [LAUNCH-PLAN.md](LAUNCH-PLAN.md) | Ishga tushirish rejasi — fazalar (P0/P1/P2), audit natijasi |
+| [PRODUCT.md](PRODUCT.md) | Mahsulot qarorlari (asoschi intervyusi asosida) |
 | [api-contract.md](api-contract.md) | API kontrakti — frontend/mobil uchun yagona haqiqat manbai |
-| [api-test-coverage.md](api-test-coverage.md) | Qaysi endpoint qaysi test bilan qoplangan |
-| [acceptance-criteria.md](acceptance-criteria.md) | Mahsulot qabul mezonlari (web) |
-| [mobile-acceptance-criteria.md](mobile-acceptance-criteria.md) | Mobil qabul mezonlari |
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Infratuzilma va **masshtab** talablari (PgBouncer, multi-node LiveKit, Redis HA) |
-| [load-test-report.md](load-test-report.md) | Yuklama sinovi o'lchovlari (2026-07-24) — tarixiy yozuv |
-| [darsly-frontend-prompt.md](darsly-frontend-prompt.md) | Frontend arxitektura spetsifikatsiyasi (manba talab) |
-| [MOBILE-DEVICE-TEST.md](MOBILE-DEVICE-TEST.md) | Qurilma sinovi yozuvi: **o'lchov metodikasi**, platforma cheklovlari, takrorlanmasligi kerak bo'lgan xatolar |
+| [PRIVACY.md](PRIVACY.md) | Maxfiylik siyosati (Play Store majburiyati, M5) |
+| [telegram-setup.md](telegram-setup.md) | Telegram arxiv integratsiyasini sozlash |
 
 Boshqa joylarda:
 
@@ -41,9 +39,10 @@ Eskirgan ro'yxat — foydasizdan ham yomon: unga qarab qaror qabul qilinadi.
 Shuning uchun ular o'chirildi (git tarixida qoladi), haqiqiy ochiq ishlar esa
 tekshirilib [BACKLOG.md](BACKLOG.md) ga ko'chirildi.
 
-`MOBILE-DEVICE-TEST.md` esa ATAYLAB saqlandi: u todo emas — o'lchov usullari,
-platforma cheklovlari va "o'lchovni buzgan omillar" yozilgan empirik yozuv.
-Bunday bilim qayta topilmaydi, faqat qayta xato qilish orqali o'rganiladi.
+Keyingi tozalashda (2026-08) yana bir nechta eskirgan/tarixiy hujjat o'chirildi
+(`acceptance-criteria.md`, `mobile-acceptance-criteria.md`, `load-test-report.md`,
+`MOBILE-DEVICE-TEST.md`, `api-test-coverage.md`, `darsly-frontend-prompt.md`) —
+ular git tarixida qoladi. Bu jadval endi faqat **mavjud** fayllarni ko'rsatadi.
 
 **Qoida:** yangi reja hujjati yaratmang. Ish — `BACKLOG.md` ga, barqaror bilim —
 shu jadvaldagi tegishli faylga yoki `CLAUDE.md` ga.

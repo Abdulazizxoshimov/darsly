@@ -241,6 +241,19 @@ ufw allow 50000:60000/udp   >/dev/null 2>&1 || true   # LiveKit media (UDP)
 ufw allow from 172.16.0.0/12 to any port 7880 proto tcp >/dev/null 2>&1 || true
 echo ">> UFW holati:"; ufw status | grep -E '80|443|7881|3478|50000' || true
 
+# ── DB backup cron (P0-3) ────────────────────────────────────────────────────
+# Har kuni 03:17 (UTC) da pg_dump → MinIO. Idempotent: qator allaqachon bor bo'lsa
+# qayta qo'shmaydi. Backup mantiqi backup.sh da; retention ham o'sha yerda.
+# ⚠️ Sinash: ./backup-restore-test.sh — sinalmagan backup backup emas.
+BK_DIR="$(pwd)"   # script boshida `cd "$(dirname "$0")"` qilingan → bu absolyut deploy/server
+BACKUP_LINE="17 3 * * * $BK_DIR/backup.sh >> /var/log/darsly-backup.log 2>&1"
+if ! crontab -l 2>/dev/null | grep -qF "$BK_DIR/backup.sh"; then
+  ( crontab -l 2>/dev/null; echo "$BACKUP_LINE" ) | crontab -
+  echo ">> backup cron o'rnatildi (kunlik 03:17 UTC → MinIO darsly-backups)."
+else
+  echo ">> backup cron allaqachon bor — tegilmadi."
+fi
+
 echo ">> Tayyor. Endi: docker compose up -d --build"
 echo ">> (egress konteyneri ham shu buyruq bilan ko'tariladi — alohida profil kerak emas)"
 exit 0

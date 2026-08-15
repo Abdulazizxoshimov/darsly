@@ -83,6 +83,21 @@
 * {
   box-sizing: border-box;
 }
+
+/* Harakatga sezgir foydalanuvchilar (vestibulyar buzilishlar) — tizim sozlamasida
+   "kamroq harakat" tanlansa, animatsiya va o'tishlarni deyarli o'chiramiz.
+   2026-yilda jiddiy veb-mahsulotda standart (qulaylik/axloqiy talab). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 html,
 body,
 #root {
@@ -292,6 +307,30 @@ h1, h2, h3 { margin: 0; letter-spacing: -0.02em; }
   gap: 12px;
   color: var(--text-3);
   font-size: 14px;
+}
+
+/* ---------- Skelet-yuklanish (shimmer) ----------
+   Spinner o'rniga: kontent shaklini oldindan ko'rsatadi. Past-tarmoq
+   auditoriyasi uchun funksional — kutish sub'ektiv qisqaradi.
+   (prefers-reduced-motion da yuqoridagi global qoida animatsiyani o'chiradi.) */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--elevated);
+  border-radius: var(--r-sm);
+}
+.skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.06), transparent);
+  animation: skeletonSweep 1.3s ease-in-out infinite;
+}
+@keyframes skeletonSweep {
+  100% {
+    transform: translateX(100%);
+  }
 }
 
 /* ---------- Modal ---------- */

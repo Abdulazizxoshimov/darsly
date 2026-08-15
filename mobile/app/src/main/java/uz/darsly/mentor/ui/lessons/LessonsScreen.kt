@@ -39,7 +39,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -56,7 +55,12 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import uz.darsly.mentor.R
+import uz.darsly.mentor.ui.common.EmptyState
+import uz.darsly.mentor.ui.common.ErrorState
+import uz.darsly.mentor.ui.common.LessonListSkeleton
 import uz.darsly.mentor.ui.common.NotificationBell
+import uz.darsly.mentor.ui.common.rememberHapticClick
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -137,7 +141,7 @@ fun LessonsScreen(
         floatingActionButton = {
             // Asosiy harakat — glow'ga ruxsat berilgan uch joydan biri.
             ExtendedFloatingActionButton(
-                onClick = { createOpen = true },
+                onClick = rememberHapticClick { createOpen = true },
                 icon = { Icon(Icons.Default.Add, contentDescription = null) },
                 text = { Text("Dars yaratish") },
                 containerColor = MaterialTheme.colorScheme.primary,
@@ -158,10 +162,16 @@ fun LessonsScreen(
                 modifier = Modifier.fillMaxSize(),
             ) {
                 when {
-                    state.loading && state.lessons.isEmpty() -> LoadingState()
+                    state.loading && state.lessons.isEmpty() -> LessonListSkeleton()
                     state.error != null && state.lessons.isEmpty() ->
-                        ErrorState(state.error!!) { vm.refresh() }
-                    state.lessons.isEmpty() -> EmptyState { createOpen = true }
+                        ErrorState(message = state.error!!, onRetry = { vm.refresh() })
+                    state.lessons.isEmpty() -> EmptyState(
+                        illustration = R.drawable.il_empty_lessons,
+                        title = "Hali dars yo'q",
+                        message = "Birinchi darsni shu yerda yarating va havolasini o'quvchilarga yuboring",
+                        actionLabel = "Dars yaratish",
+                        onAction = { createOpen = true },
+                    )
                     else -> LessonList(
                         lessons = state.lessons,
                         onOpen = onOpenLesson,
@@ -247,54 +257,6 @@ private fun OfflineBar(cachedAtMillis: Long) {
                         )
                     }
                 }
-            }
-        }
-    }
-}
-
-@Composable
-private fun LoadingState() {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        CircularProgressIndicator()
-    }
-}
-
-@Composable
-private fun ErrorState(message: String, onRetry: () -> Unit) {
-    // Scroll qilinadigan konteyner: pull-to-refresh xato ekranida ham ishlasin.
-    LazyColumn(Modifier.fillMaxSize()) {
-        item {
-            Column(
-                Modifier.fillParentMaxSize().padding(24.dp),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Text(message, color = MaterialTheme.colorScheme.error)
-                Spacer(Modifier.height(12.dp))
-                Button(onClick = onRetry) { Text("Qayta urinish") }
-            }
-        }
-    }
-}
-
-@Composable
-private fun EmptyState(onCreate: () -> Unit) {
-    LazyColumn(Modifier.fillMaxSize()) {
-        item {
-            Column(
-                Modifier.fillParentMaxSize().padding(24.dp),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Text("Hali dars yo'q", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "Birinchi darsni shu yerda yarating va havolasini o'quvchilarga yuboring",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.height(16.dp))
-                Button(onClick = onCreate) { Text("Dars yaratish") }
             }
         }
     }

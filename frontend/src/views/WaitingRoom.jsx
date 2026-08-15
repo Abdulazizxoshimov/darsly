@@ -35,7 +35,9 @@ export function WaitingRoom() {
   // Polling fallback
   useEffect(() => {
     if (!data) return
+    // Server polling natijasi (tashqi ma'lumot) → UI holatiga sinxronlash (ataylab).
     if (data.status === 'admitted' && data.room) admit(data.room)
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- polling natijasini UI'ga ko'chirish
     else if (data.status === 'rejected') setRejected(true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data])

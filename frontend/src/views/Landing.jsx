@@ -8,12 +8,7 @@ const FEATURES = [
   'Dars yozib olish va yuklab olish',
   'Kutish xonasi va host boshqaruvi',
   "So'rovnomalar va bildirishnomalar",
-]
-
-const STATS = [
-  ['540+', "faol o'quvchi"],
-  ['4.9 / 5', "o'rtacha reyting"],
-  ['1200+', "o'tkazilgan dars"],
+  'Ilova o‘rnatmasdan — to‘g‘ridan-to‘g‘ri brauzerda',
 ]
 
 export function Landing() {
@@ -81,22 +76,18 @@ export function Landing() {
             </Button>
           </div>
 
-          <div className="row gap-4" style={{ gap: 36, marginTop: 32 }}>
-            {STATS.map(([v, l]) => (
-              <div key={l}>
-                <div style={{ fontSize: 26, fontWeight: 800 }}>{v}</div>
-                <div className="muted" style={{ fontSize: 13 }}>{l}</div>
-              </div>
-            ))}
+          <div className="text-2" style={{ fontSize: 13.5, marginTop: 24, maxWidth: 440, lineHeight: 1.6 }}>
+            Yangi platforma — birinchi ustozlar uchun boshlash bepul. Havola orqali
+            o'quvchilar ro'yxatdan o'tmasdan qo'shiladi.
           </div>
         </div>
 
         <div className="card card--pad">
           <div className="row gap-3" style={{ marginBottom: 20 }}>
-            <div className="brand-logo" style={{ width: 64, height: 64, fontSize: 24 }}>A</div>
+            <BrandMark size={56} />
             <div>
-              <div style={{ fontWeight: 700, fontSize: 16 }}>Aziz Karimov</div>
-              <div className="text-2" style={{ fontSize: 13 }}>Matematika o'qituvchisi · 8 yillik tajriba</div>
+              <div style={{ fontWeight: 700, fontSize: 16 }}>Jonly</div>
+              <div className="text-2" style={{ fontSize: 13 }}>Video-dars platformasi</div>
             </div>
           </div>
           <div className="text-2" style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>Platformada mavjud:</div>

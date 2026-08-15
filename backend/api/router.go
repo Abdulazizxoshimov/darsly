@@ -380,6 +380,8 @@ func NewRouter(h *handlers.Handler, tokenMaker token.Maker, enforcer *casbin.Enf
 		users.GET("/me", v1.GetCurrentUser(h))
 		users.PUT("/me", v1.UpdateCurrentUser(h))
 		users.PUT("/me/password", v1.ChangeCurrentPassword(h))
+		// M5 — o'z akkauntini o'chirish (Play Store majburiyati).
+		users.DELETE("/me", v1.DeleteCurrentUser(h))
 		users.GET("/:id", v1.GetUser(h))
 		users.PUT("/:id", v1.UpdateUser(h))
 		users.DELETE("/:id", v1.DeleteUser(h))

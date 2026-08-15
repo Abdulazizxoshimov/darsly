@@ -19,7 +19,7 @@ import { useApp } from '../store/app'
 import { useLessons } from '../store/data'
 import { Button } from '../components/Button'
 import { StatusBadge } from '../components/Badge'
-import { PageLoader } from '../components/Spinner'
+import { DashboardSkeleton } from '../components/Skeleton'
 import { CreateLessonModal } from './CreateLessonModal'
 import { EditLessonModal } from './EditLessonModal'
 import { ChatHistoryModal } from './ChatHistoryModal'
@@ -84,9 +84,7 @@ export function Dashboard() {
       </div>
 
       {isLoading ? (
-        <div style={{ height: 300 }}>
-          <PageLoader label="Darslar yuklanmoqda…" />
-        </div>
+        <DashboardSkeleton />
       ) : isError ? (
         <div className="empty">
           <p className="text-2">Darslarni yuklab bo'lmadi. Qayta urinib ko'ring.</p>

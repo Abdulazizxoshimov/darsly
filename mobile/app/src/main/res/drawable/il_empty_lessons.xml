@@ -1,0 +1,31 @@
+<!-- Bo'sh darslar holati — video kamera + play. Line-art, brend mint (M7). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="120dp"
+    android:height="120dp"
+    android:viewportWidth="120"
+    android:viewportHeight="120">
+    <!-- Yumshoq mint fon doirasi -->
+    <path
+        android:fillColor="#1419D3A2"
+        android:pathData="M60,10 A50,50 0 1 0 60,110 A50,50 0 1 0 60,10 Z" />
+    <!-- Kamera tanasi -->
+    <path
+        android:strokeColor="#19D3A2"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000"
+        android:pathData="M39,46 H63 A5,5 0 0 1 68,51 V69 A5,5 0 0 1 63,74 H39 A5,5 0 0 1 34,69 V51 A5,5 0 0 1 39,46 Z" />
+    <!-- Obyektiv -->
+    <path
+        android:strokeColor="#19D3A2"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000"
+        android:pathData="M68,55 L84,47 V73 L68,65 Z" />
+    <!-- Play uchburchagi (to'ldirilgan urg'u) -->
+    <path
+        android:fillColor="#19D3A2"
+        android:pathData="M46,54 L60,60 L46,66 Z" />
+</vector>

@@ -279,6 +279,13 @@ interface DarslyApi {
     @PUT("api/v1/users/me/password")
     suspend fun changePassword(@Body req: ChangePasswordReq)
 
+    /**
+     * O'z akkauntini o'chirish (M5 — Play Store majburiyati). 204 qaytaradi.
+     * Backend soft-delete qiladi va barcha sessiyalarni bekor qiladi.
+     */
+    @DELETE("api/v1/users/me")
+    suspend fun deleteAccount()
+
     // ─── Parolni tiklash (ochiq endpointlar) ──────────────────────────────────
 
     /**

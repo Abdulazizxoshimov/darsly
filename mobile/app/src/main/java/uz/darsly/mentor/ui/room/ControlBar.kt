@@ -219,10 +219,13 @@ private fun ControlButton(
         else -> MaterialTheme.colorScheme.onSurface
     }
 
+    // Barcha xona tugmalari shu yerdan o'tadi — haptik bir joyda (mic/kamera/share/
+    // ishtirokchilar/chat/chiqish). Zoom ham boshqaruvda yengil titrash beradi.
+    val hapticClick = uz.darsly.mentor.ui.common.rememberHapticClick(onClick = onClick)
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Box {
             IconButton(
-                onClick = onClick,
+                onClick = hapticClick,
                 enabled = enabled,
                 modifier = Modifier.size(size).clip(CircleShape).background(bg),
             ) {

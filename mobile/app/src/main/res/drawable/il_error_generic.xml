@@ -1,0 +1,27 @@
+<!-- Umumiy xato holati — undov belgisi. Amber (ogohlantirish), line-art (M7). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="120dp"
+    android:height="120dp"
+    android:viewportWidth="120"
+    android:viewportHeight="120">
+    <path
+        android:fillColor="#14F59E0B"
+        android:pathData="M60,10 A50,50 0 1 0 60,110 A50,50 0 1 0 60,10 Z" />
+    <!-- Doira kontur -->
+    <path
+        android:strokeColor="#F59E0B"
+        android:strokeWidth="3.5"
+        android:fillColor="#00000000"
+        android:pathData="M60,32 A28,28 0 1 0 60,88 A28,28 0 1 0 60,32 Z" />
+    <!-- Undov chizig'i -->
+    <path
+        android:strokeColor="#F59E0B"
+        android:strokeWidth="5"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M60,46 V64" />
+    <!-- Undov nuqtasi -->
+    <path
+        android:fillColor="#F59E0B"
+        android:pathData="M60,70 A3,3 0 1 0 60,76 A3,3 0 1 0 60,70 Z" />
+</vector>

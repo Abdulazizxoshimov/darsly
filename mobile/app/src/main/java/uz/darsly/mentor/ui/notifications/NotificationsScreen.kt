@@ -24,7 +24,6 @@ import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -45,7 +44,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.hilt.navigation.compose.hiltViewModel
+import uz.darsly.mentor.R
 import uz.darsly.mentor.data.api.Notification
+import uz.darsly.mentor.ui.common.EmptyState
+import uz.darsly.mentor.ui.common.ErrorState
+import uz.darsly.mentor.ui.common.ListRowSkeleton
 import uz.darsly.mentor.ui.theme.DarslyTheme
 import uz.darsly.mentor.util.NotificationFormat
 
@@ -99,15 +102,17 @@ fun NotificationsScreen(
                 modifier = Modifier.fillMaxSize(),
             ) {
                 when {
-                    state.loading && state.items.isEmpty() -> Box(
-                        Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center,
-                    ) { CircularProgressIndicator() }
+                    state.loading && state.items.isEmpty() -> ListRowSkeleton()
 
                     state.error != null && state.items.isEmpty() ->
-                        ErrorState(state.error!!) { vm.refresh() }
+                        ErrorState(message = state.error!!, onRetry = { vm.refresh() })
 
-                    state.items.isEmpty() -> EmptyState()
+                    state.items.isEmpty() -> EmptyState(
+                        illustration = R.drawable.il_empty_notifications,
+                        title = "Bildirishnoma yo'q",
+                        message = "Dars boshlanishidan oldin eslatma va kutish xonasidagi " +
+                            "o'quvchilar haqidagi xabarlar shu yerda chiqadi",
+                    )
 
                     else -> LazyColumn(
                         Modifier.fillMaxSize(),
@@ -153,45 +158,6 @@ private fun OfflineBar() {
     }
 }
 
-@Composable
-private fun ErrorState(message: String, onRetry: () -> Unit) {
-    // Scroll qilinadigan konteyner: pull-to-refresh xato ekranida ham ishlasin.
-    LazyColumn(Modifier.fillMaxSize()) {
-        item {
-            Column(
-                Modifier.fillParentMaxSize().padding(24.dp),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Text(message, color = MaterialTheme.colorScheme.error)
-                Spacer(Modifier.height(12.dp))
-                Button(onClick = onRetry) { Text("Qayta urinish") }
-            }
-        }
-    }
-}
-
-@Composable
-private fun EmptyState() {
-    LazyColumn(Modifier.fillMaxSize()) {
-        item {
-            Column(
-                Modifier.fillParentMaxSize().padding(24.dp),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Text("Bildirishnoma yo'q", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "Dars boshlanishidan oldin eslatma va kutish xonasidagi " +
-                        "o'quvchilar haqidagi xabarlar shu yerda chiqadi",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-    }
-}
 
 @Composable
 private fun NotificationCard(item: Notification, onClick: () -> Unit) {

@@ -608,6 +608,8 @@ function RoomStage({ isHost, lessonId, slug, title, lesson, roomToken, onLeave }
   const sharing = !!local?.screenOn && isHost
   useEffect(() => {
     if (!PIP_SUPPORTED) return
+    // Ekran-ulashish (tashqi holat) → suzuvchi oyna holatiga sinxronlash (ataylab).
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- ekran-ulashish holati sinxroni
     setPipState((st) => nextPipState(st, sharing ? 'share_start' : 'share_stop'))
     // Ulashish tugadi — oyna KOMPAKT holatga qaytadi: keyingi ulashish
     // ustozning ish ekranini darrov chorak ekranlik panel bilan yopmasin.

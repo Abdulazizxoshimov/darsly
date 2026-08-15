@@ -138,7 +138,9 @@ export function useRoom({ wsUrl, token, publish, retryKey = 0 }) {
 
   useEffect(() => {
     // Qayta urinishda holat "ulanmoqda"ga qaytadi — aks holda ekran eski
-    // "disconnected" da qotib qolardi va urinish ko'rinmasdi.
+    // "disconnected" da qotib qolardi va urinish ko'rinmasdi. Bu — LiveKit
+    // Room hayot-siklini UI'ga sinxronlash; tashqi tizim effekti (ataylab).
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- LiveKit ulanish holati sinxroni
     setConnState('connecting')
     setEnded(null)
 

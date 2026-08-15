@@ -1,6 +1,8 @@
 package uz.darsly.mentor.ui.login
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -33,6 +35,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -43,7 +47,10 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.ui.platform.LocalContext
 import uz.darsly.mentor.BuildConfig
+import uz.darsly.mentor.ui.common.rememberHapticClick
+import uz.darsly.mentor.ui.theme.DarslyTheme
 import uz.darsly.mentor.ui.theme.PulseMark
+import uz.darsly.mentor.ui.theme.neonGlow
 import uz.darsly.mentor.util.DevServer
 
 @Composable
@@ -64,14 +71,29 @@ fun LoginScreen(
         if (state.success) onLoggedIn()
     }
 
-    Column(
-        modifier = Modifier
+    // M10: login — birinchi ekran. Yuqoridan yumshoq mint "jonli efir" nuri
+    // (web auth-center'dagi radial-gradient bilan bir tilda). Brend belgisiga
+    // nur QO'YILMAYDI — glow qoidasi (3 joy) buzilmasin; nur faqat "Kirish"
+    // tugmasida (u — ruxsat etilgan "asosiy harakat tugmasi").
+    Box(
+        Modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(24.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
+            .background(MaterialTheme.colorScheme.background)
+            .background(
+                Brush.verticalGradient(
+                    0f to DarslyTheme.colors.neon.copy(alpha = 0.10f),
+                    0.4f to Color.Transparent,
+                )
+            ),
     ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(24.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
         // Brend belgisi — puls (B «Jonli efir» tili).
         PulseMark(size = 44.dp)
         Spacer(Modifier.height(14.dp))
@@ -143,10 +165,17 @@ fun LoginScreen(
         )
         Spacer(Modifier.height(20.dp))
 
+        val btnShape = MaterialTheme.shapes.medium
         Button(
-            onClick = { vm.login(email.trim(), password) },
+            onClick = rememberHapticClick { vm.login(email.trim(), password) },
             enabled = !state.loading && email.isNotBlank() && password.isNotBlank(),
-            modifier = Modifier.fillMaxWidth().widthIn(max = 420.dp).height(52.dp),
+            shape = btnShape,
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = 420.dp)
+                .height(52.dp)
+                // Asosiy harakat tugmasi — glow'ga ruxsat etilgan uch joydan biri.
+                .neonGlow(color = DarslyTheme.colors.neon, shape = btnShape, elevation = 10.dp),
         ) {
             if (state.loading) {
                 CircularProgressIndicator(modifier = Modifier.height(20.dp))
@@ -218,6 +247,7 @@ fun LoginScreen(
                     },
                 )
             }
+        }
         }
     }
 }

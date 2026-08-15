@@ -20,7 +20,6 @@ import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -38,7 +37,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import uz.darsly.mentor.R
 import uz.darsly.mentor.data.api.Lesson
+import uz.darsly.mentor.ui.common.EmptyState
+import uz.darsly.mentor.ui.common.ErrorState
+import uz.darsly.mentor.ui.common.ListRowSkeleton
 import uz.darsly.mentor.ui.common.NotificationBell
 import uz.darsly.mentor.util.LessonFormat
 
@@ -74,14 +77,16 @@ fun ArchiveListScreen(
                 modifier = Modifier.fillMaxSize(),
             ) {
                 when {
-                    state.loading && state.isEmpty -> Box(
-                        Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center,
-                    ) { CircularProgressIndicator() }
+                    state.loading && state.isEmpty -> ListRowSkeleton()
 
-                    state.error != null && state.isEmpty -> ErrorState(state.error!!) { vm.refresh() }
+                    state.error != null && state.isEmpty ->
+                        ErrorState(message = state.error!!, onRetry = { vm.refresh() })
 
-                    state.isEmpty -> EmptyState()
+                    state.isEmpty -> EmptyState(
+                        illustration = R.drawable.il_empty_archive,
+                        title = "Arxiv bo'sh",
+                        message = "Yakunlangan darslar shu yerda video va chat bilan ko'rinadi",
+                    )
 
                     else -> LazyColumn(
                         Modifier.fillMaxSize(),
@@ -150,44 +155,6 @@ private fun OfflineBar() {
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onErrorContainer,
             )
-        }
-    }
-}
-
-@Composable
-private fun ErrorState(message: String, onRetry: () -> Unit) {
-    LazyColumn(Modifier.fillMaxSize()) {
-        item {
-            Column(
-                Modifier.fillParentMaxSize().padding(24.dp),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Text(message, color = MaterialTheme.colorScheme.error)
-                Spacer(Modifier.height(12.dp))
-                Button(onClick = onRetry) { Text("Qayta urinish") }
-            }
-        }
-    }
-}
-
-@Composable
-private fun EmptyState() {
-    LazyColumn(Modifier.fillMaxSize()) {
-        item {
-            Column(
-                Modifier.fillParentMaxSize().padding(24.dp),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Text("Arxiv bo'sh", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "Yakunlangan darslar shu yerda video va chat bilan ko'rinadi",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
         }
     }
 }
