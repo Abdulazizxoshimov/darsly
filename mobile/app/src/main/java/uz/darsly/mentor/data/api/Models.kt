@@ -52,6 +52,7 @@ data class RemoveParticipantReq(
     @Json(name = "scope") val scope: String,
 )
 
+@JsonClass(generateAdapter = true)
 data class LoginReq(
     @Json(name = "email") val email: String,
     @Json(name = "password") val password: String,
