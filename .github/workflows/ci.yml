@@ -1,8 +1,11 @@
 name: CI
 
 on:
+  # Har branch push'da (feature-branch'lar ham) — PR merge'dan OLDIN testlar ishlashi uchun.
+  # Sabab: bu repoda GitHub `pull_request` triggerini ishga tushirmaydi (tarixda 0 run);
+  # push esa ishonchli ishlaydi. Push'dagi checklar commit SHA'ga tushadi va branch
+  # protection (required checks) shu bilan qanoatlanadi.
   push:
-    branches: [main, master]
   pull_request:
   # Jadval bo'yicha to'liq regressiya (QA batareyasi) — har kuni 02:00 UTC (~07:00 Toshkent).
   # Kod o'zgarmasa ham tashqi bog'liqliklar (Docker image'lar, npm/go modul yangilanishlari)
