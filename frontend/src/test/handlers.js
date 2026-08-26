@@ -188,6 +188,11 @@ const ok = (data, status = 200) => HttpResponse.json({ data }, { status })
 // brauzerda tekshirish.
 const waitingAdmit =
   typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('e2e_admit') === '1'
+// `?e2e_reject=1` — kutish xonasi so'rovi rad etilgan holatni brauzerda sinash
+// uchun. Boshlang'ich URL yuklanganda BIR MARTA o'qiladi (admit bilan bir xil
+// naqsh), keyingi klient-tomon navigatsiyalar buni saqlab qoladi.
+const waitingReject =
+  typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('e2e_reject') === '1'
 let waitingPolls = 0
 
 // Admin foydalanuvchilar ro'yxati — backend `UserShort` shakli.
@@ -206,7 +211,16 @@ export const handlers = [
   ),
 
   http.post(`${B}/auth/register`, () => ok(TOKENS, 201)),
-  http.post(`${B}/auth/login`, () => ok(TOKENS)),
+  // Login. E2E uchun deterministik NOTO'G'RI-PAROL yo'li: parol `wrongpass`
+  // bo'lsa real backend kabi 401 (`UNAUTHORIZED`) qaytadi — klient uni
+  // «Email yoki parol noto'g'ri» ga xaritalashi sinaladi.
+  http.post(`${B}/auth/login`, async ({ request }) => {
+    const body = await request.json().catch(() => ({}))
+    if (body.password === 'wrongpass') {
+      return HttpResponse.json({ code: 'UNAUTHORIZED', message: 'invalid credentials' }, { status: 401 })
+    }
+    return ok(TOKENS)
+  }),
   http.post(`${B}/auth/refresh`, () => ok(TOKENS)),
   http.post(`${B}/auth/logout`, () => new HttpResponse(null, { status: 204 })),
   http.get(`${B}/auth/me`, () => ok(USER)),
@@ -306,6 +320,9 @@ export const handlers = [
   // Endi test `?e2e_admit=1` bilan sahifani ochib holatni o'zgartira oladi:
   // birinchi so'rov `pending`, keyingilari `admitted` + room-token.
   http.get(`${B}/waitingroom/:id/status`, () => {
+    // Rad etilgan holat: polling darhol `rejected` qaytaradi (mehmon
+    // «Kirish rad etildi» ekranini ko'radi).
+    if (waitingReject) return ok({ request_id: 'req1', status: 'rejected' })
     if (!waitingAdmit) return ok({ request_id: 'req1', status: 'pending' })
     waitingPolls += 1
     if (waitingPolls < 2) return ok({ request_id: 'req1', status: 'pending' })

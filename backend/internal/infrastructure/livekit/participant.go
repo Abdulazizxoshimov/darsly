@@ -30,40 +30,55 @@ func (c *Client) SendDataTo(ctx context.Context, room string, data []byte, ident
 	return err
 }
 
-// studentPublishSources — studentga ochiq publish manbalari (token grant'ida ham,
-// `SetParticipantPublish` da ham AYNI shu ro'yxat ishlatiladi — ikkalasi ajralsa
-// biri jimgina "hammasi ochiq" bo'lib qolardi).
-// FAQAT kamera va mikrofon: SCREEN_SHARE ataylab YO'Q (Zoom modelida ham ekranni
-// faqat ustoz ulashadi; aks holda student darsni buzish vektoriga ega bo'ladi).
-// Diqqat: LiveKit'da bo'sh CanPublishSources ro'yxati "BARCHA manbalar" degani —
-// shuning uchun ro'yxat aniq berilishi SHART.
-var studentPublishSources = []livekit.TrackSource{
+// studentBaseSources — o'quvchiga DOIM ochiq manbalar: FAQAT mikrofon.
+// O'quvchi ovozni O'ZI (ustoz ruxsatisiz) yoqib savolni darhol bera oladi —
+// ovoz arzon (~30 kbps + DTX), sig'imga ta'siri yo'q. Kamera esa qimmat
+// (video har tomoshabinga tarqatiladi — N×N), shuning uchun u alohida ruxsat
+// bilan qo'shiladi ([studentVideoSources]).
+//
+// SCREEN_SHARE ikkala ro'yxatda ham YO'Q — ekranni faqat ustoz ulashadi.
+// Diqqat: bo'sh CanPublishSources = "BARCHA manbalar", shuning uchun ro'yxat
+// hech qachon bo'sh qolmasligi SHART.
+var studentBaseSources = []livekit.TrackSource{
+	livekit.TrackSource_MICROPHONE,
+}
+
+// studentVideoSources — ustoz "video"ga ruxsat berganda ochiladigan to'plam:
+// mikrofon + kamera (ekran ulashish baribir yo'q — u faqat ustozda).
+var studentVideoSources = []livekit.TrackSource{
 	livekit.TrackSource_CAMERA,
 	livekit.TrackSource_MICROPHONE,
 }
 
-// SetParticipantPublish ishtirokchining media publish huquqini o'zgartiradi
-// (token qayta chiqarmasdan). Webinar'da "qo'l ko'targan" studentga so'zga ruxsat berish uchun.
-// Ustoz (host) huquqlari bu yerdan emas, token'dan keladi (token.go) — ekran ulashish
-// ustozda saqlanadi.
-func (c *Client) SetParticipantPublish(ctx context.Context, room, identity string, canPublish bool) error {
+// SetParticipantPublish o'quvchining KAMERA (video) publish huquqini o'zgartiradi
+// (token qayta chiqarmasdan). Mikrofon bunga BOG'LIQ EMAS — u doim ochiq.
+//
+//	allowCamera=true  → kamera + mikrofon (ustoz videoga ruxsat berdi)
+//	allowCamera=false → faqat mikrofon (video bekor; ovoz baribir qoladi)
+//
+// Ustoz (host) huquqlari bu yerdan emas, token'dan keladi (token.go) — ekran
+// ulashish ustozda saqlanadi.
+func (c *Client) SetParticipantPublish(ctx context.Context, room, identity string, allowCamera bool) error {
 	_, err := c.room.UpdateParticipant(ctx, &livekit.UpdateParticipantRequest{
 		Room:       room,
 		Identity:   identity,
-		Permission: studentPermission(canPublish),
+		Permission: studentPermission(allowCamera),
 	})
 	return err
 }
 
-// studentPermission — studentga beriladigan huquqlar to'plami (test qamrovi uchun ajratilgan).
-func studentPermission(canPublish bool) *livekit.ParticipantPermission {
+// studentPermission — o'quvchiga beriladigan huquqlar (test qamrovi uchun ajratilgan).
+// CanPublish DOIM true — o'quvchi kamida mikrofonni yoqa olishi shart; kamera
+// ruxsati manbalar ro'yxati bilan boshqariladi.
+func studentPermission(allowCamera bool) *livekit.ParticipantPermission {
+	sources := studentBaseSources
+	if allowCamera {
+		sources = studentVideoSources
+	}
 	return &livekit.ParticipantPermission{
-		CanSubscribe: true,
-		CanPublish:   canPublish,
-		// Ruxsat olib tashlanganda ham ro'yxatni beramiz: CanPublish=false bo'lsa
-		// manbalar ahamiyatsiz, lekin keyinchalik faqat CanPublish o'zgartirilsa
-		// "hammasi ochiq" holatiga qaytib qolish xavfi bo'lmasin.
-		CanPublishSources: studentPublishSources,
+		CanSubscribe:      true,
+		CanPublish:        true,
+		CanPublishSources: sources,
 		CanPublishData:    true,
 	}
 }

@@ -4,6 +4,13 @@ on:
   push:
     branches: [main, master]
   pull_request:
+  # Jadval bo'yicha to'liq regressiya (QA batareyasi) — har kuni 02:00 UTC (~07:00 Toshkent).
+  # Kod o'zgarmasa ham tashqi bog'liqliklar (Docker image'lar, npm/go modul yangilanishlari)
+  # sabab CI YIQILISHINI ertalab ko'ramiz — deploy paytida emas.
+  schedule:
+    - cron: "0 2 * * *"
+  # Actions sahifasidan qo'lda ("Run workflow") ishga tushirish uchun.
+  workflow_dispatch: {}
 
 jobs:
   # ─── Backend (Go module: backend/) — build + vet + lint + test ───────────────

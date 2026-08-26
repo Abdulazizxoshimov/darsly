@@ -298,6 +298,13 @@ func (r *recordingRepo) ClaimTelegramUpload(ctx context.Context, now time.Time, 
 			SELECT id FROM recordings
 			WHERE telegram_sent_at IS NULL
 			  AND status = 'ready'
+			  -- Transcode TUGASHINI kutamiz: aks holda Telegram'ga XOM (siqilmagan)
+			  -- fayl ketardi (transcode server nusxasini kichraytiradi, lekin
+			  -- Telegram undan oldin ulgursa katta nusxa ketib qolardi — o'lchangan:
+			  -- sinov 229 MB xom ketdi, server esa 18 MB ga tushdi). done/failed/
+			  -- skipped — terminal; NULL (egress/legacy) — kutmaymiz.
+			  AND transcode_status IS DISTINCT FROM 'pending'
+			  AND transcode_status IS DISTINCT FROM 'running'
 			  AND telegram_next_attempt_at IS NOT NULL
 			  AND telegram_next_attempt_at <= $1
 			  AND telegram_attempts < $2

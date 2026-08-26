@@ -277,9 +277,11 @@ data class RoomUiState(
  */
 private const val MAX_CHAT = 200
 
-/** Lokal yozuv video bitreyti (bps). Ekran/slayd kontenti yaxshi siqiladi —
- *  2 Mbps Zoom-darajа ravshanlik + mo''tadil hajm (soatiga ~0.4–0.9 GB). */
-private const val LOCAL_REC_BITRATE = 2_000_000
+/** Lokal yozuv video bitreyti (bps) — VBR TARGETI ([LocalRecorder] VBR rejimда).
+ *  Ekran/slayd kontenti yaxshi siqiladi; 1.5 Mbps VBR Zoom-darajа ravshanlik beradi,
+ *  statik kadrда bitni isrof qilmaydi. Yakuniy hajmni dars tugagach post-siqish
+ *  (telefonda H.264 CRF) hal qiladi — bu faqat jonli oraliq faylni yengillashtiradi. */
+private const val LOCAL_REC_BITRATE = 1_500_000
 
 @HiltViewModel
 class RoomViewModel @Inject constructor(
@@ -664,8 +666,8 @@ class RoomViewModel @Inject constructor(
             // va o'chirilgan joyni belgilash buzg'unchiga e'tibor berardi.
             is RoomSignal.ChatDeleted -> {
                 _state.update { st ->
-                    val left = st.chat.filterNot { it.id == signal.id }
-                    if (left.size == st.chat.size) st else st.copy(chat = left)
+                    val left = ChatLog.delete(st.chat, signal.id)
+                    if (left === st.chat) st else st.copy(chat = left)
                 }
                 return
             }
@@ -689,13 +691,10 @@ class RoomViewModel @Inject constructor(
                     file = signal.file?.let { ChatFileUi(it.name, it.size, it.url) },
                 )
                 _state.update { st ->
-                    // ID bo'yicha dublikat kesiladi: o'z xabarimizni optimistik
-                    // qo'shamiz, keyin server echo'si ham keladi.
-                    if (st.chat.any { it.id == ui.id }) st
-                    else st.copy(
-                        chat = (st.chat + ui).takeLast(MAX_CHAT),
-                        unreadChat = if (ui.self) st.unreadChat else st.unreadChat + 1,
-                    )
+                    // ID bo'yicha dublikat kesish + o'qilmagan sanog'i — sof [ChatLog] da.
+                    val res = ChatLog.add(st.chat, ui)
+                    if (res.chat === st.chat) st
+                    else st.copy(chat = res.chat, unreadChat = st.unreadChat + res.unreadDelta)
                 }
                 return
             }
@@ -853,7 +852,8 @@ class RoomViewModel @Inject constructor(
             file = m.file?.let { ChatFileUi(it.name, it.size, it.url) },
         )
         _state.update { st ->
-            if (st.chat.any { it.id == ui.id }) st else st.copy(chat = (st.chat + ui).takeLast(MAX_CHAT))
+            val res = ChatLog.add(st.chat, ui)
+            if (res.chat === st.chat) st else st.copy(chat = res.chat)
         }
     }
 
@@ -875,17 +875,16 @@ class RoomViewModel @Inject constructor(
                     val raised = _state.value.hands.map { it.identity }.toSet()
                     val me = session?.roomToken?.identity
                     _state.update { st ->
+                        // Ustozni filtrlash + qo'l belgisi — sof [RosterBuilder] da.
                         st.copy(
-                            roster = items
-                                .filter { it.identity != me } // ustozning o'zi ro'yxatda kerak emas
-                                .map {
-                                    RosterEntry(
-                                        identity = it.identity,
-                                        name = it.name.ifBlank { it.identity },
-                                        audioMuted = it.audioMuted,
-                                        handRaised = it.identity in raised,
-                                    )
-                                },
+                            roster = RosterBuilder.build(
+                                items = items,
+                                me = me,
+                                raised = raised,
+                                identity = { it.identity },
+                                name = { it.name },
+                                audioMuted = { it.audioMuted },
+                            ),
                         )
                     }
                 }
@@ -1177,10 +1176,10 @@ class RoomViewModel @Inject constructor(
      */
     fun toggleRecording() {
         val s = session ?: return
-        when {
-            s.isLocalRecording() -> stopAndUploadLocalRecording(s)
-            _state.value.screenOn -> beginLocalRecording(s)
-            else -> _state.update {
+        when (RecordControl.toggle(s.isLocalRecording(), _state.value.screenOn)) {
+            RecordControl.Action.STOP -> stopAndUploadLocalRecording(s)
+            RecordControl.Action.START -> beginLocalRecording(s)
+            RecordControl.Action.HINT_NO_SCREEN -> _state.update {
                 it.copy(recordHint = "Yozib olish ekranni yozadi — avval ekran ulashing")
             }
         }
@@ -1230,17 +1229,20 @@ class RoomViewModel @Inject constructor(
         val startMs = localRecStartMs
         localRecId = null
         val file = s.stopLocalRecording()
-        if (id == null || file == null) {
-            file?.delete()
+        // Yuklash/yetim-fayl qarori sof [RecordControl] da.
+        if (!RecordControl.canUpload(id, file != null)) {
+            if (RecordControl.deleteOrphan(id, file != null)) file?.delete()
             return
         }
-        val durationSec = ((System.currentTimeMillis() - startMs) / 1000).toInt().coerceAtLeast(1)
+        val recId = id!!
+        val recFile = file!!
+        val durationSec = RecordControl.durationSec(startMs, System.currentTimeMillis())
         val endedAt = java.time.Instant.now().toString()
         // App-scoped: xonadan chiqilgach ham yuklash davom etsin (MVP; keyinroq
         // WorkManager bilan qattiqlashtiriladi — ilova o'ldirilsa omon qolsin).
         GlobalScope.launch(Dispatchers.IO) {
-            localRec.upload(id, file, durationSec, endedAt)
-                .onSuccess { file.delete() }
+            localRec.upload(recId, recFile, durationSec, endedAt)
+                .onSuccess { recFile.delete() }
                 .onFailure { android.util.Log.e("RoomVM", "lokal yozuv yuklash XATO", it) }
         }
     }

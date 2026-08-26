@@ -130,14 +130,15 @@ func TestAccessToken_Grants(t *testing.T) {
 	part, err := c.AccessToken("lesson_x", "guest1", "Mehmon", false)
 	require.NoError(t, err)
 	pg := grants(t, part).Video
-	require.True(t, *pg.CanPublish, "Zoom modeli: o'quvchi mikrofon/kamerani erkin yoqa oladi")
+	require.True(t, *pg.CanPublish, "o'quvchi MIKROFONNI O'ZI yoqa oladi (ovozli savol darhol, ustoz ruxsatisiz)")
 	require.False(t, pg.RoomAdmin, "o'quvchida moderatsiya huquqi bo'lmasin")
 	require.False(t, pg.RoomRecord)
 	require.True(t, *pg.CanPublishData, "chat/reaksiya uchun kerak")
 
-	// Manba cheklovi tokenGA imzolangan: kamera + mikrofon BOR, ekran ulashish YO'Q.
+	// Default manba: FAQAT mikrofon. Kamera (video) ustoz 'allow-speak' bergach
+	// qo'shiladi (studentVideoSources). Ekran ulashish hech qachon yo'q.
 	// (Bo'sh ro'yxat LiveKit'da "hammasi ochiq" degani — shuning uchun aniq tekshiramiz.)
 	require.NotEmpty(t, pg.CanPublishSources, "bo'sh ro'yxat = hamma manba ochiq — bu xato bo'lardi")
-	require.ElementsMatch(t, []string{"camera", "microphone"}, pg.CanPublishSources,
-		"o'quvchida FAQAT kamera+mikrofon; screen_share ataylab yo'q")
+	require.ElementsMatch(t, []string{"microphone"}, pg.CanPublishSources,
+		"default: FAQAT mikrofon; kamera ustoz ruxsati bilan, screen_share hech qachon yo'q")
 }

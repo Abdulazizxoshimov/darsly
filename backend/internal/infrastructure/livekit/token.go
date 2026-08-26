@@ -40,26 +40,32 @@ func (c *Client) AccessToken(roomName, identity, displayName string, isHost bool
 		RoomJoin:     true,
 		Room:         roomName,
 		CanSubscribe: boolPtr(true),
-		// ZOOM MODELI (PRODUCT.md D-intervyu): o'quvchi ham mikrofon va kamerani
-		// ERKIN yoqa oladi — publish hammaga ochiq. Ovoz tartibi token bilan emas,
-		// dars sozlamalari bilan boshqariladi (mute_on_entry / allow_self_unmute,
-		// server webhook'da qo'llaydi). Data-channel (chat/reaksiya) hammaga ochiq.
-		CanPublish:     boolPtr(true),
+		// Data-channel (chat / reaksiya / qo'l ko'tarish) HAMMAGA ochiq. Media
+		// publish (CanPublish) esa rolga qarab quyida beriladi.
 		CanPublishData: boolPtr(true),
 	}
 	role := RoleParticipant
 	ttl := c.participantTTL()
 	if isHost {
-		grant.RoomAdmin = true  // boshqalarni mute qilish / chiqarib yuborish
-		grant.RoomRecord = true // yozib olishni boshqarish (Egress)
+		grant.CanPublish = boolPtr(true) // barcha manbalar (kamera+mikrofon+ekran ulashish)
+		grant.RoomAdmin = true           // boshqalarni mute qilish / chiqarib yuborish
+		grant.RoomRecord = true          // yozib olishni boshqarish (Egress)
 		role = RoleHost
 		ttl = c.tokenTTL
 	} else {
-		// EKRAN ULASHISH o'quvchiga BERILMAYDI (screen_share/screen_share_audio
-		// ro'yxatda yo'q) — ekranni faqat ustoz ulashadi, aks holda o'quvchi
-		// darsni buzish vektoriga ega bo'lardi. Diqqat: bo'sh ro'yxat LiveKit'da
-		// "BARCHA manbalar" degani, shuning uchun ro'yxat aniq berilishi SHART.
-		grant.SetCanPublishSources(studentPublishSources)
+		// WEBINAR (Variant B): o'quvchi MIKROFONNI O'ZI yoqa oladi (ovozli savolni
+		// ustozdan so'ramasdan, darhol berish uchun) — CanPublish=true, lekin
+		// manbalar FAQAT mikrofon. KAMERA (video) esa ustoz ruxsati bilan:
+		// o'quvchi qo'l ko'taradi (`POST /rooms/:id/hand`), ustoz `allow-speak`
+		// (→ UpdateParticipant → [studentVideoSources]) bergach kamera qo'shiladi
+		// (klientda `ParticipantPermissionsChanged` tetiklaydi).
+		//
+		// Nega faqat kamera cheklangan: video har tomoshabinga tarqatiladi (N×N),
+		// bir necha o'quvchi kamera yoqsa 4-yadroli server to'ladi. Ovoz esa arzon
+		// (~30 kbps + DTX). Toza 1→N vebinar ~100 o'quvchini bardosh beradi
+		// (o'lchangan). SCREEN_SHARE ikkala holatda ham yo'q — ekranni faqat ustoz.
+		grant.CanPublish = boolPtr(true)
+		grant.SetCanPublishSources(studentBaseSources)
 	}
 
 	md, err := json.Marshal(RoleMetadata{Role: role})

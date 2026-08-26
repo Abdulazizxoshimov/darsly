@@ -86,6 +86,11 @@ services:
       retries: 10
 
   backend:
+    # Serverda ghcr'dan TAYYOR image tortiladi (CI quradi — `.github/workflows/deploy.yml`):
+    #   docker compose pull backend && docker compose up -d   (BACKEND_TAG=commit-sha)
+    # `build:` lokal dev uchun QOLADI: `docker compose up --build` hali ham quradi.
+    # BACKEND_TAG .env yoki shell'dan keladi; yo'q bo'lsa `latest`.
+    image: ghcr.io/abdulazizxoshimov/darsly-backend:${BACKEND_TAG:-latest}
     build:
       context: ../../backend
       dockerfile: deployments/Dockerfile

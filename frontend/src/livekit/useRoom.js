@@ -1,7 +1,14 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { ConnectionState, DisconnectReason, Room, RoomEvent, Track } from 'livekit-client'
+import { ConnectionState, Room, RoomEvent, Track } from 'livekit-client'
 import { CAMERA_PUBLISH, PUBLISH_DEFAULTS } from './mediaTuning'
-import { localSignature, participantSignature, qualityLabel } from './roomLogic'
+import {
+  canPublishCameraOf,
+  endedReason,
+  localSignature,
+  mediaErrorClass,
+  participantSignature,
+  qualityLabel,
+} from './roomLogic'
 import { isHostParticipant } from './messaging'
 
 // livekit-client'ga to'g'ridan-to'g'ri ulanadigan hook.
@@ -35,6 +42,9 @@ function snapshotOne(p, isLocal) {
     camTrack: cam && cam.videoTrack && !cam.isMuted ? cam.videoTrack : null,
     screenTrack: screen && screen.videoTrack && !screen.isMuted ? screen.videoTrack : null,
     canPublish: p.permissions?.canPublish ?? false,
+    // Kamera ALOHIDA: o'quvchi mikrofonni o'zi yoqadi, kamerani esa faqat
+    // ustoz ruxsatidan keyin (ParticipantsPanel "Videoga ruxsat").
+    canPublishCamera: canPublishCameraOf(p.permissions),
     // Ustozmi — token metadata'sidan (backend imzolagan, soxtalab bo'lmaydi).
     // Galereya tartibi (ustoz birinchi sahifada) shu bayroqqa tayanadi.
     isHost: isHostParticipant(p),
@@ -57,24 +67,8 @@ function localState(room) {
     camOn: lp.isCameraEnabled,
     screenOn: lp.isScreenShareEnabled,
     canPublish: lp.permissions?.canPublish ?? false,
+    canPublishCamera: canPublishCameraOf(lp.permissions),
   }
-}
-
-/**
- * Uzilish sababi → nima qilish kerakligi.
- *
- * Bu farq muhim: avval HAR QANDAY `disconnected` guest'ni sessiyasi bilan birga
- * bosh sahifaga uloqtirardi — vaqtinchalik tarmoq uzilishida ham. Endi "xona
- * yopildi / chiqarib yuborildi" (yakuniy) va "aloqa uzildi" (qayta ulanadi)
- * bir-biridan ajratiladi.
- */
-function endedByServer(reason) {
-  return (
-    reason === DisconnectReason.ROOM_DELETED ||
-    reason === DisconnectReason.ROOM_CLOSED ||
-    reason === DisconnectReason.PARTICIPANT_REMOVED ||
-    reason === DisconnectReason.DUPLICATE_IDENTITY
-  )
 }
 
 export function useRoom({ wsUrl, token, publish, retryKey = 0 }) {
@@ -196,12 +190,10 @@ export function useRoom({ wsUrl, token, publish, retryKey = 0 }) {
       if (participant?.identity === r.localParticipant?.identity) setQuality(qualityLabel(q))
     }
 
-    // Uzilish sababi — "yakuniy" va "vaqtinchalik" ni ajratish uchun.
+    // Uzilish sababi — "yakuniy" va "vaqtinchalik" ni ajratish uchun (`roomLogic`).
     const onDisconnected = (reason) => {
-      if (!endedByServer(reason)) return
-      if (reason === DisconnectReason.PARTICIPANT_REMOVED) setEnded('removed')
-      else if (reason === DisconnectReason.DUPLICATE_IDENTITY) setEnded('duplicate')
-      else setEnded('room_deleted')
+      const e = endedReason(reason)
+      if (e) setEnded(e)
     }
 
     r.on(RoomEvent.Disconnected, onDisconnected)
@@ -254,9 +246,8 @@ export function useRoom({ wsUrl, token, publish, retryKey = 0 }) {
             micFailed = true
           }
           if (cancelled) return
-          if (camFailed && micFailed) setMediaError('both')
-          else if (camFailed) setMediaError('camera')
-          else if (micFailed) setMediaError('mic')
+          const me = mediaErrorClass(camFailed, micFailed)
+          if (me) setMediaError(me)
         }
         try {
           await r.startAudio()

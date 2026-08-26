@@ -17,6 +17,7 @@ import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicBoolean
+import uz.darsly.mentor.data.livekit.RecorderPipeline.DrainAction
 
 /**
  * Client-side (lokal) yozib olish — «Zoom local recording».
@@ -29,22 +30,29 @@ import java.util.concurrent.atomic.AtomicBoolean
  * allaqachon ushlagan kadrlar ([VideoFrame]) olinadi va MediaCodec'ga I420
  * sifatida beriladi — bitta ushlash, ikki VirtualDisplaysiz.
  *
+ * ## Orientatsiya — DOIM gorizontal ([OUT_W]×[OUT_H])
+ * Manba tik (portret telefon) bo'lsa, yozuv ham tik chiqardi va pleyerda
+ * to'liq ekranga (kino kabi) ochilmasdi — yon tomonda katta bo'sh joy qolardi.
+ * Endi encoder DOIM 16:9 gorizontal tuvalga sozlanadi va har kadr nisbatini
+ * saqlab tuval markaziga joylanadi ([LetterboxFit], qora chegara bilan). Shu
+ * sabab: (1) fayl har doim gorizontal — Zoom kabi to'liq ekranga ochiladi;
+ * (2) dars o'rtasida qurilma burilsa (manba o'lchami o'zgarsa) ham encoder
+ * qayta sozlashsiz ishlayveradi.
+ *
  * ## Audio — AudioSink orqali
  * LiveKit audio treklaridan (ustoz + o'quvchilar) PCM olinib [AudioMixer]
  * bilan aralashtiriladi (AudioPlaybackCapture call-ovozini ushlolmaydi).
  */
 class LocalRecorder(private val outputFile: File) {
 
-    private val running = AtomicBoolean(false)
+    // Boshlash/to'xtatish idempotentligi — sof, atomik hayot sikli (JVM testida qulflangan).
+    private val lifecycle = RecorderLifecycle()
 
     // ── Video ────────────────────────────────────────────────────────────────
     private var videoEncoder: MediaCodec? = null
     private var videoTrack: VideoTrack? = null
     private val videoSink = FrameSink()
-    private val pendingFrames = ConcurrentLinkedQueue<ByteArray>() // I420 paketlar
-    @Volatile private var frameW = 0
-    @Volatile private var frameH = 0
-    @Volatile private var configuredW = 0
+    private val pendingFrames = ConcurrentLinkedQueue<ByteArray>() // OUT_W×OUT_H I420 tuvallar
     @Volatile private var bitrate = 2_000_000
     private var videoStarted = AtomicBoolean(false)
 
@@ -79,7 +87,7 @@ class LocalRecorder(private val outputFile: File) {
         localAudio: AudioTrack?,
         remoteAudio: List<AudioTrack>,
     ): Boolean {
-        if (running.getAndSet(true)) return true
+        if (!lifecycle.beginStart()) return true
         return try {
             encThread = HandlerThread("local-rec-enc").apply { start() }
             encHandler = Handler(encThread.looper)
@@ -93,7 +101,8 @@ class LocalRecorder(private val outputFile: File) {
             remoteAudio.forEach { attachSink(it) }
             mixer.start { }
 
-            // Video encoder birinchi kadr kelganda sozlanadi (o'lchamni bilish uchun).
+            // Video encoder birinchi kadr kelganda sozlanadi (gorizontal tuval —
+            // o'lcham qat'iy [OUT_W]×[OUT_H], manbaga bog'liq emas).
             videoTrack = screenVideo
             screenVideo.addRenderer(videoSink)
 
@@ -102,13 +111,13 @@ class LocalRecorder(private val outputFile: File) {
         } catch (t: Throwable) {
             Log.e(TAG, "local recording start failed — egress fallback", t)
             safeStop()
-            running.set(false)
+            lifecycle.failStart()
             false
         }
     }
 
     fun addRemoteAudio(track: AudioTrack) {
-        if (running.get()) attachSink(track)
+        if (lifecycle.isRunning()) attachSink(track)
     }
 
     fun removeRemoteAudio(track: AudioTrack) {
@@ -116,7 +125,7 @@ class LocalRecorder(private val outputFile: File) {
     }
 
     fun stop() {
-        if (!running.getAndSet(false)) return
+        if (!lifecycle.beginStop()) return
         safeStop()
         Log.i(TAG, "local recording stopped: ${outputFile.name} (${outputFile.length()} bytes)")
     }
@@ -125,43 +134,106 @@ class LocalRecorder(private val outputFile: File) {
 
     private inner class FrameSink : VideoSink {
         override fun onFrame(frame: VideoFrame) {
-            if (!running.get()) return
-            val i420 = frame.buffer.toI420() ?: return
-            try {
-                val w = i420.width
-                val h = i420.height
-                if (w <= 0 || h <= 0) return
-                frameW = w; frameH = h
-                // Encoder hali sozlanmagan bo'lsa — birinchi kadrda sozlaymiz.
-                if (videoStarted.compareAndSet(false, true)) {
-                    encHandler.post { setupVideo(w, h) }
-                }
-                // I420 → tekis bayt massivi (Y + U + V), stride'larsiz zich.
-                pendingFrames.offer(packI420(i420))
-                // Navbat cheksiz o'smasin (encoder sekin bo'lsa eski kadr tashlansin).
-                while (pendingFrames.size > 4) pendingFrames.poll()
-            } finally {
-                i420.release()
+            if (!lifecycle.isRunning()) return
+            val w = frame.buffer.width
+            val h = frame.buffer.height
+            if (w <= 0 || h <= 0) return
+            // Encoder hali sozlanmagan bo'lsa — birinchi kadrda sozlaymiz
+            // (o'lcham qat'iy gorizontal tuval, manbaga bog'liq emas).
+            if (videoStarted.compareAndSet(false, true)) {
+                encHandler.post { setupVideo() }
             }
+            // Kadrni nisbatini saqlab gorizontal tuval markaziga joylaymiz
+            // (letterbox). Natija — doim OUT_W×OUT_H zich I420 bayt massivi.
+            val canvas = composeLandscape(frame.buffer, w, h) ?: return
+            pendingFrames.offer(canvas)
+            // Navbat cheksiz o'smasin (encoder sekin bo'lsa eski kadr tashlansin).
+            while (RecorderPipeline.shouldDropOldest(pendingFrames.size)) pendingFrames.poll()
         }
     }
 
-    private fun setupVideo(w: Int, h: Int) {
+    private fun setupVideo() {
         try {
-            val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, w, h).apply {
+            val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, OUT_W, OUT_H).apply {
                 setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible)
                 setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
                 setInteger(MediaFormat.KEY_FRAME_RATE, VIDEO_FPS)
                 setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 2)
+                // VBR — statik kadrда (doska/slayd o'zgarmasa) bitni isrof qilmaydi,
+                // harakatли joyда oshiradi. CBR har kadrга teng bit yozib faylni
+                // behuda kattalashtirardi. Yakuniy hajmni post-siqish (dars tugagach,
+                // telefonda H.264 CRF) hal qiladi; bu — jonli oraliq faylni yengillashtirish.
+                setInteger(
+                    MediaFormat.KEY_BITRATE_MODE,
+                    MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR,
+                )
             }
             val enc = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
             enc.setCallback(VideoCallback(), encHandler)
             enc.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             enc.start()
             videoEncoder = enc
-            configuredW = w
         } catch (t: Throwable) {
             Log.e(TAG, "video encoder setup failed", t)
+        }
+    }
+
+    /**
+     * Manba kadrini ([src], [srcW]×[srcH]) gorizontal tuval ([OUT_W]×[OUT_H])
+     * ichiga nisbatini saqlab joylashtiradi va zich I420 bayt massivi qaytaradi
+     * (Y+U+V, stride'siz — [VideoCallback] shu tartibda kutadi). Bo'sh joy qora.
+     *
+     * Joylashuv hisobi [LetterboxFit] da (sof, JVM test ostida). Masshtablash
+     * LiveKit/libwebrtc `cropAndScale` bilan (native, tez).
+     */
+    private fun composeLandscape(src: VideoFrame.Buffer, srcW: Int, srcH: Int): ByteArray? {
+        val fit = LetterboxFit.fit(srcW, srcH, OUT_W, OUT_H)
+        val scaled = try {
+            src.cropAndScale(0, 0, srcW, srcH, fit.w, fit.h)
+        } catch (t: Throwable) {
+            Log.e(TAG, "cropAndScale failed", t); return null
+        }
+        val i420 = scaled.toI420()
+        return try {
+            if (i420 == null) return null
+            val canvas = ByteArray(OUT_W * OUT_H * 3 / 2)
+            fillBlack(canvas)
+            blit(i420, canvas, fit.x, fit.y)
+            canvas
+        } finally {
+            i420?.release()
+            scaled.release()
+        }
+    }
+
+    /** Tuvalni "video qora" bilan to'ldiradi (Y=16, U=V=128). */
+    private fun fillBlack(canvas: ByteArray) {
+        val ySize = OUT_W * OUT_H
+        java.util.Arrays.fill(canvas, 0, ySize, 16.toByte())
+        java.util.Arrays.fill(canvas, ySize, canvas.size, 128.toByte())
+    }
+
+    /** Masshtablangan I420 ([src]) ni tuval ([canvas]) ichiga ([ox],[oy]) burchakdan ko'chiradi. */
+    private fun blit(src: livekit.org.webrtc.VideoFrame.I420Buffer, canvas: ByteArray, ox: Int, oy: Int) {
+        val dw = src.width; val dh = src.height
+        val cOutW = OUT_W / 2; val cOutH = OUT_H / 2
+        val ySize = OUT_W * OUT_H
+        copyInto(src.dataY, src.strideY, dw, dh, canvas, 0, OUT_W, ox, oy)
+        copyInto(src.dataU, src.strideU, (dw + 1) / 2, (dh + 1) / 2, canvas, ySize, cOutW, ox / 2, oy / 2)
+        copyInto(src.dataV, src.strideV, (dw + 1) / 2, (dh + 1) / 2, canvas, ySize + cOutW * cOutH, cOutW, ox / 2, oy / 2)
+    }
+
+    /** Bitta plane'ni (stride bilan) tuval bayt massiviga ([ox],[oy]) dan zich ko'chiradi. */
+    private fun copyInto(
+        src: ByteBuffer, srcStride: Int, w: Int, h: Int,
+        dst: ByteArray, dstBase: Int, dstStride: Int, ox: Int, oy: Int,
+    ) {
+        val row = ByteArray(w)
+        for (y in 0 until h) {
+            src.position(y * srcStride)
+            val n = minOf(w, src.remaining())
+            src.get(row, 0, n)
+            System.arraycopy(row, 0, dst, dstBase + (oy + y) * dstStride + ox, w)
         }
     }
 
@@ -172,18 +244,18 @@ class LocalRecorder(private val outputFile: File) {
                 // Kadr yo'q — bufer indeksini keyinroq ishlatishni kutish o'rniga
                 // bo'sh 0-baytli kadr bermaymiz (encoder buni yoqtirmaydi);
                 // qisqa kutib qayta beramiz.
-                encHandler.postDelayed({ if (running.get()) runCatching { onInputBufferAvailable(codec, index) } }, 10)
+                encHandler.postDelayed({ if (lifecycle.isRunning()) runCatching { onInputBufferAvailable(codec, index) } }, 10)
                 return
             }
             try {
                 val image = codec.getInputImage(index)
                 val size = if (image != null) {
-                    fillImageI420(image, frame, frameW, frameH); frame.size
+                    fillImageI420(image, frame, OUT_W, OUT_H); frame.size
                 } else {
                     val buf = codec.getInputBuffer(index) ?: return
                     buf.clear(); buf.put(frame); frame.size
                 }
-                val pts = (System.nanoTime() - startNanos) / 1000
+                val pts = RecorderPipeline.ptsMicros(System.nanoTime(), startNanos)
                 codec.queueInputBuffer(index, 0, size, pts, 0)
             } catch (t: Throwable) {
                 Log.e(TAG, "video input error", t)
@@ -200,29 +272,6 @@ class LocalRecorder(private val outputFile: File) {
                 videoTrackIndex = muxer!!.addTrack(format)
                 maybeStartMuxer()
             }
-        }
-    }
-
-    /** I420Buffer → zich (stride'siz) Y+U+V bayt massivi. */
-    private fun packI420(b: livekit.org.webrtc.VideoFrame.I420Buffer): ByteArray {
-        val w = b.width; val h = b.height
-        val cw = (w + 1) / 2; val ch = (h + 1) / 2
-        val out = ByteArray(w * h + cw * ch * 2)
-        copyPlane(b.dataY, b.strideY, out, 0, w, h)
-        copyPlane(b.dataU, b.strideU, out, w * h, cw, ch)
-        copyPlane(b.dataV, b.strideV, out, w * h + cw * ch, cw, ch)
-        return out
-    }
-
-    private fun copyPlane(src: ByteBuffer, stride: Int, dst: ByteArray, dstOff: Int, w: Int, h: Int) {
-        val row = ByteArray(stride)
-        var o = dstOff
-        for (y in 0 until h) {
-            src.position(y * stride)
-            val n = minOf(stride, src.remaining())
-            src.get(row, 0, n)
-            System.arraycopy(row, 0, dst, o, w)
-            o += w
         }
     }
 
@@ -278,12 +327,12 @@ class LocalRecorder(private val outputFile: File) {
         override fun onInputBufferAvailable(codec: MediaCodec, index: Int) {
             val buf = codec.getInputBuffer(index) ?: return
             val pcm = mixer.poll(buf.capacity())
-            val pts = (System.nanoTime() - startNanos) / 1000
+            val pts = RecorderPipeline.ptsMicros(System.nanoTime(), startNanos)
             if (pcm != null && pcm.isNotEmpty()) {
                 buf.clear(); buf.put(pcm)
                 codec.queueInputBuffer(index, 0, pcm.size, pts, 0)
             } else {
-                encHandler.postDelayed({ if (running.get()) runCatching { onInputBufferAvailable(codec, index) } }, 15)
+                encHandler.postDelayed({ if (lifecycle.isRunning()) runCatching { onInputBufferAvailable(codec, index) } }, 15)
             }
         }
         override fun onOutputBufferAvailable(codec: MediaCodec, index: Int, info: MediaCodec.BufferInfo) {
@@ -319,24 +368,23 @@ class LocalRecorder(private val outputFile: File) {
     // ─── Muxer ────────────────────────────────────────────────────────────────
 
     private fun maybeStartMuxer() {
-        if (!muxerStarted && videoTrackIndex >= 0 && audioTrackIndex >= 0) {
+        if (!muxerStarted && RecorderPipeline.muxerReady(videoTrackIndex, audioTrackIndex)) {
             muxer!!.start()
             muxerStarted = true
         }
     }
 
     private fun drain(codec: MediaCodec, index: Int, info: MediaCodec.BufferInfo, video: Boolean) {
-        if (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
-            codec.releaseOutputBuffer(index, false); return
-        }
-        val out = codec.getOutputBuffer(index)
-        if (out != null && info.size > 0) {
-            synchronized(muxerLock) {
-                if (muxerStarted) {
-                    out.position(info.offset)
-                    out.limit(info.offset + info.size)
-                    muxer!!.writeSampleData(if (video) videoTrackIndex else audioTrackIndex, out, info)
-                }
+        val isConfig = info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0
+        val out = if (isConfig) null else codec.getOutputBuffer(index)
+        synchronized(muxerLock) {
+            // Qaror sof [RecorderPipeline] da: config buferi YOZILMAYDI, muxer
+            // boshlanmagan yoki bo'sh bufer ham (aks holda fayl buziladi).
+            val action = RecorderPipeline.drainAction(isConfig, if (out != null) info.size else 0, muxerStarted)
+            if (action == DrainAction.WRITE) {
+                out!!.position(info.offset)
+                out.limit(info.offset + info.size)
+                muxer!!.writeSampleData(if (video) videoTrackIndex else audioTrackIndex, out, info)
             }
         }
         codec.releaseOutputBuffer(index, false)
@@ -362,6 +410,16 @@ class LocalRecorder(private val outputFile: File) {
     companion object {
         private const val TAG = "LocalRecorder"
         const val VIDEO_FPS = 24
+
+        /**
+         * Yozuv DOIM shu gorizontal tuvalga (16:9) chiqadi. Manba tik bo'lsa
+         * [LetterboxFit] bilan markazga joylanadi — fayl baribir gorizontal,
+         * pleyerda kino kabi to'liq ekranga ochiladi. 1280 — ekran-ulashish
+         * yuqori qatlami bilan bir xil ([ScreenCaptureSize] · MediaTuning).
+         */
+        const val OUT_W = 1280
+        const val OUT_H = 720
+
         const val SAMPLE_RATE = 48000
         const val CHANNELS = 1
         const val AUDIO_BITRATE = 96_000

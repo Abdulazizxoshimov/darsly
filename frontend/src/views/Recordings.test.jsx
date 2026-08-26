@@ -45,7 +45,7 @@ const REC = (over) => ({
 
 function setup() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  render(
+  return render(
     <QueryClientProvider client={qc}>
       {/* Qatorlarda arxiv sahifasiga havola bor — Router shart. */}
       <MemoryRouter>
@@ -94,6 +94,32 @@ describe('Recordings — saqlanish muddati', () => {
     listRecordings.mockResolvedValue([])
     setup()
     expect(await screen.findByText('Bu darsda yozuv saqlanmagan.')).toBeInTheDocument()
+  })
+
+  // Bug: darslar ro'yxati yuklanayotganda bo'sh jadval ko'rsatilsa, foydalanuvchi
+  // "yozuv yo'q" deb o'ylab ketadi (aslida hali kelmagan).
+  it('darslar yuklanayotganda spinner ko‘rsatiladi', async () => {
+    listLessons.mockReturnValue(new Promise(() => {}))
+    const { container } = setup()
+    await vi.waitFor(() => expect(container.querySelector('.page-loader')).toBeTruthy())
+  })
+
+  // Bug: darslar ro'yxati so'rovi yiqilsa aniq xato + qayta urinish ko'rsatilishi
+  // kerak, jimgina bo'sh ro'yxat emas.
+  it('darslar so‘rovi yiqilsa xato holati ko‘rsatiladi', async () => {
+    listLessons.mockRejectedValue(new Error('down'))
+    setup()
+    expect(await screen.findByText(/Yozuvlarni yuklab bo'lmadi/i)).toBeInTheDocument()
+  })
+
+  // Bug: bitta darsning yozuvlar so'rovi yiqilsa, butun jadval emas, FAQAT o'sha
+  // dars qatori nega bo'shligini yozib qo'yishi kerak.
+  it('bir dars yozuvlari so‘rovi yiqilsa o‘sha qator sababini yozadi', async () => {
+    listRecordings.mockRejectedValue(new Error('down'))
+    setup()
+    expect(await screen.findByText(/Bu dars yozuvlarini yuklab bo'lmadi/i)).toBeInTheDocument()
+    // Dars sarlavhasi baribir ko'rinadi (qator TARIX uchun qoladi).
+    expect(screen.getByText('Kvadrat tenglamalar')).toBeInTheDocument()
   })
 
   it('yuklab olish yangi tabda ochiladi', async () => {

@@ -6,7 +6,71 @@
 // amalda umuman tekshirilmaydi. Bu yerda esa ular oddiy testga tushadi.
 // (Mobil ilovadagi `ScreenAudioPolicy`/`MediaTuning` bilan bir xil yondashuv.)
 
-import { ConnectionQuality } from 'livekit-client'
+import { ConnectionQuality, DisconnectReason } from 'livekit-client'
+
+// ─── useRoom klassifikatorlari (sof — React'siz, shuning uchun shu yerda) ─────
+// Bu uch qaror `useRoom` ichida yashiringan edi va faqat brauzerda, real
+// LiveKit hodisasi bilan tekshirilardi — ya'ni amalda hech qachon. Ular
+// mahsulot/xavfsizlik qoidalari, shuning uchun `useRoom` xatti-harakatini
+// o'zgartirmasdan bu yerga ko'chirildi va `roomLogic.test.js` da sinaladi.
+
+/**
+ * Kamera (video) publish ruxsati bormi. `permissions.canPublishSources` —
+ * LiveKit protokol enum'i (CAMERA=1); bo'sh ro'yxat = BARCHA manbalar (host).
+ * O'quvchida default FAQAT mikrofon — kamera ustoz ruxsatidan keyin qo'shiladi
+ * (backend `studentVideoSources`). Ehtiyot uchun string ('camera') ham qabul.
+ *
+ * Xavfsizlik-tegishli: bu funksiya "o'quvchi kamerasini yoqa oladimi?" savoliga
+ * javob beradi; noto'g'ri `true` — ustoz ruxsat bermagan holda kamera yonishi.
+ */
+export function canPublishCameraOf(perms) {
+  if (!perms?.canPublish) return false
+  const src = perms.canPublishSources
+  if (!src || src.length === 0) return true // bo'sh = hammasi (host)
+  return src.some((s) => s === 1 || s === 'camera')
+}
+
+/**
+ * Uzilish "yakuniy"mi (server xona yopdi / chiqarib yubordi) yoki vaqtinchalik
+ * (tarmoq uzildi — LiveKit o'zi qayta ulanadi). Avval HAR QANDAY `disconnected`
+ * guest'ni sessiyasi bilan bosh sahifaga uloqtirardi — vaqtinchalik uzilishda ham.
+ */
+export function endedByServer(reason) {
+  return (
+    reason === DisconnectReason.ROOM_DELETED ||
+    reason === DisconnectReason.ROOM_CLOSED ||
+    reason === DisconnectReason.PARTICIPANT_REMOVED ||
+    reason === DisconnectReason.DUPLICATE_IDENTITY
+  )
+}
+
+/**
+ * Uzilish sababi → UI holati. Xona ICHIDAGI chiqarib yuborish (kick) va sessiya
+ * dublikati (boshqa qurilmada kirildi) bir-biridan ajratiladi — foydalanuvchiga
+ * aniq sabab ko'rsatiladi. Vaqtinchalik uzilishda `null` (banner chiqmaydi).
+ *   'removed'      — ustoz chiqarib yubordi (PARTICIPANT_REMOVED)
+ *   'duplicate'    — xuddi shu identity boshqa joyda ulandi (DUPLICATE_IDENTITY)
+ *   'room_deleted' — xona yopildi (ROOM_DELETED / ROOM_CLOSED)
+ */
+export function endedReason(reason) {
+  if (!endedByServer(reason)) return null
+  if (reason === DisconnectReason.PARTICIPANT_REMOVED) return 'removed'
+  if (reason === DisconnectReason.DUPLICATE_IDENTITY) return 'duplicate'
+  return 'room_deleted'
+}
+
+/**
+ * Media publish natijasi → ko'rsatiladigan xato sinfi. Kamera va mikrofon
+ * ALOHIDA kuzatiladi: kamera rad etilib mikrofon ishlashi odatiy holat va bunda
+ * "kamera yoqilmadi" deb aniq aytish kerak, umumiy "xatolik" emas. Ikkalasi ham
+ * ishlagan bo'lsa `null` (banner yo'q).
+ */
+export function mediaErrorClass(camFailed, micFailed) {
+  if (camFailed && micFailed) return 'both'
+  if (camFailed) return 'camera'
+  if (micFailed) return 'mic'
+  return null
+}
 
 /**
  * Ishtirokchilar snapshot'ining "mazmun imzosi".
@@ -22,8 +86,8 @@ export function participantSignature(items) {
   let s = ''
   for (const i of items) {
     s += `${i.identity}|${i.name}|${i.speaking ? 1 : 0}${i.micMuted ? 1 : 0}${i.canPublish ? 1 : 0}${
-      i.isHost ? 1 : 0
-    }|${i.camTrack?.sid || '-'}|${i.screenTrack?.sid || '-'};`
+      i.canPublishCamera ? 1 : 0
+    }${i.isHost ? 1 : 0}|${i.camTrack?.sid || '-'}|${i.screenTrack?.sid || '-'};`
   }
   return s
 }
@@ -62,7 +126,7 @@ export function galleryPage(items, page, size = GALLERY_PAGE_SIZE) {
 
 /** Local media holatining imzosi (boshqaruv paneli shunga bog'lanadi). */
 export function localSignature(l) {
-  return `${l.identity}|${l.micOn ? 1 : 0}${l.camOn ? 1 : 0}${l.screenOn ? 1 : 0}${l.canPublish ? 1 : 0}`
+  return `${l.identity}|${l.micOn ? 1 : 0}${l.camOn ? 1 : 0}${l.screenOn ? 1 : 0}${l.canPublish ? 1 : 0}${l.canPublishCamera ? 1 : 0}`
 }
 
 /** LiveKit `ConnectionQuality` → UI uchun sodda daraja. */

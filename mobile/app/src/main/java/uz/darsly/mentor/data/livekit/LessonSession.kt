@@ -25,6 +25,7 @@ import io.livekit.android.room.track.Track
 import io.livekit.android.room.track.VideoCaptureParameter
 import io.livekit.android.room.track.screencapture.ScreenCaptureParams
 import io.livekit.android.util.LKLog
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -72,6 +73,9 @@ class LessonSession(
             screenShareTrackPublishDefaults = MediaTuning.screenSharePublish(),
             videoTrackPublishDefaults = MediaTuning.cameraPublish(),
             audioTrackPublishDefaults = MediaTuning.audioPublish(),
+            // A1 — "Original Sound" ekvivalenti: noise-suppression/AGC o'chirilgan,
+            // media (YouTube/kino) ovozi "shovqin" deб bostirilmasin (`MediaTuning`).
+            audioTrackCaptureDefaults = MediaTuning.audioCapture(),
             // C-11: tarmoq almashuvida (Wi-Fi ↔ LTE) tez tiklanish.
             // Sabab va raqamlar `LessonReconnectPolicy` da (u sof va test ostida).
             reconnectPolicy = LessonReconnectPolicy(),
@@ -137,6 +141,38 @@ class LessonSession(
     suspend fun setMicrophoneEnabled(enabled: Boolean) {
         micWanted = enabled
         applyAudioPlan()
+        if (!enabled) return
+
+        // Mikrofon treki e'lon qilinishi bir lahza olishi mumkin — qisqa kutamiz
+        // (quyidagi ikkala tuzatish ham mikrofon TREKINI talab qiladi).
+        val micTrack = awaitMicTrack()
+
+        // REC-1 — YOZUVGA OVOZ: yozuv boshlanganda mikrofon O'CHIQ bo'lsa (yangi standart),
+        // recorderga hech qanday audio manba ulanmaydi va yozuv JIMLIK chiqadi (o'lchangan:
+        // -91 dB). Mikrofon keyin yoqilganda uni LOKAL YOZUVGA ham ulaymiz. Mikrofon treki
+        // ekran (YouTube) ovozini ham o'zida olib yuradi (telefonda bitta ADM buferi,
+        // ekran-ovoz shu buferga mikslanadi) — shu bois video ovozi ham yozuvga tushadi.
+        if (micTrack != null) localRecorder?.addRemoteAudio(micTrack)
+
+        // TARTIB TUZATISH (ekran-ovoz JONLI oqim uchun) — ekran (YouTube) ovozi mikrofon
+        // trekiga mikslanadi va faqat mikrofon TREKI bo'lganda ushlanadi ([startScreenAudio]).
+        // Ustoz ekranni mik O'CHIQ holatda ulashgan bo'lsa, ekran-ovoz o'sha payt ishga
+        // tushmagan (u faqat ulashish boshida bir marta urinadi). Endi mik yoqilganda
+        // ekran faol bo'lsa (qayta) ishga tushiramiz — aks holda ustoz ovozi o'quvchiga
+        // o'tadi-yu, YouTube ovozi jonli oqimga bormaydi.
+        if (_screenShareOn.value && screenAudioCapturer == null) {
+            startScreenAudio()
+        }
+    }
+
+    /** Mikrofon treki e'lon qilinishini qisqa kutadi (publish bir lahza olishi mumkin). */
+    private suspend fun awaitMicTrack(): AudioTrack? {
+        repeat(6) {
+            (room.localParticipant.getTrackPublication(Track.Source.MICROPHONE)?.track as? AudioTrack)
+                ?.let { return it }
+            delay(120)
+        }
+        return null
     }
 
     /**
@@ -276,7 +312,8 @@ class LessonSession(
         rec.stop()
         val file = localRecFile
         localRecFile = null
-        return file?.takeIf { it.exists() && it.length() > 0 }
+        // Bo'sh/buzuq faylni YUKLAMAYMIZ — qaror sof [RecorderPipeline] da.
+        return file?.takeIf { RecorderPipeline.isUsableOutput(it.exists(), it.length()) }
     }
 
     /** O'quvchi dars o'rtasida qo'shilsa/chiqsa — lokal yozuvга ovozини ulash/uzish. */
@@ -400,8 +437,13 @@ class LessonSession(
         /** Ekran ovozi yolg'iz ketganda — to'liq balandlik. */
         const val SCREEN_AUDIO_GAIN_SOLO = 1.0f
 
-        /** Mikrofon bilan birga ketganda — ustoz ovozi ustidan eshitilishi uchun. */
-        const val SCREEN_AUDIO_GAIN_MIXED = 0.6f
+        /**
+         * Mikrofon bilan birga ketganda — media ovozi darajasi (A2).
+         * Avval 0.6 edi → media JUDA past eshitilardi. 0.85 — media aniq eshitiladi,
+         * ustoz ovozi (yaqin-mikrofon, kuchli signal) baribir ustidan chiqadi.
+         * (Dinamik ducking — A3 — media akustik bleed xavfи sababли test'dан keyin.)
+         */
+        const val SCREEN_AUDIO_GAIN_MIXED = 0.85f
 
         /**
          * Ekran ulashish manbasining o'lchami — qurilma nisbatidan (№23).
