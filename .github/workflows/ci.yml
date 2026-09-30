@@ -71,7 +71,7 @@ jobs:
       # major yangilanishda mos kelmay qolardi va lint bosqichi kod
       # o'zgarmasa ham bir kuni yiqilardi (`.golangci.yml` izohiga qara).
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v7
         with:
           version: v2.1.6
           working-directory: backend
