@@ -61,4 +61,27 @@ class RecordControlTest {
         assertEquals(1, RecordControl.durationSec(startMs = 1_000, nowMs = 1_500)) // 0.5s → 1
         assertEquals(5, RecordControl.durationSec(startMs = 1_000, nowMs = 6_000)) // 5s
     }
+
+    // ── onShareChanged (H5) ────────────────────────────────────────────────────
+
+    @Test
+    fun `trek ketsa yozuv segmenti yakunlanadi`() {
+        // Tizim "Stop sharing" / qayta ulanish: recorder o'lik trekka qarab
+        // qolmasin (video qotgan, REC yonib turgan).
+        assertEquals(RecordControl.ShareAction.STOP, RecordControl.onShareChanged(sharing = false, wanted = true, recording = true))
+        assertEquals(RecordControl.ShareAction.STOP, RecordControl.onShareChanged(sharing = false, wanted = false, recording = true))
+    }
+
+    @Test
+    fun `trek qaytsa faqat xohlangan yozuv qayta boshlanadi`() {
+        assertEquals(RecordControl.ShareAction.START, RecordControl.onShareChanged(sharing = true, wanted = true, recording = false))
+        // Ustoz yozuvni o'zi to'xtatgan — qayta ulanish uni jimgina tiklamaydi (maxfiylik).
+        assertEquals(RecordControl.ShareAction.NONE, RecordControl.onShareChanged(sharing = true, wanted = false, recording = false))
+    }
+
+    @Test
+    fun `yozuv allaqachon ketayotgan bolsa hech nima`() {
+        assertEquals(RecordControl.ShareAction.NONE, RecordControl.onShareChanged(sharing = true, wanted = true, recording = true))
+        assertEquals(RecordControl.ShareAction.NONE, RecordControl.onShareChanged(sharing = false, wanted = true, recording = false))
+    }
 }

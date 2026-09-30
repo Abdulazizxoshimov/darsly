@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { acceptData, decodeData, encodeData } from './messaging'
+import { acceptData, chatEntryFromServer, decodeData, encodeData } from './messaging'
 
 // ISHONCH MODELI (xavfsizlik chegarasi):
 // `CanPublishData` xonadagi HAMMADA yoqilgan (doska va so'rovnoma uchun), ya'ni
@@ -37,6 +37,85 @@ describe('decodeData', () => {
 
   it('buzuq payload null qaytaradi (yiqilmaydi)', () => {
     expect(decodeData(new Uint8Array([1, 2, 3]))).toBeNull()
+  })
+})
+
+// SHAKL tekshiruvi: avval faqat `kind` tekshirilardi. Buzuq host `poll`
+// xabari (masalan `options` yo'q) HAR BIR o'quvchi panelini `options.map` da
+// bir vaqtda yiqitardi — bitta buzilgan payload butun sinfni.
+describe('decodeData — shakl tekshiruvi', () => {
+  const POLL = { id: 'p1', question: 'Savol?', options: ['Ha', "Yo'q"], results_visibility: 'public' }
+
+  it('to‘g‘ri poll open/close qabul qilinadi', () => {
+    expect(decodeData(pack({ kind: 'poll', action: 'open', poll: POLL }))).toMatchObject({ action: 'open' })
+    expect(decodeData(pack({ kind: 'poll', action: 'close', poll: { id: 'p1' } }))).toMatchObject({ action: 'close' })
+  })
+
+  it('poll open: variantlarsiz / savolsiz / poll‘siz → null', () => {
+    expect(decodeData(pack({ kind: 'poll', action: 'open', poll: { id: 'p1', question: 'S' } }))).toBeNull()
+    expect(decodeData(pack({ kind: 'poll', action: 'open', poll: { id: 'p1', options: ['a'] } }))).toBeNull()
+    expect(decodeData(pack({ kind: 'poll', action: 'open', poll: { ...POLL, options: [1, 2] } }))).toBeNull()
+    expect(decodeData(pack({ kind: 'poll', action: 'open' }))).toBeNull()
+    expect(decodeData(pack({ kind: 'poll', action: 'boshqa', poll: POLL }))).toBeNull()
+  })
+
+  it('poll_published: results obyekt bo‘lishi shart, ichidagi poll tekshiriladi', () => {
+    expect(decodeData(pack({ kind: 'poll_published', results: { poll: POLL, counts: [1, 0], total: 1 } }))).toBeTruthy()
+    expect(decodeData(pack({ kind: 'poll_published' }))).toBeNull()
+    expect(decodeData(pack({ kind: 'poll_published', results: 'x' }))).toBeNull()
+    expect(decodeData(pack({ kind: 'poll_published', results: { poll: { id: 'p1' } } }))).toBeNull()
+  })
+
+  it('chat_deleted id‘siz, reaction emoji‘siz, hand identity‘siz, wb act‘siz → null', () => {
+    expect(decodeData(pack({ kind: 'chat_deleted' }))).toBeNull()
+    expect(decodeData(pack({ kind: 'reaction', name: 'Ali' }))).toBeNull()
+    expect(decodeData(pack({ kind: 'hand', raised: true }))).toBeNull()
+    expect(decodeData(pack({ kind: 'wb', pts: [] }))).toBeNull()
+    expect(decodeData(pack({ kind: 'wb', act: 'clear' }))).toMatchObject({ act: 'clear' })
+  })
+
+  it('massiv / satr / null payload → null', () => {
+    expect(decodeData(pack([1, 2]))).toBeNull()
+    expect(decodeData(pack('salom'))).toBeNull()
+    expect(decodeData(pack(null))).toBeNull()
+  })
+
+  it('kind‘siz, lekin ChatMessage bo‘lmagan obyekt → null', () => {
+    expect(decodeData(pack({ sender_name: 'Ali' }))).toBeNull()
+    expect(decodeData(pack({ id: 'c1', sender_name: 'Ali', body: 5 }))).toBeNull()
+  })
+})
+
+describe('chatEntryFromServer', () => {
+  it('ChatMessage → panel yozuvi (identity, shaxsiy, fayl bilan)', () => {
+    const e = chatEntryFromServer({
+      id: 'c1',
+      sender_identity: 'guest_1',
+      sender_name: 'Ali',
+      body: 'Salom',
+      to_identity: 'host',
+      file: { name: 'a.pdf', size: 1, mime: 'application/pdf', url: 'https://x' },
+      created_at: '2026-07-31T09:12:00Z',
+    })
+    expect(e).toEqual({
+      id: 'c1',
+      name: 'Ali',
+      body: 'Salom',
+      senderIdentity: 'guest_1',
+      toIdentity: 'host',
+      file: { name: 'a.pdf', size: 1, mime: 'application/pdf', url: 'https://x' },
+      ts: Date.parse('2026-07-31T09:12:00Z'),
+    })
+  })
+
+  it('bo‘sh to_identity → null, fayl yo‘q → null, identity yo‘q → bo‘sh satr', () => {
+    const e = chatEntryFromServer({ id: 'c1', sender_name: 'Ali', body: '', to_identity: '' })
+    expect(e).toMatchObject({ toIdentity: null, file: null, senderIdentity: '' })
+  })
+
+  it('majburiy maydonsiz → null', () => {
+    expect(chatEntryFromServer(null)).toBeNull()
+    expect(chatEntryFromServer({ sender_name: 'Ali', body: 'x' })).toBeNull()
   })
 })
 

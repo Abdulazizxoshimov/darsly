@@ -8,6 +8,7 @@ import android.content.Intent
 import android.os.Build
 import androidx.core.content.getSystemService
 import io.livekit.android.util.LKLog
+import uz.darsly.mentor.BuildConfig
 
 /**
  * Native "Ulashish" (M8).
@@ -42,9 +43,14 @@ object Share {
      * ulanishni davom ettirish, bildirishnomadagi progress). Ilova ichida
      * qayta yozish faqat yomonroq nusxa bo'lardi.
      *
-     * `false` — ochadigan ilova yo'q (brauzeri o'chirilgan qurilma).
+     * `false` — ochadigan ilova yo'q (brauzeri o'chirilgan qurilma) yoki havola
+     * darvozadan o'tmadi (S2: faqat `https`, debug'da `http` ham — [SafeLinks]).
      */
     fun openUrl(context: Context, url: String): Boolean {
+        if (!SafeLinks.isAllowed(url, allowCleartext = BuildConfig.DEBUG)) {
+            LKLog.w { "havola rad etildi (sxema/host): ${url.take(64)}" }
+            return false
+        }
         val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)).apply {
             if (context !is Activity) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }

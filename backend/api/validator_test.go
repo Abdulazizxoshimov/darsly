@@ -111,3 +111,19 @@ func TestBindError_DoesNotLeakInternals(t *testing.T) {
 		})
 	}
 }
+
+// avatar_url faqat http/https: `javascript:`/`data:` sxemalari rad etilishi kerak.
+func TestHTTPURLValidator_RejectsDangerousSchemes(t *testing.T) {
+	sv := &structValidator{}
+	ok := []string{"https://cdn.darsly.uz/a.png", "http://localhost:9020/a.png"}
+	bad := []string{"javascript:alert(1)", "data:text/html,<script>", "file:///etc/passwd", "ftp://x.uz/a", "not a url", "https://"}
+
+	for _, u := range ok {
+		u := u
+		require.NoError(t, sv.ValidateStruct(&entity.UpdateUserReq{AvatarURL: &u}), u)
+	}
+	for _, u := range bad {
+		u := u
+		require.Error(t, sv.ValidateStruct(&entity.UpdateUserReq{AvatarURL: &u}), u)
+	}
+}

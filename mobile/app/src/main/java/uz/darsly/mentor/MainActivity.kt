@@ -30,7 +30,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
@@ -38,8 +37,6 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import uz.darsly.mentor.data.livekit.LessonSessionHolder
-import uz.darsly.mentor.service.LessonService
 import uz.darsly.mentor.ui.archive.ArchiveDetailScreen
 import uz.darsly.mentor.ui.archive.ArchiveListScreen
 import uz.darsly.mentor.ui.auth.PasswordResetScreen
@@ -130,7 +127,6 @@ private val TABS = listOf(
 @Composable
 private fun AppNav(vm: AppViewModel = hiltViewModel()) {
     val nav = rememberNavController()
-    val ctx = LocalContext.current
 
     // M1: ilova qayta ochilganda tokenlar shifrlangan preferens'dan tiklanadi —
     // ustoz login ekranini umuman ko'rmaydi.
@@ -148,8 +144,8 @@ private fun AppNav(vm: AppViewModel = hiltViewModel()) {
         if (!loggedIn && route != Routes.LOGIN && route != Routes.FORGOT_PASSWORD) {
             // Dars o'rtasida bo'lsak — LiveKit sessiyasi va foreground servis
             // osilib qolmasin (aks holda ustoz "ko'rinmas xona"da qoladi).
-            LessonSessionHolder.stop()
-            LessonService.stop(ctx)
+            // Egasi orqali (M2): yozuv yakunlanadi, servis to'xtaydi.
+            vm.onLoggedOut()
             nav.navigate(Routes.LOGIN) {
                 popUpTo(nav.graph.id) { inclusive = true }
                 launchSingleTop = true

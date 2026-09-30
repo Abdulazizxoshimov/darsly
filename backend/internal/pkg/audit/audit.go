@@ -19,5 +19,8 @@ func Record(ctx context.Context, log logger.Logger, action, actorID string, fiel
 		logger.String("action", action),
 		logger.String("actor_id", actorID),
 	}
-	log.Info(ctx, "audit", append(base, fields...)...)
+	// Warn darajasi ATAYLAB: Loki core faqat Warn+ yuboradi (logger.WithLoki), Info esa
+	// faqat stdout'da qolardi va audit izi markaziy tizimga yetmasdi. Audit yozuvlari
+	// xavfsizlik uchun muhim — shuning uchun Warn (xato degani emas, yetkazish kafolati).
+	log.Warn(ctx, "audit", append(base, fields...)...)
 }

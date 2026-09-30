@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  DEBUG-ONLY: lokal backend (http://localhost:8087, `adb reverse`) uchun cleartext
+  ruxsati. `networkSecurityConfig` manifestda bo'lgani uchun `usesCleartextTraffic`
+  e'tiborsiz qoladi — shuning uchun ruxsat SHU YERDA beriladi. Reliz variantida
+  `main` dagi konfiguratsiya (faqat HTTPS) ishlaydi.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

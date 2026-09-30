@@ -30,7 +30,7 @@ const (
 
 // AccessToken darsga kirish uchun LiveKit JWT generatsiya qiladi.
 //
-//	isHost=true  → host: publish (barcha manbalar) + subscribe + roomAdmin (mute/remove) + roomRecord
+//	isHost=true  → host: publish (barcha manbalar) + subscribe + roomAdmin (mute/remove)
 //	isHost=false → participant: publish (FAQAT kamera+mikrofon, ekran ulashish yo'q) + subscribe
 //
 // Token muddati rolga qarab: host uchun uzun (dars davomiyligi), ishtirokchi
@@ -49,7 +49,9 @@ func (c *Client) AccessToken(roomName, identity, displayName string, isHost bool
 	if isHost {
 		grant.CanPublish = boolPtr(true) // barcha manbalar (kamera+mikrofon+ekran ulashish)
 		grant.RoomAdmin = true           // boshqalarni mute qilish / chiqarib yuborish
-		grant.RoomRecord = true          // yozib olishni boshqarish (Egress)
+		// RoomRecord ATAYLAB yo'q: egressni backend API key bilan boshlaydi,
+		// klientga (host brauzeriga) bu grant kerak emas — token sizib ketsa ham
+		// begona egress boshlab bo'lmaydi.
 		role = RoleHost
 		ttl = c.tokenTTL
 	} else {

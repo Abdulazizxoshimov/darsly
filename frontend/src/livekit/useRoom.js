@@ -3,6 +3,7 @@ import { ConnectionState, Room, RoomEvent, Track } from 'livekit-client'
 import { CAMERA_PUBLISH, PUBLISH_DEFAULTS } from './mediaTuning'
 import {
   canPublishCameraOf,
+  connectFailure,
   endedReason,
   localSignature,
   mediaErrorClass,
@@ -71,10 +72,23 @@ function localState(room) {
   }
 }
 
-export function useRoom({ wsUrl, token, publish, retryKey = 0 }) {
+// `getToken` — JORIY tokenni qaytaradigan BARQAROR funksiya (`lib/roomToken`
+// manbasi). Token o'zi emas: token muddatidan oldin yangilanadi va uning har
+// o'zgarishi qayta ulanishga sabab bo'lmasligi kerak (ustoz identity'si
+// o'zgarmaydi — uzilish bekorga bo'lardi). Qayta ulanish (`retryKey`) esa har
+// doim eng yangi tokenni oladi.
+//
+// `identity` — token kimga berilgani. U o'zgarsa (mehmon qayta `join` bilan
+// YANGI identity oladi) xona shu identity bilan qayta ulanadi — aks holda
+// server so'rovlari bir odam, LiveKit ishtirokchisi boshqa odam bo'lib qolardi.
+export function useRoom({ wsUrl, getToken, identity, publish, retryKey = 0 }) {
   const [room, setRoom] = useState(null)
   const [connState, setConnState] = useState('connecting') // connecting|connected|reconnecting|disconnected
   const [ended, setEnded] = useState(null) // null | 'room_deleted' | 'removed' | 'duplicate'
+  // `connect()` yiqilganda SABABI (`roomLogic.connectFailure`): 'auth' — token
+  // rad etildi (yangilash kerak), 'network' — vaqtinchalik. Avval xato
+  // yutilardi va UI ikkalasini bir xil, abadiy qayta urinish bilan kutib olardi.
+  const [connectError, setConnectError] = useState(null) // null | 'auth' | 'network'
   const [quality, setQuality] = useState('unknown') // good|poor|lost|unknown
   const [participants, setParticipants] = useState([])
   const [local, setLocal] = useState(null)
@@ -137,6 +151,7 @@ export function useRoom({ wsUrl, token, publish, retryKey = 0 }) {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- LiveKit ulanish holati sinxroni
     setConnState('connecting')
     setEnded(null)
+    setConnectError(null)
 
     const r = new Room({
       adaptiveStream: true,
@@ -222,7 +237,7 @@ export function useRoom({ wsUrl, token, publish, retryKey = 0 }) {
     let cancelled = false
     ;(async () => {
       try {
-        await r.connect(wsUrl, token)
+        await r.connect(wsUrl, getToken())
         if (cancelled) return
         setRoom(r)
         setConnState('connected')
@@ -257,8 +272,12 @@ export function useRoom({ wsUrl, token, publish, retryKey = 0 }) {
           if (!cancelled) setAudioBlocked(true)
         }
         sync()
-      } catch {
-        if (!cancelled) setConnState('disconnected')
+      } catch (e) {
+        if (cancelled) return
+        const kind = connectFailure(e)
+        if (!kind) return
+        setConnectError(kind)
+        setConnState('disconnected')
       }
     })()
 
@@ -270,7 +289,7 @@ export function useRoom({ wsUrl, token, publish, retryKey = 0 }) {
       roomRef.current = null
     }
     // retryKey — "Qayta ulanish" bosilganda bu effekt qaytadan ishga tushadi.
-  }, [wsUrl, token, publish, sync, retryKey])
+  }, [wsUrl, getToken, identity, publish, sync, retryKey])
 
   // Tejamkor rejim o'zgarganda mavjud obunalarga qo'llaymiz.
   useEffect(() => {
@@ -298,6 +317,7 @@ export function useRoom({ wsUrl, token, publish, retryKey = 0 }) {
   return {
     room,
     connState,
+    connectError,
     ended,
     quality,
     participants,

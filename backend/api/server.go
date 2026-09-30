@@ -13,11 +13,14 @@ type Server struct {
 func NewServer(addr string, handler http.Handler) *Server {
 	return &Server{
 		httpServer: &http.Server{
-			Addr:         addr,
-			Handler:      handler,
-			ReadTimeout:  15 * time.Second,
-			WriteTimeout: 30 * time.Second,
-			IdleTimeout:  60 * time.Second,
+			Addr:    addr,
+			Handler: handler,
+			// ReadTimeout ATAYLAB yo'q: u BUTUN tanani o'qishga qo'llanadi va sekin
+			// internetdagi 21 MB chat upload'ini 15s da o'ldirardi. Slowloris'dan
+			// himoyani ReadHeaderTimeout beradi; tana hajmi MaxBytesReader bilan cheklangan.
+			ReadHeaderTimeout: 10 * time.Second,
+			WriteTimeout:      30 * time.Second,
+			IdleTimeout:       60 * time.Second,
 		},
 	}
 }

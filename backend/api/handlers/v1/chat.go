@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 
@@ -165,6 +166,12 @@ func DeleteChatMessage(h *handlers.Handler) gin.HandlerFunc {
 	}
 }
 
+// Yuklash hamroh maydonlarining chegaralari (entity.SendChatReq bilan mos).
+const (
+	maxChatBodyRunes = 2000
+	maxChatToLen     = 128
+)
+
 // chatUpload — multipart so'rovdan faylni va hamroh maydonlarni oladi.
 //
 // Bitta joyda: host va xona yo'llari AYNAN bir xil shaklni kutadi, ikki nusxa
@@ -187,10 +194,21 @@ func chatUpload(c *gin.Context) (chat.FileUpload, string, string, bool) {
 		hs.BadRequest(c, "could not read uploaded file")
 		return chat.FileUpload{}, "", "", false
 	}
+	// Hamroh maydonlar validatsiyasi (JSON yo'lidagi `validate` teglari bilan bir xil chegara):
+	// multipart'da ular teg orqali tekshirilmaydi, 20 MB'lik caption bo'lishi mumkin edi.
+	body, to := c.PostForm("body"), c.PostForm("to")
+	if utf8.RuneCountInString(body) > maxChatBodyRunes {
+		hs.BadRequest(c, "body is too long (max 2000 characters)")
+		return chat.FileUpload{}, "", "", false
+	}
+	if len(to) > maxChatToLen {
+		hs.BadRequest(c, "to is too long (max 128)")
+		return chat.FileUpload{}, "", "", false
+	}
 	// Handler `Close` ni o'z zimmasiga oladi: usecase oqimni faqat O'QIYDI va
 	// uning hayot davri HTTP so'rovga tegishli (qatlam chegarasi toza qoladi).
 	c.Set(ctxUploadCloser, f)
-	return chat.FileUpload{Name: fh.Filename, Size: fh.Size, Reader: f}, c.PostForm("body"), c.PostForm("to"), true
+	return chat.FileUpload{Name: fh.Filename, Size: fh.Size, Reader: f}, body, to, true
 }
 
 // ctxUploadCloser — ochilgan multipart faylni so'rov oxirida yopish uchun kalit.

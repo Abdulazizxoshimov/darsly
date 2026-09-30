@@ -3,7 +3,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
-import { Recordings } from './Recordings'
+import { fetchRecordingsByLesson, Recordings, RECORDINGS_CONCURRENCY } from './Recordings'
 
 // MAHSULOT QOIDASI №5 — yozuv 30 kun saqlanadi, so'ng MinIO'dan o'chadi.
 // UI shundan kelib chiqadi:
@@ -137,5 +137,74 @@ describe('Recordings — saqlanish muddati', () => {
     expect(downloadRecording).toHaveBeenCalledWith('r1')
     expect(open).toHaveBeenCalledWith('', '_blank')
     await vi.waitFor(() => expect(win.location.href).toBe('https://minio/x.mp4'))
+    // Yangi oyna bizning sahifamizga qaytib ta'sir qila olmasin.
+    expect(win.opener).toBeNull()
+  })
+
+  // Bug: serverdan kelgan havola tekshiruvsiz `location.href` ga tushardi.
+  it('xavfsiz bo‘lmagan sxemali havola OCHILMAYDI (oyna yopiladi, xato)', async () => {
+    const user = userEvent.setup()
+    const { downloadRecording } = await import('../api/recordings')
+    downloadRecording.mockResolvedValue({ url: 'javascript:alert(1)' })
+    const win = { location: { href: '' }, close: vi.fn() }
+    vi.spyOn(window, 'open').mockImplementation(() => win)
+    listRecordings.mockResolvedValue([REC({ expires_at: new Date(Date.now() + 12 * DAY).toISOString() })])
+    setup()
+
+    await user.click(await screen.findByRole('button', { name: /Yuklab olish/ }))
+    await vi.waitFor(() => expect(win.close).toHaveBeenCalled())
+    expect(win.location.href).toBe('')
+  })
+})
+
+// ── N+1 → 429 ────────────────────────────────────────────────────────────────
+// Backend'da «hamma yozuvlar» endpoint'i yo'q: har dars alohida so'raladi.
+// Avval 100 dars = 100 parallel so'rov edi, mentor limiti esa 30 so'rov/s
+// (burst 60) — sahifa o'zini o'zi 429 ga urardi.
+describe('Recordings — so‘rovlar cheklangan parallellik bilan', () => {
+  const lessonsN = (n, status = 'ended') =>
+    Array.from({ length: n }, (_, i) => ({ id: `l${i}`, title: `Dars ${i}`, is_recording_enabled: true, status }))
+
+  it('bir vaqtda RECORDINGS_CONCURRENCY dan ko‘p so‘rov ketmaydi', async () => {
+    let inflight = 0
+    let peak = 0
+    const fetchOne = vi.fn(async () => {
+      inflight += 1
+      peak = Math.max(peak, inflight)
+      await new Promise((r) => setTimeout(r, 5))
+      inflight -= 1
+      return []
+    })
+    const out = await fetchRecordingsByLesson(lessonsN(12), fetchOne)
+    expect(fetchOne).toHaveBeenCalledTimes(12)
+    expect(peak).toBeLessThanOrEqual(RECORDINGS_CONCURRENCY)
+    expect(Object.keys(out)).toHaveLength(12)
+  })
+
+  // Boshlanmagan darsning yozuvi bo'lishi mumkin emas — so'rov UMUMAN ketmaydi
+  // (100 dars ro'yxatida ko'pincha yarmi rejalashtirilgan).
+  it('scheduled darslar so‘ralmaydi, lekin jadvalda qoladi', async () => {
+    const fetchOne = vi.fn(async () => [])
+    const out = await fetchRecordingsByLesson([...lessonsN(2, 'scheduled'), ...lessonsN(1, 'live')], fetchOne)
+    expect(fetchOne).toHaveBeenCalledTimes(1)
+    expect(out.l0).toEqual({ recs: [] })
+  })
+
+  it('bitta dars xatosi boshqalariga ta’sir qilmaydi', async () => {
+    const fetchOne = vi.fn(async (id) => {
+      if (id === 'l1') throw new Error('429')
+      return [REC({ id: `r-${id}`, lesson_id: id })]
+    })
+    const out = await fetchRecordingsByLesson(lessonsN(3), fetchOne)
+    expect(out.l0.recs).toHaveLength(1)
+    expect(out.l1.error).toBeInstanceOf(Error)
+    expect(out.l2.recs).toHaveLength(1)
+  })
+
+  // Bug: backend bo'sh ro'yxatni `null` qaytaradi — `recs.length` yiqilardi.
+  it('null javob (bo‘sh ro‘yxat) sahifani yiqitmaydi', async () => {
+    listRecordings.mockResolvedValue(null)
+    setup()
+    expect(await screen.findByText('Bu darsda yozuv saqlanmagan.')).toBeInTheDocument()
   })
 })

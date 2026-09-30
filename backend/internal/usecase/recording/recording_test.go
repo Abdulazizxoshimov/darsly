@@ -51,7 +51,7 @@ func setupFull(t *testing.T) (
 	tgFake := testutil.NewFakeTelegram()
 	mc := testutil.NewFakeMinio()
 	uc := recording.New(rrepo, lrepo, lk, mc, livekit.S3Config{}, testutil.NewFakeCache(),
-		testRetention, tgFake, testCacheTTL, false, testutil.NewLogger())
+		testRetention, tgFake, testCacheTTL, false, 0, testutil.NewLogger())
 	return uc, rrepo, lrepo, lk, tgFake, mc
 }
 
@@ -431,4 +431,93 @@ func TestLocalComplete_NoFile_Rejected(t *testing.T) {
 	// Fayl MinIO'ga yuklanmagan → "tayyor" deb belgilamaydi (BadRequest).
 	err = uc.LocalComplete(ctx, "mentor1", rec.ID, 10, time.Now().UTC())
 	require.True(t, apperr.IsBadRequest(err))
+}
+
+// ─── Lokal yozuv (client-side) ──────────────────────────────────────────────
+
+func seedLocal(t *testing.T, rrepo *testutil.FakeRecordingRepo, mc *testutil.FakeMinio, status string) *entity.Recording {
+	t.Helper()
+	rec := &entity.Recording{ID: testRecordingID, LessonID: testLessonID, EgressID: "local:" + testRecordingID,
+		ObjectKey: "recordings/" + testLessonID + "/" + testRecordingID + ".mp4", Status: status, StartedAt: time.Now().Add(-time.Hour)}
+	require.NoError(t, rrepo.Create(context.Background(), rec))
+	mc.Objects[rec.ObjectKey] = true
+	return rec
+}
+
+func TestLocalStart_ReusesLocalButNotRealEgress(t *testing.T) {
+	uc, rrepo, _, _ := setup(t)
+	first, err := uc.LocalStart(context.Background(), "mentor1", testLessonID)
+	require.NoError(t, err)
+	again, err := uc.LocalStart(context.Background(), "mentor1", testLessonID)
+	require.NoError(t, err)
+	require.Equal(t, first.ID, again.ID)
+
+	uc2, rrepo2, _, _ := setup(t)
+	_ = rrepo
+	seedRecording(t, rrepo2, entity.RecordingStatusRecording) // haqiqiy egress faol
+	_, err = uc2.LocalStart(context.Background(), "mentor1", testLessonID)
+	require.True(t, apperr.IsConflict(err), "server egress ustiga lokal yozuv ochilmaydi")
+}
+
+func TestLocalUploadURL_StatusPrecondition(t *testing.T) {
+	uc, rrepo, _, _, _, mc := setupFull(t)
+	seedLocal(t, rrepo, mc, entity.RecordingStatusReady)
+	_, err := uc.LocalUploadURL(context.Background(), "mentor1", testRecordingID)
+	require.True(t, apperr.IsBadRequest(err), "tayyor yozuvga yuklash URL'i berilmaydi")
+}
+
+func TestLocalUploadURL_RejectsRealEgress(t *testing.T) {
+	uc, rrepo, _ := func() (recording.UseCase, *testutil.FakeRecordingRepo, int) {
+		u, r, _, _ := setup(t)
+		return u, r, 0
+	}()
+	seedRecording(t, rrepo, entity.RecordingStatusRecording)
+	_, err := uc.LocalUploadURL(context.Background(), "mentor1", testRecordingID)
+	require.True(t, apperr.IsBadRequest(err))
+}
+
+func TestLocalComplete_ClampsValues(t *testing.T) {
+	uc, rrepo, _, _, _, mc := setupFull(t)
+	seedLocal(t, rrepo, mc, entity.RecordingStatusRecording)
+	far := time.Now().Add(24 * time.Hour)
+	require.NoError(t, uc.LocalComplete(context.Background(), "mentor1", testRecordingID, -5, far))
+	got, _ := rrepo.GetByID(context.Background(), testRecordingID)
+	require.Equal(t, entity.RecordingStatusReady, got.Status)
+	require.GreaterOrEqual(t, got.DurationSec, 0)
+	require.NotNil(t, got.EndedAt)
+	require.False(t, got.EndedAt.After(time.Now().Add(6*time.Minute)), "ended_at kelajakka surilmaydi")
+}
+
+func TestStopRecording_LocalRejected(t *testing.T) {
+	uc, rrepo, _, lk, _, mc := setupFull(t)
+	seedLocal(t, rrepo, mc, entity.RecordingStatusRecording)
+	err := uc.StopRecording(context.Background(), "mentor1", testRecordingID)
+	require.True(t, apperr.IsBadRequest(err))
+	require.Equal(t, 0, lk.Calls["StopRecording"])
+}
+
+func TestStopActiveForLesson_SkipsLocal(t *testing.T) {
+	uc, rrepo, _, lk, _, mc := setupFull(t)
+	seedLocal(t, rrepo, mc, entity.RecordingStatusRecording)
+	require.NoError(t, uc.StopActiveForLesson(context.Background(), testLessonID))
+	require.Equal(t, 0, lk.Calls["StopRecording"], "lokal yozuvga egress stop chaqirilmaydi")
+	got, _ := rrepo.GetByID(context.Background(), testRecordingID)
+	require.Equal(t, entity.RecordingStatusRecording, got.Status)
+}
+
+func TestReapStaleRecordings(t *testing.T) {
+	uc, rrepo, _, _, _, mc := setupFull(t)
+	seedLocal(t, rrepo, mc, entity.RecordingStatusRecording) // started 1h ago
+	require.Equal(t, 0, uc.ReapStaleRecordings(context.Background(), time.Now().Add(-2*time.Hour)))
+	require.Equal(t, 1, uc.ReapStaleRecordings(context.Background(), time.Now()))
+	got, _ := rrepo.GetByID(context.Background(), testRecordingID)
+	require.Equal(t, entity.RecordingStatusFailed, got.Status)
+}
+
+func TestHandleEgress_FailedDeletesPartialObject(t *testing.T) {
+	uc, rrepo, _, _, _, mc := setupFull(t)
+	rec := seedRecording(t, rrepo, entity.RecordingStatusProcessing)
+	mc.Objects[rec.ObjectKey] = true
+	require.NoError(t, uc.HandleEgress(context.Background(), "EG1", false, "", 0, 0))
+	require.False(t, mc.Objects[rec.ObjectKey], "qisman obyekt o'chirilishi kerak")
 }

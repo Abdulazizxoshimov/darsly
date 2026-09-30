@@ -51,6 +51,9 @@ func (r *recordingRepo) Create(ctx context.Context, rec *entity.Recording) error
 		return fmt.Errorf("recordingRepo.Create: %w", err)
 	}
 	if _, err = r.db.Exec(ctx, sql, args...); err != nil {
+		if isUniqueViolation(err) {
+			return apperr.Conflict("recording already exists for this egress")
+		}
 		return fmt.Errorf("recordingRepo.Create: %w", err)
 	}
 	return nil
@@ -245,16 +248,36 @@ func (r *recordingRepo) UpdateStatus(ctx context.Context, id, status string) err
 	return err
 }
 
-func (r *recordingRepo) MarkReady(ctx context.Context, egressID, objectKey string, durationSec int, sizeBytes int64, endedAt time.Time) error {
+// CountActive — hozir `recording` holatidagi yozuvlar soni (global egress cap).
+func (r *recordingRepo) CountActive(ctx context.Context) (int, error) {
+	sql, args, _ := r.builder.Select("COUNT(*)").From("recordings").
+		Where(sq.Eq{"status": entity.RecordingStatusRecording}).ToSql()
+	var n int
+	if err := r.db.QueryRow(ctx, sql, args...).Scan(&n); err != nil {
+		return 0, fmt.Errorf("recordingRepo.CountActive: %w", err)
+	}
+	return n, nil
+}
+
+// markReadyStates — MarkReady qaysi holatlardan o'tishga ruxsat beradi.
+// Faqat `recording` (egress ketmoqda) va `processing` (Stop bosilgan, webhook
+// kutilyapti). Boshqa har holatdan o'tish TAKROR/KECH hodisa demak.
+var markReadyStates = []string{entity.RecordingStatusRecording, entity.RecordingStatusProcessing}
+
+func (r *recordingRepo) MarkReady(ctx context.Context, egressID, objectKey string, durationSec int, sizeBytes int64, endedAt time.Time) (bool, error) {
 	sql, args, _ := r.builder.Update("recordings").
 		Set("status", entity.RecordingStatusReady).
 		Set("object_key", objectKey).
 		Set("duration_sec", durationSec).
 		Set("size_bytes", sizeBytes).
 		Set("ended_at", endedAt).
-		Where(sq.Eq{"egress_id": egressID}).ToSql()
-	_, err := r.db.Exec(ctx, sql, args...)
-	return err
+		Where(sq.Eq{"egress_id": egressID}).
+		Where(sq.Eq{"status": markReadyStates}).ToSql()
+	tag, err := r.db.Exec(ctx, sql, args...)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
 }
 
 // ─── Telegram arxivi ─────────────────────────────────────────────────────────
@@ -537,11 +560,29 @@ func (r *recordingRepo) RequeueStaleTranscodes(ctx context.Context, olderThan ti
 	return tag.RowsAffected(), nil
 }
 
-func (r *recordingRepo) MarkFailed(ctx context.Context, egressID string, endedAt time.Time) error {
+func (r *recordingRepo) MarkFailed(ctx context.Context, egressID string, endedAt time.Time) (bool, error) {
 	sql, args, _ := r.builder.Update("recordings").
 		Set("status", entity.RecordingStatusFailed).
 		Set("ended_at", endedAt).
-		Where(sq.Eq{"egress_id": egressID}).ToSql()
-	_, err := r.db.Exec(ctx, sql, args...)
-	return err
+		Where(sq.Eq{"egress_id": egressID}).
+		Where(sq.Eq{"status": markReadyStates}).ToSql()
+	tag, err := r.db.Exec(ctx, sql, args...)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// FailStale — eskirgan `recording` yozuvlarni `failed` qiladi.
+func (r *recordingRepo) FailStale(ctx context.Context, olderThan, endedAt time.Time) (int64, error) {
+	sql, args, _ := r.builder.Update("recordings").
+		Set("status", entity.RecordingStatusFailed).
+		Set("ended_at", endedAt).
+		Where(sq.Eq{"status": entity.RecordingStatusRecording}).
+		Where(sq.Lt{"started_at": olderThan}).ToSql()
+	tag, err := r.db.Exec(ctx, sql, args...)
+	if err != nil {
+		return 0, fmt.Errorf("recordingRepo.FailStale: %w", err)
+	}
+	return tag.RowsAffected(), nil
 }

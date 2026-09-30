@@ -77,6 +77,10 @@ type UseCase interface {
 	// ustoz yozuvlar ro'yxatida "nima bo'lyapti" degan savolsiz qoladi.
 	StopActiveForLesson(ctx context.Context, lessonID string) error
 
+	// ReapStaleRecordings — `olderThan` dan eski `recording` yozuvlarni `failed` qiladi
+	// (mobil hech qachon complete qilmagan lokal yozuv / yo'qolgan egress webhook).
+	ReapStaleRecordings(ctx context.Context, olderThan time.Time) int
+
 	// IsRecording — shu dars hozir yozib olinyaptimi.
 	//
 	// Ishtirokchiga (o'quvchiga) ko'rsatish uchun: yozuv holati mentor huquqli

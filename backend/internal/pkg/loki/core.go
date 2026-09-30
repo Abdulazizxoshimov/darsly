@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap/zapcore"
@@ -38,6 +39,11 @@ type entry struct {
 
 // ── transport: batching + HTTP delivery ──────────────────────────────────────
 
+// queueSize — log yozuvlari navbati sig'imi. To'lsa yangi yozuvlar TASHLANADI
+// (Loki sekin/o'chiq bo'lganda handlerlar bloklanmasin — log yo'qolishi request
+// stall'idan yaxshiroq).
+const queueSize = 2048
+
 type transport struct {
 	url      string
 	labels   map[string]string
@@ -45,11 +51,14 @@ type transport struct {
 	password string
 	client   *http.Client
 
-	mu    sync.Mutex
-	batch []entry
-
-	ticker *time.Ticker
-	done   chan struct{}
+	// in — yozuvlar kanali: add() bloklanmaydi, yagona sender goroutine o'qiydi va
+	// HTTP yuboradi. Batch faqat shu goroutine'ga tegishli (qulf kerak emas).
+	in      chan entry
+	dropped atomic.Int64
+	ticker  *time.Ticker
+	done    chan struct{}
+	stopped chan struct{}
+	once    sync.Once
 }
 
 func newTransport(lokiURL, user, password string, labels map[string]string) *transport {
@@ -59,45 +68,68 @@ func newTransport(lokiURL, user, password string, labels map[string]string) *tra
 		user:     user,
 		password: password,
 		client:   &http.Client{Timeout: 5 * time.Second},
+		in:       make(chan entry, queueSize),
 		ticker:   time.NewTicker(flushPeriod),
 		done:     make(chan struct{}),
+		stopped:  make(chan struct{}),
 	}
 	go t.loop()
 	return t
 }
 
+// add — yozuvni navbatga QO'YADI va darhol qaytadi. Navbat to'la bo'lsa yozuv
+// tashlanadi va hisoblagich oshadi (Dropped()).
 func (t *transport) add(ts int64, line string) {
-	t.mu.Lock()
-	t.batch = append(t.batch, entry{ts: ts, line: line})
-	full := len(t.batch) >= maxBatchSize
-	t.mu.Unlock()
-	if full {
-		t.flush()
+	select {
+	case t.in <- entry{ts: ts, line: line}:
+	default:
+		t.dropped.Add(1)
 	}
 }
 
+// Dropped — navbat to'lganligi sababli tashlangan yozuvlar soni.
+func (t *transport) Dropped() int64 { return t.dropped.Load() }
+
 func (t *transport) loop() {
+	defer close(t.stopped)
+	var batch []entry
+	flush := func() {
+		if len(batch) > 0 {
+			t.send(batch)
+			batch = nil
+		}
+	}
 	for {
 		select {
+		case e := <-t.in:
+			batch = append(batch, e)
+			if len(batch) >= maxBatchSize {
+				flush()
+			}
 		case <-t.ticker.C:
-			t.flush()
+			flush()
+			if n := t.dropped.Swap(0); n > 0 {
+				fmt.Fprintf(os.Stderr, "[loki] queue full: %d log entries dropped\n", n)
+			}
 		case <-t.done:
-			t.flush()
-			return
+			// Shutdown: navbatda qolganlarni yig'ib, oxirgi marta yuboramiz.
+			for {
+				select {
+				case e := <-t.in:
+					batch = append(batch, e)
+					if len(batch) >= maxBatchSize {
+						flush()
+					}
+				default:
+					flush()
+					return
+				}
+			}
 		}
 	}
 }
 
-func (t *transport) flush() {
-	t.mu.Lock()
-	if len(t.batch) == 0 {
-		t.mu.Unlock()
-		return
-	}
-	batch := t.batch
-	t.batch = nil
-	t.mu.Unlock()
-
+func (t *transport) send(batch []entry) {
 	values := make([][2]string, len(batch))
 	for i, e := range batch {
 		values[i] = [2]string{strconv.FormatInt(e.ts, 10), e.line}
@@ -132,9 +164,13 @@ func (t *transport) flush() {
 	}
 }
 
+// stop navbatni tugatib, oxirgi flush tugaguncha kutadi (idempotent).
 func (t *transport) stop() {
-	t.ticker.Stop()
-	close(t.done)
+	t.once.Do(func() {
+		t.ticker.Stop()
+		close(t.done)
+	})
+	<-t.stopped
 }
 
 // ── Core: zapcore.Core implementation ────────────────────────────────────────
@@ -197,10 +233,12 @@ func (c *Core) Write(ent zapcore.Entry, fields []zapcore.Field) error {
 	return nil
 }
 
-func (c *Core) Sync() error {
-	c.tr.flush()
-	return nil
-}
+// Sync — no-op: yuborish fon goroutine'ida; oxirgi flush Stop() da bajariladi.
+// (Sync'da sinxron HTTP qilish chaqiruvchini Loki timeout'iga bog'lab qo'yardi.)
+func (c *Core) Sync() error { return nil }
+
+// Dropped — navbat to'lib tashlangan yozuvlar soni (diagnostika).
+func (c *Core) Dropped() int64 { return c.tr.Dropped() }
 
 // Stop flushes remaining entries and stops the background goroutine.
 func (c *Core) Stop() {

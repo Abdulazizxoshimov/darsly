@@ -16,6 +16,10 @@ func CORS(allowOrigins ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		origin := c.GetHeader("Origin")
 
+		// Javob Origin'ga qarab o'zgaradi — oraliq kesh (CDN/proksi) boshqa origin'ga
+		// noto'g'ri CORS javobini bermasligi uchun Vary SHART.
+		c.Writer.Header().Add("Vary", "Origin")
+
 		// Faqat allowlist'da aniq ko'rsatilgan Origin aks ettiriladi. Allowlist bo'sh
 		// bo'lsa hech qanday Origin credentials bilan aks ettirilmaydi (bo'sh-allowlist
 		// = har kimga ochiq degani EMAS — bu credential leak xavfini oldini oladi).

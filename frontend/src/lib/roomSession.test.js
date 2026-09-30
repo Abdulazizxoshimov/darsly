@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { roomSession } from './roomSession'
+import { readGuestRoom, roomSession } from './roomSession'
 
 // F-5 — guest sessiya ko'prigi (Join → WaitingRoom → LiveRoom).
 //
@@ -43,8 +43,52 @@ describe('roomSession — o‘qish/yozish', () => {
 
   // Bug: buzuq JSON (masalan qisman yozilgan) parse'da throw qilsa oq ekran.
   it('buzuq JSON — bo‘sh holatga qaytadi (yiqilmaydi)', () => {
-    sessionStorage.setItem('darsly.roomSession', '{buzuq')
+    sessionStorage.setItem('jonly.roomSession', '{buzuq')
     expect(roomSession.get()).toEqual({ pending: null, room: null })
+  })
+
+  // Token yangilanganda dars/ism/kirish ma'lumotlari YO'QOLMASLIGI kerak —
+  // aks holda keyingi yangilash uchun parol qolmasdi.
+  it('setRoomToken faqat tokenni almashtiradi', () => {
+    roomSession.setRoom({ token: { token: 't1', ws_url: 'ws://x' }, lesson: { title: 'A' }, join: { slug: 's' } })
+    roomSession.setRoomToken({ token: 't2', ws_url: 'ws://x' })
+    expect(roomSession.get().room).toEqual({
+      token: { token: 't2', ws_url: 'ws://x' },
+      lesson: { title: 'A' },
+      join: { slug: 's' },
+    })
+  })
+
+  it('setRoomToken xona yo‘q bo‘lsa hech nima yozmaydi', () => {
+    roomSession.setRoomToken({ token: 't2', ws_url: 'ws://x' })
+    expect(roomSession.get().room).toBeNull()
+  })
+})
+
+// Eskirgan yoki buzilgan sessionStorage `room.lesson.title` o'qishda throw
+// qilib xona sahifasini oq qilardi (shakl tekshiruvi yo'q edi).
+describe('readGuestRoom — shakl tekshiruvi', () => {
+  const GOOD = { token: { token: 't', ws_url: 'ws://x', identity: 'g1' }, lesson: { title: 'Algebra' } }
+
+  it('to‘g‘ri shakl qaytadi', () => {
+    roomSession.setRoom(GOOD)
+    expect(readGuestRoom()).toEqual(GOOD)
+  })
+
+  it('bo‘sh sessiya → null', () => {
+    expect(readGuestRoom()).toBeNull()
+  })
+
+  it('token satr bo‘lgan eski shakl → null (throw yo‘q)', () => {
+    roomSession.setRoom({ token: 'ROOM-TOKEN', lesson: { title: 'A' } })
+    expect(readGuestRoom()).toBeNull()
+  })
+
+  it('dars yo‘q / sarlavhasiz → null', () => {
+    roomSession.setRoom({ token: GOOD.token })
+    expect(readGuestRoom()).toBeNull()
+    roomSession.setRoom({ token: GOOD.token, lesson: 'Algebra' })
+    expect(readGuestRoom()).toBeNull()
   })
 })
 

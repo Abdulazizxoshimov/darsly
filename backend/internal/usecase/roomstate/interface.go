@@ -35,7 +35,7 @@ type UseCase interface {
 	// LowerAll — HOST barcha qo'llarni tushiradi.
 	LowerAll(ctx context.Context, mentorID, lessonID string) error
 	// State — joriy holat (kech kirgan klient shu bilan tiklanadi).
-	State(ctx context.Context, lessonID string) (*entity.RoomState, error)
+	State(ctx context.Context, lessonID, identity string) (*entity.RoomState, error)
 	// Reaction — emoji tarqatadi (saqlanmaydi). Server tomonda tezlik cheklovi bor.
 	Reaction(ctx context.Context, lessonID, identity, name, emoji string) error
 	// Clear — dars yakunlanganda holatni tozalaydi.

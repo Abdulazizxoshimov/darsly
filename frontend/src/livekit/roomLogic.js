@@ -6,7 +6,7 @@
 // amalda umuman tekshirilmaydi. Bu yerda esa ular oddiy testga tushadi.
 // (Mobil ilovadagi `ScreenAudioPolicy`/`MediaTuning` bilan bir xil yondashuv.)
 
-import { ConnectionQuality, DisconnectReason } from 'livekit-client'
+import { ConnectionError, ConnectionErrorReason, ConnectionQuality, DisconnectReason } from 'livekit-client'
 
 // ─── useRoom klassifikatorlari (sof — React'siz, shuning uchun shu yerda) ─────
 // Bu uch qaror `useRoom` ichida yashiringan edi va faqat brauzerda, real
@@ -57,6 +57,62 @@ export function endedReason(reason) {
   if (reason === DisconnectReason.PARTICIPANT_REMOVED) return 'removed'
   if (reason === DisconnectReason.DUPLICATE_IDENTITY) return 'duplicate'
   return 'room_deleted'
+}
+
+/**
+ * `room.connect()` xatosi → nima qilish kerak.
+ *   'auth'    — server tokenni rad etdi (muddati o'tgan/yaroqsiz): qayta urinish
+ *               BEFOYDA, avval token yangilanadi (`lib/roomToken`).
+ *   'network' — server yetib bo'lmadi / timeout / WS uzildi: chegaralangan
+ *               backoff bilan qayta urinish mumkin.
+ *   null      — biz o'zimiz bekor qildik (effekt tozalandi): hech narsa qilinmaydi.
+ *
+ * Avval xato butunlay yutilardi va ekran har 5 soniyada AYNI eskirgan token
+ * bilan «Dars davom etmoqda» deb abadiy urinardi.
+ */
+export function connectFailure(err) {
+  if (err instanceof ConnectionError) {
+    if (err.reason === ConnectionErrorReason.NotAllowed) return 'auth'
+    if (err.reason === ConnectionErrorReason.Cancelled || err.reason === ConnectionErrorReason.LeaveRequest) {
+      return null
+    }
+  }
+  return 'network'
+}
+
+/** Avtomatik qayta ulanishlar soni — shundan keyin faqat qo'lda. */
+export const MAX_AUTO_RECONNECT = 6
+const RECONNECT_BASE_MS = 5_000
+const RECONNECT_MAX_MS = 60_000
+
+/**
+ * Tarmoq uzilishida `attempt`-urinishgacha kutish (5s → 10s → 20s → 40s → 60s…).
+ * `MAX_AUTO_RECONNECT` dan keyin `null` — avtomatik urinish TO'XTAYDI:
+ * uzoq uzilishda serverga (va batareyaga) abadiy urib turmaymiz.
+ */
+export function reconnectDelay(attempt) {
+  if (attempt >= MAX_AUTO_RECONNECT) return null
+  return Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** attempt)
+}
+
+/**
+ * Kech kirgan ishtirokchiga FAOL so'rovnomani takrorlash xabari (host yuboradi).
+ * `open` xabari kirishdan oldin ketgan bo'lsa o'quvchi bo'sh panel ko'rardi
+ * va ovoz bera olmasdi. Faol so'rovnoma bo'lmasa `null`.
+ */
+export function pollReplayMessage(polls) {
+  const active = (polls || []).find((p) => p && p.is_active)
+  if (!active) return null
+  return {
+    kind: 'poll',
+    action: 'open',
+    poll: {
+      id: active.id,
+      question: active.question,
+      options: active.options,
+      results_visibility: active.results_visibility,
+    },
+  }
 }
 
 /**

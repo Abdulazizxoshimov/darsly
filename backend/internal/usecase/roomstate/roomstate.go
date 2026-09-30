@@ -175,9 +175,13 @@ func (uc *useCase) LowerAll(ctx context.Context, mentorID, lessonID string) erro
 	return nil
 }
 
-func (uc *useCase) State(ctx context.Context, lessonID string) (*entity.RoomState, error) {
+func (uc *useCase) State(ctx context.Context, lessonID, identity string) (*entity.RoomState, error) {
 	if err := shared.ValidateID(lessonID, "lesson"); err != nil {
 		return nil, err
+	}
+	// Chiqarilgan (kick) ishtirokchi eski tokeni bilan qo'llar/yozuv holatini o'qimasin.
+	if shared.IsBanned(ctx, uc.cache, lessonID, identity) {
+		return nil, shared.ErrBanned()
 	}
 	// Yozuv indikatori — ishtirokchi o'zi yozilayotganini KO'RISHI kerak.
 	rec := uc.recorder != nil && uc.recorder.IsRecording(ctx, lessonID)

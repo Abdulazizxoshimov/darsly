@@ -23,16 +23,22 @@ import (
 // 15 daqiqa — past internetда uzoq reconnect oynasini qoplaydi (5 daq juda qisqa edi).
 const tokenTTL = 15 * time.Minute
 
+// Notifier — real-time WS push uchun minimal port (DIP; consumer-side, audit R7).
+// `*ws.Hub` uni strukturaviy qondiradi; testlar fake bera oladi.
+type Notifier interface {
+	Send(userID string, msg ws.Message)
+}
+
 type useCase struct {
 	repo       repository.WaitingRoomRepository
 	lessonRepo repository.LessonRepository
 	room       room.UseCase
-	hub        *ws.Hub
+	hub        Notifier
 	cache      redis.Cache
 	log        logger.Logger
 }
 
-func New(repo repository.WaitingRoomRepository, lessonRepo repository.LessonRepository, roomUC room.UseCase, hub *ws.Hub, cache redis.Cache, log logger.Logger) UseCase {
+func New(repo repository.WaitingRoomRepository, lessonRepo repository.LessonRepository, roomUC room.UseCase, hub Notifier, cache redis.Cache, log logger.Logger) UseCase {
 	return &useCase{repo: repo, lessonRepo: lessonRepo, room: roomUC, hub: hub, cache: cache, log: log}
 }
 
@@ -47,7 +53,17 @@ func validateRequestID(requestID string) error {
 	return shared.ValidateID(requestID, "waiting room request")
 }
 
+// maxPendingPerLesson — bir darsdagi kutayotgan so'rovlar cap'i. Kirish nuqtasi ochiq
+// (auth'siz), cap bo'lmasa bitta bot minglab so'rov yaratib jadvalni va mentor
+// snapshot'ini to'ldirardi.
+const maxPendingPerLesson = 200
+
 func (uc *useCase) CreateRequest(ctx context.Context, lesson *entity.Lesson, requesterName string) (*entity.WaitingRoomRequest, error) {
+	if n, err := uc.repo.CountPendingByLesson(ctx, lesson.ID); err != nil {
+		return nil, err
+	} else if n >= maxPendingPerLesson {
+		return nil, apperr.TooManyRequests("too many pending requests for this lesson")
+	}
 	if requesterName == "" {
 		requesterName = "Mehmon"
 	}
@@ -125,6 +141,9 @@ func (uc *useCase) AdmitAll(ctx context.Context, mentorID, lessonID string) (*en
 	if err != nil {
 		return nil, err
 	}
+	if lesson.Status != entity.LessonStatusLive {
+		return nil, apperr.BadRequest("lesson is not live")
+	}
 	reqs, err := uc.repo.ListPending(ctx, lessonID)
 	if err != nil {
 		uc.log.Error(ctx, "waitingroom.AdmitAll: list failed",
@@ -166,6 +185,20 @@ func (uc *useCase) AdmitAll(ctx context.Context, mentorID, lessonID string) (*en
 // EGALIK BU YERDA TEKSHIRILMAYDI — chaqiruvchi allaqachon tekshirgan
 // (`lesson` aynan shu tekshiruv natijasi).
 func (uc *useCase) admitOne(ctx context.Context, lesson *entity.Lesson, req *entity.WaitingRoomRequest) (*entity.RoomToken, error) {
+	// Dars jonli bo'lishi shart: scheduled/ended darsga admit xona yaratib yuborardi.
+	if lesson.Status != entity.LessonStatusLive {
+		return nil, apperr.BadRequest("lesson is not live")
+	}
+
+	// AVVAL token: xato bo'lsa so'rov `pending` qoladi (mentor qayta urinishi mumkin) —
+	// aks holda so'rov tokensiz `admitted` bo'lib abadiy qotib qolardi.
+	// (Tokenni TransitionFromPending'dan oldin yasash yon ta'sirsiz: faqat JWT imzolanadi.)
+	rt, err := uc.room.ParticipantToken(ctx, lesson, req.GuestIdentity, req.RequesterName)
+	if err != nil {
+		uc.log.Error(ctx, "waitingroom.admitOne: token failed", logger.String("request_id", req.ID), logger.SafeString("err", err.Error()))
+		return nil, err
+	}
+
 	// Atomik claim: faqat pending bo'lsa admitted'ga o'tkazadi (parallel admit race oldini oladi).
 	claimed, err := uc.repo.TransitionFromPending(ctx, req.ID, entity.WaitingStatusAdmitted, time.Now().UTC())
 	if err != nil {
@@ -174,11 +207,6 @@ func (uc *useCase) admitOne(ctx context.Context, lesson *entity.Lesson, req *ent
 	}
 	if !claimed {
 		return nil, apperr.Conflict("request already decided")
-	}
-
-	rt, err := uc.room.ParticipantToken(ctx, lesson, req.GuestIdentity, req.RequesterName)
-	if err != nil {
-		return nil, err
 	}
 
 	// Tokenni Redis'da saqlash (WS kechiksa ham guest oladi) + real-time yuborish.

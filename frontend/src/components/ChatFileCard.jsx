@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Download, FileSpreadsheet, FileText, FileType, ImageIcon } from 'lucide-react'
 import { formatBytes } from '../lib/format'
+import { safeUrl } from '../lib/url'
 
 // Chatga biriktirilgan fayl kartochkasi (jonli xonada ham, tarix modalida ham).
 //
@@ -25,12 +26,15 @@ export function ChatFileCard({ file }) {
   // ikonkaga tushamiz — kartochka nom va hajm bilan o'qilishicha qoladi.
   const [thumbBroken, setThumbBroken] = useState(false)
   if (!file) return null
-  const isImage = String(file.mime || '').startsWith('image/') && !thumbBroken
+  // Faqat http(s)/blob havola `href`/`src` ga tushadi (`lib/url`): boshqa
+  // sxema bo'lsa kartochka bosilmaydigan bo'lib qoladi, lekin nom/hajm ko'rinadi.
+  const url = safeUrl(file.url)
+  const isImage = !!url && String(file.mime || '').startsWith('image/') && !thumbBroken
 
   return (
     <a
       className="chat-file"
-      href={file.url}
+      href={url || undefined}
       target="_blank"
       rel="noopener noreferrer"
       title={`${file.name} — ochish`}
@@ -40,7 +44,7 @@ export function ChatFileCard({ file }) {
         // kartochka baribir nom + hajm bilan qoladi.
         <img
           className="chat-file__thumb"
-          src={file.url}
+          src={url}
           alt={file.name}
           loading="lazy"
           onError={() => setThumbBroken(true)}

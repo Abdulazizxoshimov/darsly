@@ -109,6 +109,9 @@ class DarslyApp : Application() {
                     uploadResumer.resume(appScope)
                 } else {
                     realtime.stop()
+                    // S4: chiqilgach o'quvchilar yozuvi telefonda qolmasin —
+                    // keyingi kirgan ustoz oldingisining darsini ko'rmaydi.
+                    uploadResumer.clearAll(appScope)
                 }
             }
         }

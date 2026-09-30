@@ -42,7 +42,7 @@ type ChatMessage struct {
 type SendChatReq struct {
 	Body string `json:"body" validate:"required,min=1,max=2000"`
 	// To — shaxsiy xabar qabul qiluvchisi (LiveKit identity). Bo'sh = hammaga.
-	To string `json:"to"`
+	To string `json:"to" validate:"omitempty,max=128"`
 }
 
 // SendRoomChatReq — ochiq yo'l (guest): room-token bilan.
@@ -50,7 +50,7 @@ type SendChatReq struct {
 type SendRoomChatReq struct {
 	Token string `json:"token"`
 	Body  string `json:"body" validate:"required,min=1,max=2000"`
-	To    string `json:"to"`
+	To    string `json:"to" validate:"omitempty,max=128"`
 }
 
 // ChatTranscript — yuklab olish uchun tayyorlangan chat transkripti (ish №21).

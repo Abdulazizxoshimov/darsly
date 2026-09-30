@@ -24,6 +24,7 @@ import {
 import { getChatTranscript } from '../api/archive'
 import { errorText } from '../api/api'
 import { saveBlob } from '../lib/download'
+import { safeUrl } from '../lib/url'
 import { Button } from '../components/Button'
 import { PageLoader, Spinner } from '../components/Spinner'
 import { ChatFileCard } from '../components/ChatFileCard'
@@ -33,7 +34,6 @@ import {
   formatDuration,
   formatExpiry,
   formatOffset,
-  formatSize,
   expiresInDays,
 } from '../lib/format'
 import { toast } from '../lib/toast'
@@ -267,7 +267,7 @@ function ArchiveView({ lessonId: id }) {
             {rec?.size_bytes > 0 && status !== 'expired' && status !== 'failed' && (
               <>
                 <span className="arch-head__dot" aria-hidden="true" />
-                <span>{formatSize(rec.size_bytes)}</span>
+                <span>{formatBytes(rec.size_bytes)}</span>
               </>
             )}
           </div>
@@ -360,7 +360,9 @@ function RecordingArea({
     )
   }
 
-  if (status === 'ready' && rec.url) {
+  // Havola faqat http(s) bo'lsa pleyerga tushadi (`lib/url`).
+  const videoUrl = safeUrl(rec?.url)
+  if (status === 'ready' && videoUrl) {
     // DIQQAT: `expiresInDays` yo'q sana uchun `null` qaytaradi, `null >= 0`
     // esa JS'da `true` — shuning uchun tekshiruv aniq yozilgan.
     const days = expiresInDays(rec.expires_at)
@@ -369,7 +371,7 @@ function RecordingArea({
         <video
           ref={videoRef}
           className="arch-video__player"
-          src={rec.url}
+          src={videoUrl}
           controls
           preload="metadata"
           playsInline
@@ -689,11 +691,11 @@ function MaterialsSection({ materials }) {
               {/* Havolani imzolash serverda yiqilsa `url` BO'SH keladi.
                   `<a href="">` bosilganda joriy sahifani qayta yuklaydi —
                   jim va chalkash. Bunda kartochka bosilmaydigan bo'ladi va
-                  sababi yozib qo'yiladi. */}
-              {f.url ? (
+                  sababi yozib qo'yiladi. Xavfsiz bo'lmagan sxema ham shu yo'l. */}
+              {safeUrl(f.url) ? (
                 <a
                   className="arch-material"
-                  href={f.url}
+                  href={safeUrl(f.url)}
                   target="_blank"
                   rel="noopener noreferrer"
                   title={`${f.name} — ochish`}

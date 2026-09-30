@@ -121,7 +121,9 @@ func TestRecordingRepo_Lifecycle(t *testing.T) {
 	rec := &entity.Recording{ID: uuid.NewString(), LessonID: l.ID, EgressID: "EG-int-1", ObjectKey: "k.mp4", Status: entity.RecordingStatusProcessing, StartedAt: time.Now().UTC(), CreatedAt: time.Now().UTC()}
 	require.NoError(t, recs.Create(ctx(), rec))
 
-	require.NoError(t, recs.MarkReady(ctx(), "EG-int-1", "final.mp4", 42, 1027, time.Now().UTC()))
+	changed, err := recs.MarkReady(ctx(), "EG-int-1", "final.mp4", 42, 1027, time.Now().UTC())
+	require.NoError(t, err)
+	require.True(t, changed)
 	got, err := recs.GetByEgressID(ctx(), "EG-int-1")
 	require.NoError(t, err)
 	require.Equal(t, entity.RecordingStatusReady, got.Status)

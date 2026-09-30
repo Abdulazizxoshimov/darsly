@@ -116,6 +116,9 @@ func (uc *useCase) Vote(ctx context.Context, pollID, voterIdentity, tokenRoom st
 		return apperr.BadRequest("invalid option index")
 	}
 	if err := uc.repo.Vote(ctx, pollID, voterIdentity, optionIndex); err != nil {
+		if apperr.IsBadRequest(err) { // repo shartli upsert: poll shu orada yopilgan
+			return err
+		}
 		uc.log.Error(ctx, "poll.Vote: db error", logger.String("poll_id", pollID), logger.SafeString("err", err.Error()))
 		return err
 	}
@@ -141,6 +144,10 @@ func (uc *useCase) Results(ctx context.Context, pollID, viewerIdentity, tokenRoo
 	}
 	if tokenRoom != "" && tokenRoom != shared.RoomName(p.LessonID) {
 		return nil, apperr.Forbidden("room token is not valid for this poll's lesson")
+	}
+	// Chiqarilgan (kick) ishtirokchi token'i hali yaroqli bo'lsa ham natijani o'qiy olmasin.
+	if viewerIdentity != "" && shared.IsBanned(ctx, uc.cache, p.LessonID, viewerIdentity) {
+		return nil, shared.ErrBanned()
 	}
 	if !p.ResultsVisibleTo(uc.isHost(ctx, p.LessonID, viewerIdentity)) {
 		// 403 (bo'sh natija emas): "0 ovoz" bilan "ko'rsatilmaydi" ni farqlab

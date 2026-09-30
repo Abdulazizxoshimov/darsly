@@ -124,7 +124,7 @@ func TestAccessToken_Grants(t *testing.T) {
 	hg := grants(t, host).Video
 	require.True(t, *hg.CanPublish)
 	require.True(t, hg.RoomAdmin)
-	require.True(t, hg.RoomRecord)
+	require.False(t, hg.RoomRecord, "egressni backend boshlaydi — host tokenida RoomRecord yo'q")
 	require.Empty(t, hg.CanPublishSources, "host uchun manba cheklovi YO'Q (ekran ulashish ham kiradi)")
 
 	part, err := c.AccessToken("lesson_x", "guest1", "Mehmon", false)

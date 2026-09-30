@@ -324,6 +324,12 @@ func (m *JWTMaker) Rotate(ctx context.Context, oldRefresh string) (string, strin
 		return "", "", fmt.Errorf("jti rotation: %w", err)
 	}
 
+	if won == -1 {
+		// Go tekshiruvi va skript orasida sessiya bekor qilingan (logout/reset/deactivate).
+		m.log.Info(ctx, "token: rotatsiya rad etildi — sessiya bekor qilingan",
+			logger.String("sub", sub), logger.String("sid", sid))
+		return "", "", ErrSessionRevoked
+	}
 	if won == 0 {
 		// Poygada yutqazdik: boshqa parallel so'rov shu JTI'ni allaqachon iste'mol qilgan.
 		// Bu o'g'irlik EMAS — g'olibning juftligini qaytaramiz (foydalanuvchi zarar ko'rmaydi)
@@ -350,7 +356,10 @@ func (m *JWTMaker) Rotate(ctx context.Context, oldRefresh string) (string, strin
 //	ARGV[1] sid  ARGV[2] refreshTTL (s)  ARGV[3] graceTTL (ms, 0=o'chirilgan)
 //	ARGV[4] grace payload (JSON)         ARGV[5] sessiya payload (userID)
 //
-// Qaytaradi: 1 — rotatsiya bajarildi (g'olib), 0 — JTI allaqachon iste'mol qilingan.
+// Qaytaradi: 1 — rotatsiya bajarildi (g'olib), 0 — JTI allaqachon iste'mol qilingan,
+// -1 — sessiya kaliti yo'q (bekor qilingan): hech narsa yozilmaydi, sessiya TIRILMAYDI.
+// (Avval sessiya kaliti shartsiz SET qilinardi — RevokeAllUserSessions bilan poyga
+// bekor qilingan sessiyani qayta tiklardi.)
 // Grace TTL millisekundda (PX) — sub-sekundli qiymatlar 0 ga aylanib ketmasin.
 //
 // ⚠️ REDIS CLUSTER: skript 4 ta kalitga tegadi va ular turli hash-slotlarda bo'lishi
@@ -362,6 +371,9 @@ func (m *JWTMaker) Rotate(ctx context.Context, oldRefresh string) (string, strin
 // tushadi. Bu kalit sxemasini o'zgartiradi, ya'ni deploy paytida mavjud sessiyalar
 // yaroqsiz bo'ladi (hamma qayta login qiladi) — migratsiyani rejalashtirib bajarish kerak.
 var rotateScript = redis.NewScript(`
+if redis.call('EXISTS', KEYS[4]) == 0 then
+  return -1
+end
 if redis.call('GET', KEYS[1]) ~= ARGV[1] then
   return 0
 end

@@ -43,7 +43,7 @@ await step('mentor login (web)', async () => {
   // "o'tdi" deb hisoblanardi (2026-07-31, serverga birinchi sinovda).
   await mentor.waitForFunction(() => location.pathname.startsWith('/app'), null, { timeout: 20000 })
 })
-const TOKEN = await mentor.evaluate(() => localStorage.getItem('darsly.access'))
+const TOKEN = await mentor.evaluate(() => localStorage.getItem('jonly.access'))
 if (!TOKEN) { console.log('FAIL  sessiya tokeni olinmadi'); process.exit(1) }
 ok('sessiya tokeni brauzerdan olindi')
 

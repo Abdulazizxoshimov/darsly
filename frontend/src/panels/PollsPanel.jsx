@@ -17,10 +17,15 @@ import { toast } from '../lib/toast'
 // Yopish ≠ e'lon qilish: yopish faqat ovoz berishni to'xtatadi. Bu ikkisi
 // atayin ajratilgan — ustoz odatda ovozni yopib, natijani muhokamadan keyin
 // ko'rsatadi.
+// `roomToken` — JORIY xona tokeni (natija so'rovlari uchun; yangilanganda
+// keyingi so'rov yangi tokenni oladi). `withRoomToken(fn)` — `fn(token)` ni
+// bajaradi va 401 da tokenni yangilab BIR MARTA takrorlaydi (`lib/roomToken`):
+// ovoz berish 30 daqiqadan keyin ham jimgina ishlayveradi.
 export function PollsPanel({
   isHost,
   lessonId,
   roomToken,
+  withRoomToken,
   guestActivePoll,
   publishedResults,
   votedPollId,
@@ -43,6 +48,7 @@ export function PollsPanel({
           <GuestPoll
             guestActivePoll={guestActivePoll}
             roomToken={roomToken}
+            withRoomToken={withRoomToken}
             publishedResults={publishedResults}
             votedPollId={votedPollId}
             onVoted={onVoted}
@@ -304,7 +310,7 @@ function HostPollCard({ poll, roomToken, onClose, closing, onPublish, publishing
 // `voted` holati ATAYLAB tashqarida (`LiveRoom`): panel yopilib qayta
 // ochilganda bu komponent unmount bo'ladi va lokal holat yo'qolardi —
 // o'quvchi variantlarni yana ko'rib, qayta ovoz berishga urinardi.
-function GuestPoll({ guestActivePoll, roomToken, publishedResults, votedPollId, onVoted }) {
+function GuestPoll({ guestActivePoll, roomToken, withRoomToken, publishedResults, votedPollId, onVoted }) {
   const [voting, setVoting] = useState(false)
   const [voteError, setVoteError] = useState(null)
   const isPublic = guestActivePoll?.results_visibility === RESULTS_VISIBILITY.PUBLIC
@@ -327,7 +333,7 @@ function GuestPoll({ guestActivePoll, roomToken, publishedResults, votedPollId, 
     setVoting(true)
     setVoteError(null)
     try {
-      await votePoll(guestActivePoll.id, roomToken.token, idx)
+      await withRoomToken((t) => votePoll(guestActivePoll.id, t.token, idx))
       onVoted(guestActivePoll.id)
       toast.success('Ovoz berildi')
     } catch (e) {

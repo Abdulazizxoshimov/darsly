@@ -316,3 +316,13 @@ func TestPreview_AudioPolicyPermissive(t *testing.T) {
 	require.False(t, prev.MuteOnEntry)
 	require.True(t, prev.AllowSelfUnmute)
 }
+
+func TestJoin_ScheduledLesson_WaitsForHost_NoToken(t *testing.T) {
+	uc, lrepo, _ := setup(t)
+	seedLesson(t, lrepo, &entity.Lesson{ID: "l9", MentorID: "mentor1", JoinSlug: "s9", Status: entity.LessonStatusScheduled})
+
+	resp, err := uc.Join(context.Background(), "s9", testIP, &entity.JoinLessonReq{GuestName: ptr("Aziz")})
+	require.NoError(t, err)
+	require.Equal(t, entity.JoinNextStepWaitingForHost, resp.NextStep)
+	require.Nil(t, resp.Room, "host kirmaguncha participant token berilmaydi")
+}

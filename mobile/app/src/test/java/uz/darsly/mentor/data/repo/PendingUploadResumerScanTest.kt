@@ -5,7 +5,7 @@ import org.junit.Test
 import uz.darsly.mentor.data.repo.PendingUploadResumer.PendingFile
 
 /**
- * Yetim yozuvlarni tanlash/tartiblash/dedup (M-4).
+ * Yetim yozuvlarni tanlash/tartiblash/dedup (M-4, H4 nomlash bilan).
  *
  * `decide(status)` (yuklash/o'chirish/tegmaslik) allaqachon sinalgan
  * ([PendingUploadResumerTest]); bu — undan OLDINGI qadam: diskdagi qaysi fayllar
@@ -21,8 +21,8 @@ class PendingUploadResumerScanTest {
     @Test fun onlyMp4FilesAreCandidates() {
         // Boshqa fayllar (masalan yarim yozilgan `.tmp`) yuklanmaydi.
         assertEquals(
-            listOf("lesson-a.mp4"),
-            select(PendingFile("lesson-a.mp4", 1000), PendingFile("notes.txt", 1000), PendingFile("x.tmp", 1000)),
+            listOf("lesson-a_1.mp4"),
+            select(PendingFile("lesson-a_1.mp4", 1000), PendingFile("notes.txt", 1000), PendingFile("x.tmp", 1000)),
         )
     }
 
@@ -30,27 +30,32 @@ class PendingUploadResumerScanTest {
         // BUG: 0 baytli fayl — buzuq yozuv; yuklash serverni yaroqsiz fayl bilan
         // to'ldirardi ([RecorderPipeline.isUsableOutput] bilan bir qoida).
         assertEquals(
-            listOf("full.mp4"),
-            select(PendingFile("empty.mp4", 0), PendingFile("full.mp4", 500)),
+            listOf("full_1.mp4"),
+            select(PendingFile("empty_1.mp4", 0), PendingFile("full_1.mp4", 500)),
         )
     }
 
-    @Test fun orderIsStableByName() {
+    @Test fun orderIsStableByLesson() {
         // BUG: diskning tasodifiy tartibiga tayanilsa urinishlar har ochilishda
-        // boshqacha bo'lib, xatoni takrorlash qiyinlashardi. Nom bo'yicha barqaror.
+        // boshqacha bo'lib, xatoni takrorlash qiyinlashardi. Dars bo'yicha barqaror.
         assertEquals(
-            listOf("a.mp4", "b.mp4", "c.mp4"),
-            select(PendingFile("c.mp4", 1), PendingFile("a.mp4", 1), PendingFile("b.mp4", 1)),
+            listOf("a_1.mp4", "b_1.mp4", "c_1.mp4"),
+            select(PendingFile("c_1.mp4", 1), PendingFile("a_1.mp4", 1), PendingFile("b_1.mp4", 1)),
         )
     }
 
-    @Test fun sameLessonAppearsOnce() {
-        // Fayl nomi = `<lessonId>.mp4`; bir dars ikki marta yuklanmasin.
-        // (Amalda bir nom ikki marta bo'lmaydi, lekin dedup himoya sifatida qoladi.)
+    @Test fun sameLessonAppearsOnceNewestFirst() {
+        // H4: bir darsda bir necha segment bo'lishi mumkin (`<lessonId>_<ms>.mp4`).
+        // Bitta dars BIR marta yuklanadi — eng yangi segment tanlanadi.
         assertEquals(
-            listOf("lesson-a.mp4"),
-            select(PendingFile("lesson-a.mp4", 100), PendingFile("lesson-a.mp4", 200)),
+            listOf("lesson-a_200.mp4"),
+            select(PendingFile("lesson-a_100.mp4", 100), PendingFile("lesson-a_200.mp4", 200)),
         )
+    }
+
+    @Test fun legacyNamesStillUpload() {
+        // Yangilanishdan oldingi `<lessonId>.mp4` ham nomzod.
+        assertEquals(listOf("lesson-a.mp4"), select(PendingFile("lesson-a.mp4", 100)))
     }
 
     @Test fun emptyInputYieldsEmpty() {

@@ -11,6 +11,9 @@ import (
 
 func (c *redisCache) Client() *redis.Client { return c.client }
 
+// Close Redis ulanish pool'ini yopadi (graceful shutdown).
+func (c *redisCache) Close() error { return c.client.Close() }
+
 func (c *redisCache) Ping(ctx context.Context) error {
 	return c.client.Ping(ctx).Err()
 }
@@ -52,16 +55,33 @@ func (c *redisCache) Del(ctx context.Context, keys ...string) error {
 	return c.client.Del(ctx, keys...).Err()
 }
 
-// Incr atomik ravishda kalitni bittaga oshiradi; birinchi oshirishda TTL o'rnatadi.
-// Rate-limit / brute-force hisoblagichlari uchun.
+// incrExpireScript — INCR va TTL o'rnatishni ATOMIK bajaradi.
+//
+// Nega Lua (audit topilma #6 / infra H3): avval bu ikki alohida buyruq edi —
+// `INCR` keyin faqat `n==1` da `Expire`. Ikkisi orasida timeout/crash bo'lsa
+// yoki `Expire` xato bersa kalit TTL'siz qolardi va hisoblagich (`rl:login:*`,
+// `loginfail:*`, `joinfail:*`) ABADIY o'sib, foydalanuvchi/IP doimiy 429/qulfda
+// qolardi (faqat `redis-cli DEL` bilan chiqarib bo'lardi).
+//
+// Endi: har chaqiruvda INCR, va agar TTL o'rnatilmagan bo'lsa (PTTL < 0 →
+// birinchi INCR yoki oldingi EXPIRE yiqilgani) qayta o'rnatiladi. Ya'ni TTL
+// har doim kafolatlanadi.
+var incrExpireScript = redis.NewScript(`
+	local n = redis.call('INCR', KEYS[1])
+	if redis.call('PTTL', KEYS[1]) < 0 then
+		redis.call('PEXPIRE', KEYS[1], ARGV[1])
+	end
+	return n
+`)
+
+// Incr atomik ravishda kalitni bittaga oshiradi va TTL o'rnatilganini
+// KAFOLATLAYDI (Lua). Rate-limit / brute-force hisoblagichlari uchun.
 func (c *redisCache) Incr(ctx context.Context, key string, ttl time.Duration) (int64, error) {
-	n, err := c.client.Incr(ctx, key).Result()
+	res, err := incrExpireScript.Run(ctx, c.client, []string{key}, ttl.Milliseconds()).Result()
 	if err != nil {
 		return 0, err
 	}
-	if n == 1 {
-		_ = c.client.Expire(ctx, key, ttl).Err()
-	}
+	n, _ := res.(int64)
 	return n, nil
 }
 
@@ -70,10 +90,6 @@ func (c *redisCache) SetNX(ctx context.Context, key, value string, ttl time.Dura
 }
 
 // ─── Key scanning ─────────────────────────────────────────────────────────────
-
-func (c *redisCache) Keys(ctx context.Context, pattern string) ([]string, error) {
-	return c.client.Keys(ctx, pattern).Result()
-}
 
 func (c *redisCache) Scan(ctx context.Context, cursor uint64, match string, count int64) ([]string, uint64, error) {
 	return c.client.Scan(ctx, cursor, match, count).Result()
@@ -87,25 +103,6 @@ func (c *redisCache) ScanDel(ctx context.Context, pattern string) error {
 		}
 	}
 	return iter.Err()
-}
-
-// ─── Batch ────────────────────────────────────────────────────────────────────
-
-func (c *redisCache) MGet(ctx context.Context, keys ...string) ([]string, error) {
-	if len(keys) == 0 {
-		return nil, nil
-	}
-	res, err := c.client.MGet(ctx, keys...).Result()
-	if err != nil {
-		return nil, err
-	}
-	out := make([]string, len(res))
-	for i, v := range res {
-		if v != nil {
-			out[i] = v.(string)
-		}
-	}
-	return out, nil
 }
 
 // ─── Hash ─────────────────────────────────────────────────────────────────────
@@ -171,10 +168,4 @@ var releaseLockScript = redis.NewScript(`
 
 func (c *redisCache) ReleaseLock(ctx context.Context, key, value string) error {
 	return releaseLockScript.Run(ctx, c.client, []string{key}, value).Err()
-}
-
-// ─── Lua script ───────────────────────────────────────────────────────────────
-
-func (c *redisCache) Eval(ctx context.Context, script string, keys []string, args ...any) (any, error) {
-	return c.client.Eval(ctx, script, keys, args...).Result()
 }

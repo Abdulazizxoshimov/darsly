@@ -1,5 +1,10 @@
-Bu katalog Caddy tomonidan https://app.194.163.139.242.sslip.io/download/ da
+Bu katalog Caddy tomonidan https://app.169.58.104.245.sslip.io/download/ da
 statik tarqatiladi (deploy/server/Caddyfile -> handle /download/*).
+
+⚠️ ESKI APK'LAR: bu yerga oldin joylangan v1.2.0 APK'lar ESKI/O'LIK IP
+(194.163.139.242.sslip.io) ni backend sifatida ichiga singdirgan. O'sha IP
+qayta taqsimlansa MITM xavfi bor — eski versiyali APK nusxalarini serverdan
+OLIB TASHLANG va faqat yangi IP (yoki jonly.uz) bilan qurilgan relizni tarqating.
 
 Fayllar:
   darsly-mentor.apk          — DOIM eng oxirgi reliz (app-config'dagi apk_url

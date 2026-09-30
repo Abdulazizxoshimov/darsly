@@ -112,13 +112,21 @@ func (r *pollRepo) Publish(ctx context.Context, pollID string) (*entity.Poll, er
 	return p, nil
 }
 
+// Vote — upsert SHARTLI: faqat poll hali faol bo'lsa yoziladi (usecase'dagi
+// is_active o'qish bilan yozish orasidagi Close poygasini yopadi). Poll yopilgan
+// (yoki yo'q) bo'lsa RowsAffected==0 → "poll is closed".
 func (r *pollRepo) Vote(ctx context.Context, pollID, voterIdentity string, optionIndex int) error {
-	_, err := r.db.Exec(ctx,
-		`INSERT INTO poll_votes (poll_id, voter_identity, option_index) VALUES ($1,$2,$3)
+	tag, err := r.db.Exec(ctx,
+		`INSERT INTO poll_votes (poll_id, voter_identity, option_index)
+		 SELECT $1::uuid, $2, $3
+		 WHERE EXISTS (SELECT 1 FROM polls WHERE id = $1::uuid AND is_active)
 		 ON CONFLICT (poll_id, voter_identity) DO UPDATE SET option_index = EXCLUDED.option_index, created_at = NOW()`,
 		pollID, voterIdentity, optionIndex)
 	if err != nil {
 		return fmt.Errorf("pollRepo.Vote: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return apperr.BadRequest("poll is closed")
 	}
 	return nil
 }

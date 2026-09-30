@@ -92,6 +92,8 @@ func fieldMessage(e validator.FieldError) string {
 		return "must be less than " + e.Param()
 	case "lte":
 		return "must be less than or equal to " + e.Param()
+	case "httpurl":
+		return "must be a valid http(s) URL"
 	case "url":
 		return "invalid URL format"
 	default:

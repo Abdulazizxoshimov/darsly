@@ -29,7 +29,8 @@ vi.mock('../lib/roomSession', () => ({
   roomSession: { get: () => ({ pending: h.pending }), setRoom: h.setRoom },
 }))
 
-const PENDING = { requestId: 'req1', lesson: { id: 'l1', title: 'Kvadrat tenglamalar' }, guestName: 'Aziz' }
+const JOIN = { slug: 'demo123', guestName: 'Aziz', passcode: '' }
+const PENDING = { requestId: 'req1', lesson: { id: 'l1', title: 'Kvadrat tenglamalar' }, guestName: 'Aziz', join: JOIN }
 
 function setup() {
   render(
@@ -65,10 +66,12 @@ describe('WaitingRoom — WS real-time yo‘li', () => {
   it('WS admit → token sessiyaga yoziladi va xonaga o‘tiladi', () => {
     setup()
     act(() => h.wsHandler({ type: 'waiting_room.admitted', payload: 'ROOM-TOKEN-123' }))
+    // Kirish ma'lumotlari (`join`) ham o'tadi — token yangilash uchun kerak.
     expect(h.setRoom).toHaveBeenCalledWith({
       token: 'ROOM-TOKEN-123',
       lesson: PENDING.lesson,
       guestName: 'Aziz',
+      join: JOIN,
     })
     expect(screen.getByTestId('in-room')).toBeInTheDocument()
   })
@@ -96,7 +99,12 @@ describe('WaitingRoom — polling fallback', () => {
   it('polling status=admitted → xonaga o‘tiladi', () => {
     h.status = { data: { status: 'admitted', room: 'POLL-TOKEN' }, isError: false }
     setup()
-    expect(h.setRoom).toHaveBeenCalledWith({ token: 'POLL-TOKEN', lesson: PENDING.lesson, guestName: 'Aziz' })
+    expect(h.setRoom).toHaveBeenCalledWith({
+      token: 'POLL-TOKEN',
+      lesson: PENDING.lesson,
+      guestName: 'Aziz',
+      join: JOIN,
+    })
     expect(screen.getByTestId('in-room')).toBeInTheDocument()
   })
 
@@ -106,13 +114,30 @@ describe('WaitingRoom — polling fallback', () => {
     expect(screen.getByText('Kirish rad etildi')).toBeInTheDocument()
   })
 
-  // ⭐ "Ustoz darsni yakunladi, mehmon hali kutmoqda": status so'rovi 404/xato
+  // ⭐ "Ustoz darsni yakunladi, mehmon hali kutmoqda": status so'rovi 404
   // beradi. Bug: bu holatda spinner qolib ketsa, mehmon dars tugaganini bilmaydi.
-  it('status so‘rovi xato bo‘lsa (ustoz darsni yakunladi) «So‘rov topilmadi»', () => {
-    h.status = { data: undefined, isError: true }
+  it('status so‘rovi 404 bo‘lsa (ustoz darsni yakunladi) «So‘rov topilmadi»', () => {
+    h.status = { data: undefined, isError: true, error: { status: 404 } }
     setup()
     expect(screen.getByText("So'rov topilmadi")).toBeInTheDocument()
     expect(screen.getByText(/muddati o'tgan yoki bekor qilingan/i)).toBeInTheDocument()
+  })
+
+  // Bug: 429 (IP limiti — bitta NAT ortidagi sinf) yoki tarmoq xatosi ham
+  // «So'rov topilmadi» deb ko'rsatilardi — mehmon kutishdan chiqib ketardi,
+  // ustoz esa uni bir daqiqadan keyin kiritardi.
+  it('429 yoki tarmoq xatosida KUTISHDA qoladi (yolg‘on «topilmadi» yo‘q)', () => {
+    h.status = { data: undefined, isError: true, error: { status: 429 } }
+    setup()
+    expect(screen.getByText('Kutish xonasidasiz')).toBeInTheDocument()
+    expect(screen.getByText(/aloqa vaqtincha uzildi/i)).toBeInTheDocument()
+    expect(screen.queryByText("So'rov topilmadi")).not.toBeInTheDocument()
+  })
+
+  it('tarmoq xatosi (status yo‘q) ham kutishda qoladi', () => {
+    h.status = { data: undefined, isError: true, error: new TypeError('Failed to fetch') }
+    setup()
+    expect(screen.getByText('Kutish xonasidasiz')).toBeInTheDocument()
   })
 })
 

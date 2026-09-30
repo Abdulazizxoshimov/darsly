@@ -1,6 +1,7 @@
 package uz.darsly.mentor.data.ws
 
 import io.livekit.android.util.LKLog
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -17,14 +18,14 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import uz.darsly.mentor.BuildConfig
-import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
+import kotlin.random.Random
 
 /** Real-time kanal holati — UI "jonli/uzilgan" ko'rsatishi uchun. */
 enum class RealtimeState { DISCONNECTED, CONNECTING, CONNECTED }
 
 /**
- * Serverning real-time kanali (`GET /api/v1/ws?token=`).
+ * Serverning real-time kanali (`GET /api/v1/ws`).
  *
  * ## Nega kerak
  * Kutish xonasidagi o'quvchi **3 soniyada** ustozga ko'rinishi kerak (mezon D-1) —
@@ -32,16 +33,29 @@ enum class RealtimeState { DISCONNECTED, CONNECTING, CONNECTED }
  * Bildirishnomalar va dars holati ham shu kanaldan keladi.
  *
  * ## Protokol
- * Web klienti bilan **bir xil**: token **query** da (`?token=`), konvert
- * `{type, room, payload, created_at}`, qayta ulanish eksponensial ([Backoff]).
- * Token query'da bo'lishi backend talabi — brauzer WS handshake'da header yubora olmaydi
- * (`CLAUDE.md` · BE-1), mobil ham xuddi shu yo'ldan boradi.
+ * Konvert web klienti bilan **bir xil**: `{type, room, payload, created_at}`,
+ * qayta ulanish eksponensial + jitter ([Backoff]).
+ *
+ * Token **`Authorization` header'ida** (S1). Brauzer WS handshake'da header
+ * yubora olmagani uchun web `?token=` ishlatadi; backend ikkalasini ham qabul
+ * qiladi va header'ni AFZAL ko'radi (`api/middleware/auth.go`). Mobil OkHttp
+ * header yubora oladi — access JWT'ni URL'ga (access-log, proxy, Referer)
+ * qo'yish uchun sabab yo'q.
+ *
+ * ## Qayta ulanish (H1 · M1)
+ * Sikl FAQAT [stop] (logout) bilan tugaydi. Serverning o'zi yopgan ulanish —
+ * hatto 1000 (normal) kodi bilan ham — qayta ulanish sababi: backend deploy'da
+ * aynan 1000 yuboradi (`websocket.go` `Stop`) va avval klient uni "tugadi" deb
+ * chiqib ketardi — har deploy'dan keyin barcha mentorlar kutish xonasi
+ * so'rovlarini qayta login qilguncha ko'rmasdi. Har sabab (401 ham) backoff
+ * bilan: avval 401 da zero-delay issiq sikl bor edi.
  *
  * ## Token eskirishi
  * Handshake **401** bersa, token eskirgan. Bu holda oddiy authed so'rov yuboriladi —
  * `Net` dagi [uz.darsly.mentor.data.api.TokenAuthenticator] uni ushlab **single-flight
- * refresh** qiladi — va yangi token bilan qayta ulanamiz. Ya'ni refresh mantiqi bitta
- * joyda qoladi, bu yerda takrorlanmaydi.
+ * refresh** qiladi — va yangi token bilan qayta ulanamiz. Refresh ham yiqilsa
+ * authenticator toza logout qiladi → [accessToken] `null` → sikl tarmoqqa
+ * chiqmasdan kutadi (sikl yo'q).
  */
 class RealtimeClient(
     private val client: OkHttpClient = defaultClient,
@@ -49,6 +63,8 @@ class RealtimeClient(
     private val baseUrl: String = BuildConfig.API_BASE_URL,
     /** Test uchun: haqiqiy kutishni almashtirish. */
     private val sleep: suspend (Long) -> Unit = { delay(it) },
+    /** Jitter manbai `[0, 1)` — testda deterministik. */
+    private val jitter: () -> Double = { Random.nextDouble() },
     /**
      * Joriy access token manbai. Funksiya sifatida uzatiladi (qiymat emas):
      * soket qayta ulanganda EN SO'NGGI token kerak, ulanish yaratilgandagisi emas.
@@ -107,39 +123,40 @@ class RealtimeClient(
             }
 
             _state.value = RealtimeState.CONNECTING
-            val closeReason = connectAndWait(token)
+            val outcome = connectAndWait(token)
             _state.value = RealtimeState.DISCONNECTED
 
-            if (closeReason == CloseReason.UNAUTHORIZED) {
+            if (outcome.connected) attempt = 0
+            if (outcome.reason == CloseReason.UNAUTHORIZED) {
                 // Token eskirgan — OkHttp authenticator'i orqali yangilaymiz.
                 runCatching { refreshToken() }
                     .onFailure { LKLog.w(it) { "realtime: token yangilanmadi" } }
-                attempt = 0
-                continue
             }
-            if (closeReason == CloseReason.NORMAL) return
 
-            val wait = Backoff.delayMs(attempt)
-            LKLog.i { "realtime: qayta ulanish ${wait}ms dan keyin (urinish=$attempt)" }
+            val wait = Backoff.jitteredMs(attempt, jitter())
+            LKLog.i { "realtime: qayta ulanish ${wait}ms dan keyin (urinish=$attempt, sabab=${outcome.reason})" }
             sleep(wait)
             attempt++
         }
     }
 
-    private enum class CloseReason { NORMAL, ERROR, UNAUTHORIZED }
+    private enum class CloseReason { SERVER_CLOSED, ERROR, UNAUTHORIZED }
+
+    /** Bitta ulanishning yakuni: sabab va ulanish umuman ochilganmi (backoff'ni nollash uchun). */
+    private class Outcome(val reason: CloseReason, val connected: Boolean)
 
     /** Bitta ulanish: ochadi, hodisalarni uzatadi va yopilgunicha kutadi. */
-    private suspend fun connectAndWait(token: String): CloseReason {
-        val url = baseUrl.trimEnd('/')
-            .replaceFirst("http", "ws") + "/api/v1/ws?token=" + URLEncoder.encode(token, "UTF-8")
+    private suspend fun connectAndWait(token: String): Outcome {
+        val url = baseUrl.trimEnd('/').replaceFirst("http", "ws") + WS_PATH
 
-        var reason = CloseReason.ERROR
-        val done = kotlinx.coroutines.CompletableDeferred<CloseReason>()
+        var connected = false
+        val done = CompletableDeferred<CloseReason>()
 
         val ws = client.newWebSocket(
-            Request.Builder().url(url).build(),
+            Request.Builder().url(url).header("Authorization", "Bearer $token").build(),
             object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
+                    connected = true
                     _state.value = RealtimeState.CONNECTED
                     LKLog.i { "realtime: ulandi" }
                 }
@@ -157,22 +174,28 @@ class RealtimeClient(
                 }
 
                 override fun onClosing(webSocket: WebSocket, code: Int, reasonText: String) {
+                    // Server yopdi (deploy, sessiya bekor, chegara) — kodi qanday
+                    // bo'lmasin qayta ulanamiz; faqat [stop] siklni tugatadi.
                     webSocket.close(NORMAL_CLOSURE, null)
-                    done.complete(if (code == NORMAL_CLOSURE) CloseReason.NORMAL else CloseReason.ERROR)
+                    LKLog.i { "realtime: server yopdi (kod=$code, sabab='$reasonText')" }
+                    done.complete(CloseReason.SERVER_CLOSED)
+                }
+
+                override fun onClosed(webSocket: WebSocket, code: Int, reasonText: String) {
+                    done.complete(CloseReason.SERVER_CLOSED)
                 }
 
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                     val code = response?.code
-                    reason = if (code == 401 || code == 403) CloseReason.UNAUTHORIZED else CloseReason.ERROR
                     LKLog.w(t) { "realtime: uzildi (kod=$code)" }
-                    done.complete(reason)
+                    done.complete(if (code == 401 || code == 403) CloseReason.UNAUTHORIZED else CloseReason.ERROR)
                 }
             },
         )
         socket = ws
-        val result = done.await()
+        val reason = done.await()
         socket = null
-        return result
+        return Outcome(reason, connected)
     }
 
     /** Korutina hali tirikmi (bekor qilinmaganmi). */
@@ -181,6 +204,7 @@ class RealtimeClient(
 
     companion object {
         private const val NORMAL_CLOSURE = 1000
+        private const val WS_PATH = "/api/v1/ws"
 
         /**
          * WS uchun ALOHIDA klient: `pingInterval` bilan.

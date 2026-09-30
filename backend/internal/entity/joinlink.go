@@ -40,7 +40,7 @@ type LessonPublic struct {
 // ma'lumot ko'rsatadi, token BERILMAYDI; aniq holat Lesson.Status'da).
 type JoinLessonResp struct {
 	Lesson    *LessonPublic `json:"lesson"`
-	NextStep  string        `json:"next_step"`            // waiting_room | join | lesson_ended
+	NextStep  string        `json:"next_step"`            // waiting_room | join | lesson_ended | waiting_for_host
 	Room      *RoomToken    `json:"room,omitempty"`       // next_step=="join" bo'lsa — LiveKit tokeni
 	RequestID string        `json:"request_id,omitempty"` // next_step=="waiting_room" bo'lsa — WS/status uchun
 }
@@ -50,4 +50,7 @@ const (
 	JoinNextStepJoin        = "join"
 	JoinNextStepWaitingRoom = "waiting_room"
 	JoinNextStepLessonEnded = "lesson_ended"
+	// JoinNextStepWaitingForHost — dars hali `live` emas (host kirmagan): token
+	// BERILMAYDI, klient keyinroq qayta urinadi (polling/retry).
+	JoinNextStepWaitingForHost = "waiting_for_host"
 )

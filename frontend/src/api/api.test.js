@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, api, errorText, filenameFromDisposition, setUnauthorizedHandler, tokenStore } from './api'
+import {
+  ApiError,
+  api,
+  errorText,
+  filenameFromDisposition,
+  refreshAccess,
+  setUnauthorizedHandler,
+  tokenStore,
+} from './api'
 import { consumeLogoutReason, setLogoutReason } from '../lib/logoutReason'
 
 // SESSIYA BEKOR QILINISHI (`SESSION_REVOKED`) — bitta akkaunt = bitta faol
@@ -73,6 +81,66 @@ describe('401 boshqaruvi', () => {
 
     await expect(api.get('/lessons')).rejects.toMatchObject({ code: 'UNAUTHORIZED' })
     expect(reasons).toEqual(['expired'])
+  })
+
+  // Bug: refresh TARMOQ sababli yetib bormasa (offline, timeout, 502) ham
+  // "expired" deb tizimdan chiqarilardi — metro/lift uzilishida dars
+  // boshlanishida parol so'rash. Tarmoq xatosi sessiya haqida hech narsa
+  // aytmaydi: tokenlar QOLADI, xato NETWORK bo'lib chiqadi.
+  it('refresh tarmoq xatosi bilan yiqilsa CHIQARILMAYDI (tokenlar qoladi)', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(json({ code: 'TOKEN_EXPIRED', message: 'expired' }, 401))
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(api.get('/lessons')).rejects.toMatchObject({ code: 'NETWORK' })
+    expect(reasons).toEqual([])
+    expect(tokenStore.access).toBe('old-access')
+    expect(tokenStore.refresh).toBe('old-refresh')
+  })
+
+  it('refresh 5xx bersa ham tarmoq deb qaraladi (sessiya tirik)', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(json({ code: 'TOKEN_EXPIRED', message: 'expired' }, 401))
+      .mockResolvedValueOnce(new Response(null, { status: 502 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(api.get('/lessons')).rejects.toMatchObject({ code: 'NETWORK' })
+    expect(reasons).toEqual([])
+    expect(tokenStore.refresh).toBe('old-refresh')
+  })
+
+  // `refreshAccess` — WS kanali ham shu yo'ldan yangilaydi; parallel
+  // chaqiruvlar BITTA `/auth/refresh` so'roviga birlashishi kerak.
+  it('refreshAccess parallel chaqiruvlarni bitta so‘rovga birlashtiradi', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(json({ data: { access_token: 'new-access', refresh_token: 'new-refresh' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const [a, b] = await Promise.all([refreshAccess(), refreshAccess()])
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(a.access).toBe('new-access')
+    expect(b.access).toBe('new-access')
+    expect(tokenStore.access).toBe('new-access')
+  })
+})
+
+// Rebrand: `darsly.*` → `jonly.*`. Eski kalitdagi sessiya bir marta
+// ko'chiriladi — deploy'dan keyin hech kim tizimdan chiqib ketmasin.
+describe('tokenStore — eski kalitlarni ko‘chirish', () => {
+  it('darsly.* kalitlar jonly.* ga ko‘chadi va eski o‘chadi', async () => {
+    localStorage.clear()
+    localStorage.setItem('darsly.access', 'legacy-a')
+    localStorage.setItem('darsly.refresh', 'legacy-r')
+    vi.resetModules()
+    const fresh = await import('./api')
+    expect(fresh.tokenStore.access).toBe('legacy-a')
+    expect(fresh.tokenStore.refresh).toBe('legacy-r')
+    expect(localStorage.getItem('darsly.access')).toBeNull()
+    expect(localStorage.getItem('jonly.refresh')).toBe('legacy-r')
   })
 })
 

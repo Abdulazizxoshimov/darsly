@@ -15,10 +15,16 @@ export function WaitingRoom() {
   const requestId = pending?.requestId
   const [rejected, setRejected] = useState(false)
 
-  const { data, isError } = useWaitingStatus(requestId, !!requestId && !rejected)
+  const { data, error } = useWaitingStatus(requestId, !!requestId && !rejected)
+  // «So'rov topilmadi» FAQAT haqiqiy 404 da. Avval HAR QANDAY xato shunday
+  // ko'rsatilardi: status endpoint'i IP bo'yicha 20 so'rov/s bilan cheklangan
+  // va katta sinf (bitta NAT) 429 olganda hamma «so'rov muddati o'tgan» degan
+  // yolg'onni ko'rardi. 429/tarmoq xatosida kutishda qolamiz — poll o'zi
+  // (sekinroq) davom etadi va WS kanali ham ishlayveradi.
+  const notFound = error?.status === 404
 
   function admit(room) {
-    roomSession.setRoom({ token: room, lesson: pending.lesson, guestName: pending.guestName })
+    roomSession.setRoom({ token: room, lesson: pending.lesson, guestName: pending.guestName, join: pending.join })
     navigate(`/r/${slug}/room`, { replace: true })
   }
 
@@ -52,7 +58,7 @@ export function WaitingRoom() {
       </div>
     )
 
-  if (isError)
+  if (notFound)
     return (
       <div className="center-shell col center">
         <div className="empty__icon" style={{ background: 'var(--warning-soft)', color: 'var(--warning)' }}>
@@ -92,6 +98,12 @@ export function WaitingRoom() {
       <p className="text-2" style={{ fontSize: 14, textAlign: 'center', maxWidth: 320, marginBottom: 4 }}>
         "{pending.lesson.title}" darsiga qo'shilish uchun ustoz tasdiqini kutmoqdasiz.
       </p>
+      {/* Vaqtinchalik xato (429/tarmoq): kutish davom etadi, lekin sababi aytiladi. */}
+      {error && (
+        <p className="muted" style={{ fontSize: 13 }}>
+          Server bilan aloqa vaqtincha uzildi — qayta urinilmoqda…
+        </p>
+      )}
       <p className="muted" style={{ fontSize: 13 }}>Bu oyna ochiq turishi kerak…</p>
     </div>
   )

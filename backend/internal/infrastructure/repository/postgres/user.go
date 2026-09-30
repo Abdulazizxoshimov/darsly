@@ -233,8 +233,27 @@ func (r *userRepo) SoftDelete(ctx context.Context, id string) error {
 	if err != nil {
 		return fmt.Errorf("userRepo.SoftDelete: %w", err)
 	}
-	_, err = r.db.Exec(ctx, sql, args...)
-	return err
+	tag, err := r.db.Exec(ctx, sql, args...)
+	if err != nil {
+		return fmt.Errorf("userRepo.SoftDelete: %w", err)
+	}
+	// 0 qator — user yo'q yoki allaqachon o'chirilgan: jimgina 204 bermaymiz.
+	if tag.RowsAffected() == 0 {
+		return apperr.NotFound("user")
+	}
+	return nil
+}
+
+// CountActiveAdmins — faol adminlar soni.
+func (r *userRepo) CountActiveAdmins(ctx context.Context) (int, error) {
+	var n int
+	err := r.db.QueryRow(ctx,
+		`SELECT COUNT(*) FROM users WHERE role = 'admin' AND is_active = TRUE AND deleted_at IS NULL`,
+	).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("userRepo.CountActiveAdmins: %w", err)
+	}
+	return n, nil
 }
 
 func (r *userRepo) DeleteHard(ctx context.Context, id string) error {

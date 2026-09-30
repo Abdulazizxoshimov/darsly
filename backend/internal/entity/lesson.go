@@ -21,14 +21,14 @@ type Lesson struct {
 	// MuteOnEntry — yangi ishtirokchi mikrofoni server tomonda o'chirilgan holda boshlanadi.
 	// AllowSelfUnmute — o'quvchi o'zini unmute qila oladimi; false bo'lsa server
 	// har audio publish'ni qayta mute qiladi (webhook'da).
-	MuteOnEntry     bool `json:"mute_on_entry"`
-	AllowSelfUnmute bool `json:"allow_self_unmute"`
-	Status               string     `json:"status"` // scheduled | live | ended | cancelled
-	StartedAt            *time.Time `json:"started_at,omitempty"`
-	EndedAt              *time.Time `json:"ended_at,omitempty"`
-	CreatedAt            time.Time  `json:"created_at"`
-	UpdatedAt            time.Time  `json:"updated_at"`
-	DeletedAt            *time.Time `json:"-"`
+	MuteOnEntry     bool       `json:"mute_on_entry"`
+	AllowSelfUnmute bool       `json:"allow_self_unmute"`
+	Status          string     `json:"status"` // scheduled | live | ended | cancelled
+	StartedAt       *time.Time `json:"started_at,omitempty"`
+	EndedAt         *time.Time `json:"ended_at,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+	DeletedAt       *time.Time `json:"-"`
 }
 
 // Dars statuslari
@@ -40,12 +40,12 @@ const (
 )
 
 type CreateLessonReq struct {
-	Title                string     `json:"title"                   validate:"required,min=2,max=255"`
-	Description          *string    `json:"description"             validate:"omitempty,max=2000"`
-	ScheduledAt          *time.Time `json:"scheduled_at"`
-	DurationMin          int        `json:"duration_min"            validate:"omitempty,min=5,max=1440"`
-	RecurrenceRule       *string    `json:"recurrence_rule"         validate:"omitempty,max=255"`
-	Passcode             *string    `json:"passcode"                validate:"omitempty,min=4,max=20"`
+	Title          string     `json:"title"                   validate:"required,min=2,max=255"`
+	Description    *string    `json:"description"             validate:"omitempty,max=2000"`
+	ScheduledAt    *time.Time `json:"scheduled_at"`
+	DurationMin    int        `json:"duration_min"            validate:"omitempty,min=5,max=1440"`
+	RecurrenceRule *string    `json:"recurrence_rule"         validate:"omitempty,max=255"`
+	Passcode       *string    `json:"passcode"                validate:"omitempty,min=4,max=20"`
 	// IsRecordingEnabled — ko'rsatkich, chunki qiymat berilmasa DEFAULT YONIQ.
 	//
 	// Oddiy `bool` bo'lganda Go'ning nol qiymati `false` edi va "yozib olish
@@ -56,7 +56,7 @@ type CreateLessonReq struct {
 	// bajarilishi kerak.
 	//
 	// `nil` = "berilmagan" → yoqiladi. Oshkora `false` esa hurmat qilinadi.
-	IsRecordingEnabled   *bool      `json:"is_recording_enabled"`
+	IsRecordingEnabled *bool `json:"is_recording_enabled"`
 	// IsWaitingRoomEnabled ATAYLAB oddiy `bool` — [IsRecordingEnabled] dan
 	// farqli o'laroq bu yerda Go'ning nol qiymati (`false`) AYNAN mahsulot
 	// qoidasi: PRODUCT.md «Kutish xonasi: default o'chiq». Ya'ni maydon
@@ -99,7 +99,26 @@ type UpdateLessonReq struct {
 	IsWaitingRoomEnabled *bool      `json:"is_waiting_room_enabled"`
 	MuteOnEntry          *bool      `json:"mute_on_entry"`
 	AllowSelfUnmute      *bool      `json:"allow_self_unmute"`
-	Status               *string    `json:"status"                  validate:"omitempty,oneof=scheduled live ended cancelled"`
+	// Status ATAYLAB yo'q: dars hayoti (scheduled → live → ended) faqat
+	// room.HostToken (ClaimStart) va room.EndLesson (ClaimEnd) orqali boshqariladi.
+}
+
+// LessonPatch — qisman yangilash: faqat nil bo'lmagan maydonlar yoziladi
+// (repository.UpdateFields). To'liq-qator Update parallel o'zgarishni (masalan
+// jonli darsni qayta 'scheduled'ga qaytarish) bosib ketardi.
+type LessonPatch struct {
+	Title                *string
+	Description          *string
+	ScheduledAt          *time.Time
+	DurationMin          *int
+	RecurrenceRule       *string
+	PasscodeHash         *string
+	ClearPasscode        bool
+	IsLocked             *bool
+	IsRecordingEnabled   *bool
+	IsWaitingRoomEnabled *bool
+	MuteOnEntry          *bool
+	AllowSelfUnmute      *bool
 }
 
 type LessonFilter struct {

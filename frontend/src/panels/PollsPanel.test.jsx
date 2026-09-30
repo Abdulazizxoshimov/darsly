@@ -35,6 +35,8 @@ vi.mock('../api/polls', async (orig) => ({
 import { votePoll } from '../api/polls'
 
 const ROOM_TOKEN = { token: 'rt', ws_url: 'ws://x', identity: 'i', role: 'participant' }
+// Xona tokeni manbasi (`lib/roomToken`): `fn(token)` — 401 da yangilab takrorlaydi.
+const withRoomToken = vi.fn((fn) => fn(ROOM_TOKEN))
 
 function setup(over = {}) {
   const onBroadcastPoll = vi.fn()
@@ -43,6 +45,7 @@ function setup(over = {}) {
       isHost={false}
       lessonId="l1"
       roomToken={ROOM_TOKEN}
+      withRoomToken={withRoomToken}
       guestActivePoll={null}
       publishedResults={null}
       votedPollId={null}
@@ -135,6 +138,9 @@ describe('PollsPanel — o‘quvchi', () => {
 
     await user.click(screen.getByText('Ha'))
     await waitFor(() => expect(votePoll).toHaveBeenCalledWith('p1', 'rt', 0))
+    // Ovoz XONA TOKENI MANBASI orqali ketadi — 30 daqiqadan keyin (token
+    // muddati) ham 401 o'rniga yangilab takrorlanadi.
+    expect(withRoomToken).toHaveBeenCalled()
     // Holat panelda EMAS: panel yopilib qayta ochilsa ham ovoz "esda qoladi".
     await waitFor(() => expect(onVoted).toHaveBeenCalledWith('p1'))
   })

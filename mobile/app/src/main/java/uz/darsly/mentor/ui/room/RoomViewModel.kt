@@ -1,53 +1,47 @@
 package uz.darsly.mentor.ui.room
 
-import android.content.Context
 import android.content.Intent
 import android.os.Build
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
-import dagger.hilt.android.qualifiers.ApplicationContext
-import javax.inject.Inject
 import io.livekit.android.events.RoomEvent
-import io.livekit.android.events.collect
 import io.livekit.android.room.Room
+import io.livekit.android.room.track.AudioTrack
 import io.livekit.android.room.track.Track
 import io.livekit.android.room.track.VideoTrack
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import uz.darsly.mentor.data.api.ApiErrors
-import uz.darsly.mentor.data.repo.LessonsRepository
-import uz.darsly.mentor.data.repo.LocalRecordingRepository
-import uz.darsly.mentor.data.repo.ModerationRepository
-import uz.darsly.mentor.data.repo.RoomChatRepository
-import uz.darsly.mentor.data.repo.RoomRepository
 import uz.darsly.mentor.data.livekit.HandQueue
 import uz.darsly.mentor.data.livekit.LessonSession
-import uz.darsly.mentor.data.livekit.LessonSessionHolder
-import uz.darsly.mentor.data.livekit.NetworkMonitor
-import uz.darsly.mentor.data.livekit.NetworkSwitchPolicy
-import uz.darsly.mentor.data.livekit.Transport
+import uz.darsly.mentor.data.livekit.LessonSessionStore
 import uz.darsly.mentor.data.livekit.RaisedHand
 import uz.darsly.mentor.data.livekit.ReactionFeed
 import uz.darsly.mentor.data.livekit.RoomDataParser
 import uz.darsly.mentor.data.livekit.RoomReaction
 import uz.darsly.mentor.data.livekit.RoomSignal
 import uz.darsly.mentor.data.livekit.ScreenAudioPolicy
-import uz.darsly.mentor.data.livekit.ScreenSharePlan
 import uz.darsly.mentor.data.livekit.ShareBackgroundPlan
+import uz.darsly.mentor.data.livekit.TransportSource
+import uz.darsly.mentor.data.repo.LessonsRepository
+import uz.darsly.mentor.data.repo.LocalRecordingRepository
+import uz.darsly.mentor.data.repo.ModerationRepository
+import uz.darsly.mentor.data.repo.RoomChatRepository
+import uz.darsly.mentor.data.repo.RoomRepository
 import uz.darsly.mentor.data.store.UiPrefs
-import uz.darsly.mentor.service.LessonNotifications
-import uz.darsly.mentor.service.LessonService
-import uz.darsly.mentor.service.ShareFrameOverlay
+import uz.darsly.mentor.di.ApplicationScope
+import uz.darsly.mentor.service.LessonPlatform
 import uz.darsly.mentor.util.LessonFormat
+import java.io.File
+import javax.inject.Inject
 
 /**
  * Ekranda ko'rsatiladigan ishtirokchi (M20).
@@ -105,7 +99,7 @@ data class RosterEntry(
 
 data class RoomUiState(
     val connecting: Boolean = false,
-    val connState: String = "disconnected",
+    val connState: ConnState = ConnState.DISCONNECTED,
     val roomName: String? = null,
     val identity: String? = null,
     val participantCount: Int = 0,
@@ -164,7 +158,7 @@ data class RoomUiState(
      *
      * Ustoz ekran ulashganda ilova fonda qoladi va bu ro'yxat ekranda
      * ko'rinmaydi — shuning uchun u bir vaqtning o'zida BILDIRISHNOMA matniga
-     * ham chiqariladi (`LessonNotifications.signals`). Aks holda darsning eng
+     * ham chiqariladi (`LessonPlatform.updateSignals`). Aks holda darsning eng
      * muhim signali aynan eng muhim paytda yo'qolardi.
      */
     val hands: List<RaisedHand> = emptyList(),
@@ -220,6 +214,8 @@ data class RoomUiState(
      * chizilganda ilova o'zini yana fonga tashlardi.
      */
     val shareBackground: ShareBackgroundPlan.Decision? = null,
+    /** №25 sozlamasi — «Ko'proq» panelida o'zgartiriladi; manba [UiPrefs] (M9). */
+    val autoBackgroundOnShare: Boolean = true,
     /** Spike diagnostikasi: ekranga chiqadigan qisqa jurnal. */
     val log: List<String> = emptyList(),
 ) {
@@ -246,8 +242,7 @@ data class RoomUiState(
      * sessiya va tirik foreground servis qoldirardi.
      */
     val lessonActive: Boolean
-        get() = connecting || connState == "connected" || connState == "reconnecting" ||
-            screenOn || lessonLive
+        get() = connecting || connState.inRoom || screenOn || lessonLive
 
     /**
      * "Ekran audiosi" sababini joriy holatdan qayta hisoblaydi (B-4).
@@ -277,31 +272,58 @@ data class RoomUiState(
  */
 private const val MAX_CHAT = 200
 
-/** Lokal yozuv video bitreyti (bps) — VBR TARGETI ([LocalRecorder] VBR rejimда).
- *  Ekran/slayd kontenti yaxshi siqiladi; 1.5 Mbps VBR Zoom-darajа ravshanlik beradi,
- *  statik kadrда bitni isrof qilmaydi. Yakuniy hajmni dars tugagach post-siqish
+/** Lokal yozuv video bitreyti (bps) — VBR TARGETI ([uz.darsly.mentor.data.livekit.LocalRecorder] VBR rejimida).
+ *  Ekran/slayd kontenti yaxshi siqiladi; 1.5 Mbps VBR Zoom-daraja ravshanlik beradi,
+ *  statik kadrda bitni isrof qilmaydi. Yakuniy hajmni dars tugagach post-siqish
  *  (telefonda H.264 CRF) hal qiladi — bu faqat jonli oraliq faylni yengillashtiradi. */
 private const val LOCAL_REC_BITRATE = 1_500_000
 
+/**
+ * Serverda ochilgan lokal yozuv qatori: `local-start` bergan ID va boshlanish vaqti.
+ * Yuklashda davomiylik shundan hisoblanadi.
+ */
+private data class ActiveRecording(val id: String, val startedAtMs: Long)
+
+/**
+ * Xona ekranining ViewModel'i.
+ *
+ * ## Egalik (M2)
+ * Sessiyaning egasi [LessonSessionStore]; bu sinf uni FAQAT store orqali oladi va
+ * bo'shatadi. Bo'shatish ilova qamrovida ([appScope]) bajariladi — ekran yopilib
+ * `viewModelScope` bekor qilinsa ham tugaydi (C1). Android tizimi bilan barcha
+ * muloqot [LessonPlatform] orqali — shu tufayli bu sinf JVM testida yaratiladi.
+ */
 @HiltViewModel
 class RoomViewModel @Inject constructor(
-    @ApplicationContext private val appContext: Context,
     private val rooms: RoomRepository,
     private val moderation: ModerationRepository,
     private val chatRepo: RoomChatRepository,
     private val lessons: LessonsRepository,
     private val localRec: LocalRecordingRepository,
     private val uiPrefs: UiPrefs,
+    private val sessions: LessonSessionStore,
+    private val platform: LessonPlatform,
+    transports: TransportSource,
+    @ApplicationScope private val appScope: CoroutineScope,
 ) : ViewModel() {
 
-    // Client-side (lokal) yozuv holati.
-    private var localRecId: String? = null
-    private var localRecStartMs = 0L
-
-    private val _state = MutableStateFlow(RoomUiState())
+    private val _state = MutableStateFlow(RoomUiState(autoBackgroundOnShare = uiPrefs.autoBackgroundOnShare))
     val state: StateFlow<RoomUiState> = _state.asStateFlow()
 
-    private var session: LessonSession? = null
+    /** Joriy sessiya — UI sahnasi (`room`) va so'rovnoma paneli (room-token) uchun. */
+    val session: StateFlow<LessonSession?> = sessions.session
+
+    /** Bu ekran EGALIK QILAYOTGAN sessiya (store'dagi bilan bir xil bo'lishi tekshiriladi). */
+    private var current: LessonSession? = null
+
+    /** Serverda ochilgan lokal yozuv qatori (yozuv ketayotganda). */
+    private var activeRecording: ActiveRecording? = null
+
+    /**
+     * Ustoz yozuvni XOHLAYDIMI — avto-sozlama yoki oxirgi qo'lda tanlov (H5).
+     * Ekran treki qaytganda yozuv shu niyat bo'yicha qayta boshlanadi.
+     */
+    private var recordWanted = false
 
     /** Data-channel signallarini o'qiydi (sof, JVM testida qoplangan). */
     private val dataParser = RoomDataParser()
@@ -318,26 +340,23 @@ class RoomViewModel @Inject constructor(
      * Unda backoff sikli, `intentional` bayrog'i va tarmoq kuzatuvi birga
      * yashaydi; ular bu sinfda boshqa mas'uliyatlar bilan aralashib yotgan edi.
      */
-    private val reconnects by lazy {
-        ReconnectController(
-            appContext = appContext,
-            scope = viewModelScope,
-            onState = { transform -> _state.update(transform) },
-            onLog = { line -> log(line) },
-            onReconnected = { restoreScreenShare() },
-        )
-    }
+    private val reconnects = ReconnectController(
+        transports = transports,
+        scope = viewModelScope,
+        onState = { transform -> _state.update(transform) },
+        onLog = { line -> log(line) },
+        onReconnected = { restoreScreenShare() },
+    )
 
     /**
      * Ekran ulashish — alohida controller'da.
      *
      * Bu blok bu yerdagi eng murakkabi edi: o'z holati (niyat + saqlangan
      * rozilik), Android 14+ ning maxsus qoidalari va uch tarmoqli tiklash
-     * mantiqi. Ajratilgach u LiveKit'siz sinaladi va bu sinf 130 qatorga
-     * yengillashdi.
+     * mantiqi. Ajratilgach u LiveKit'siz sinaladi.
      */
     private val screenShare = ScreenShareController(
-        appContext = appContext,
+        platform = platform,
         onState = { transform -> _state.update(transform) },
         onLog = { line -> log(line) },
     )
@@ -376,9 +395,24 @@ class RoomViewModel @Inject constructor(
         _state.update { it.copy(micDenied = false) }
     }
 
+    // ── UI sozlamalari (M9: Compose `PrefsUiPrefs.create(ctx)` bilan Hilt'ni chetlab o'tardi) ──
+
+    /** "Butun ekran" tushuntirishi hali ko'rsatilsinmi. */
+    val shareTipEnabled: Boolean get() = uiPrefs.screenShareTipEnabled
+
+    /** Ustoz "Boshqa eslatilmasin" dedi. */
+    fun muteShareTip() {
+        uiPrefs.screenShareTipEnabled = false
+    }
+
+    fun setAutoBackgroundOnShare(on: Boolean) {
+        uiPrefs.autoBackgroundOnShare = on
+        _state.update { it.copy(autoBackgroundOnShare = on) }
+    }
+
     /**
      * `POST /lessons/:id/token` → host RoomToken → LiveKit'ga ulanish.
-     * Sessiya [LessonSessionHolder] da yashaydi (Activity qayta yaratilsa uzilmaydi).
+     * Sessiya [LessonSessionStore] da yashaydi (Activity qayta yaratilsa uzilmaydi).
      *
      * DIQQAT (B-2): bu funksiya FAQAT ruxsat natijasi ma'lum bo'lgach chaqiriladi.
      * [withCamera] = kamera ruxsati berilganmi; berilmagan bo'lsa kamera yoqilmaydi
@@ -390,33 +424,26 @@ class RoomViewModel @Inject constructor(
         shareBackgroundHandled = false
         _state.update { it.copy(connecting = true, error = null, micDenied = false) }
         viewModelScope.launch {
-            val ctx = appContext
             // KUTILMAGAN ISTISNO QOROVULI (🟡A).
             //
-            // Quyidagi ikki chaqiruv `runCatching` bilan qoplanmagan edi:
-            // `LessonService.start` (Android 12+ da fon rejimidan chaqirilsa
-            // `ForegroundServiceStartNotAllowedException`) va `LessonSessionHolder.start`.
-            // Ular otilsa korutina jim o'lardi va [joinGuard] CONNECTING da qotib qolardi:
+            // `platform.startService` (Android 12+ da fon rejimidan chaqirilsa
+            // `ForegroundServiceStartNotAllowedException`) va `sessions.start`
+            // otilsa korutina jim o'lardi va [joinGuard] CONNECTING da qotib qolardi:
             // ekranda **abadiy spinner**, `error == null` bo'lgani uchun "Qayta urinish"
             // tugmasi ham chiqmasdi — ya'ni tuzatilgan xatodan yomonroq holat.
             //
             // `CancellationException` qayta otiladi: u xato emas, ViewModel yopilishi
             // (yoki `viewModelScope` bekor qilinishi) signali.
+            var s: LessonSession? = null
             try {
-                // Dars boshlanishi bilan foreground servis: mikrofon/kamera fon rejimida
-                // o'lmasin (ekran ulashish tipi keyinroq, ruxsat olingandan so'ng qo'shiladi).
-                LessonService.start(ctx, withProjection = false)
-
                 val token = rooms.hostToken(lessonId)
                     .getOrElse { t ->
                         _state.update { it.copy(connecting = false, error = ApiErrors.humanError(t)) }
-                        releaseSession()
-                        LessonService.stop(ctx)
+                        joinGuard.onFailed()
                         return@launch
                     }
                 // `RoomRepository.hostToken` bo'sh javobni xatoga aylantiradi,
-                // shuning uchun bu yerda `token` non-null (avvalgi qo'shimcha
-                // null-tekshiruv o'lik kodga aylandi).
+                // shuning uchun bu yerda `token` non-null.
                 log("token OK · room=${token.roomName} · ws=${token.wsUrl}")
                 // Host token berildi = server darsni `live` ga o'tkazdi. Bundan
                 // keyin chiqish faqat "Yakunlash / Vaqtincha chiqish" savoli bilan.
@@ -426,6 +453,7 @@ class RoomViewModel @Inject constructor(
                 // chidamli so'rov: nom kelmasa ham dars boshlanaverishi kerak.
                 lessons.byId(lessonId)
                     ?.let { lesson ->
+                        recordWanted = lesson.isRecordingEnabled
                         _state.update {
                             it.copy(
                                 lessonTitle = lesson.title,
@@ -434,21 +462,29 @@ class RoomViewModel @Inject constructor(
                         }
                     }
 
-                val s = LessonSessionHolder.start(ctx, lessonId, token)
-                session = s
+                // TARTIB: avval sessiya (store eskisini bo'shatib SERVISNI
+                // to'xtatadi), keyin foreground servis — aks holda endigina
+                // boshlangan servis eskisining `stopService` i bilan o'lardi.
+                val session = sessions.start(lessonId, token)
+                s = session
+                current = session
+                // Dars boshlanishi bilan foreground servis: mikrofon/kamera fon rejimida
+                // o'lmasin (ekran ulashish tipi keyinroq, ruxsat olingandan so'ng qo'shiladi).
+                platform.startService(withProjection = false)
+
                 // Tizim pardasidagi "Stop sharing" — ustozning O'Z qarori.
                 // Usiz keyingi qayta ulanish uni "uzilib qolgan ulashish" deb
                 // tushunib, to'xtatilgan ulashishni qaytarib tiklardi.
-                s.onUserStoppedShare = {
+                session.onUserStoppedShare = {
                     screenShare.reset()
                     log("ulashish tizim panelidan to'xtatildi")
                 }
-                observe(s)
-                loadRoomState(s)
-                loadChat(s)
-                observeNetwork()
+                observe(session)
+                loadRoomState(session)
+                loadChat(session)
+                observeJobs += reconnects.observeNetwork(_state) { current }
 
-                runCatching { s.connect() }
+                runCatching { session.connect() }
                     .onSuccess {
                         log("LiveKit ulandi")
                         joinGuard.onAttached()
@@ -465,10 +501,6 @@ class RoomViewModel @Inject constructor(
                         // lekin bu noqulay: mentor xonaga kirgan zahoti kutilmaganda
                         // ko'rinib/eshitilib qolardi (tayyor bo'lmagan holatda). Endi ikkalasi
                         // o'chiq turadi va mentor tayyor bo'lgach ControlBar'dan o'zi yoqadi.
-                        //
-                        // Ruxsatlar (mic majburiy, kamera `withCamera`) join'da allaqachon
-                        // so'ralgan, shuning uchun yoqish bir bosishda ishlaydi. micOn/camOn
-                        // boshlang'ich qiymati `false` (RoomUiState) — shu holatда qoladi.
                         log("kirildi — mic/kamera o'chiq (mentor o'zi yoqadi), kamera ruxsati=$withCamera")
                     }
                     .onFailure { t ->
@@ -483,12 +515,11 @@ class RoomViewModel @Inject constructor(
                         }
                         // KRITIK: sessiyani bo'shatamiz. Aks holda (a) qorovul qayta
                         // urinishni bloklaydi, (b) LiveKit Room xotirada osilib qoladi.
-                        releaseSession()
-                        LessonService.stop(ctx)
+                        releaseSession(session)
                     }
             } catch (c: CancellationException) {
                 // ViewModel yopildi — bu xato emas, holatga tegmaymiz.
-                releaseSession()
+                s?.let { releaseSession(it) }
                 throw c
             } catch (t: Throwable) {
                 log("ULANISH ISTISNOSI: ${t::class.simpleName}: ${t.message}")
@@ -498,17 +529,19 @@ class RoomViewModel @Inject constructor(
                         error = RoomErrors.startFailure(t),
                     )
                 }
-                releaseSession()
-                runCatching { LessonService.stop(ctx) }
+                s?.let { releaseSession(it) } ?: joinGuard.onFailed()
             }
         }
     }
 
-    /** Sessiyani to'liq bo'shatadi va qorovulni qayta urinishga tayyorlaydi. */
-    private fun releaseSession() {
+    /**
+     * Sessiyani to'liq bo'shatadi va qorovulni qayta urinishga tayyorlaydi.
+     * Bo'shatishning o'zi store'da, ilova qamrovida — bu korutina bekor qilinsa ham tugaydi.
+     */
+    private fun releaseSession(s: LessonSession) {
         cancelObservers()
-        LessonSessionHolder.stop()
-        session = null
+        if (current === s) current = null
+        sessions.releaseAsync(s)
         joinGuard.onFailed()
     }
 
@@ -529,13 +562,11 @@ class RoomViewModel @Inject constructor(
      *
      * QOIDA: uzilish sababidan **qat'i nazar** proyeksiya va foreground servis
      * bo'shatiladi. "Ba'zi hollarda ushlab turish" — jimgina yozib olish degani.
-     *
-     * `stopScreenShare()` ataylab `release()` dan OLDIN va alohida chaqiriladi:
-     * u `ScreenAudioCapturer` ni ham bo'shatadi va SDK'ning `ScreenCaptureService`
-     * ini to'xtatadi; keyin `release()` `Room` ni yopadi.
      */
-    private fun onDisconnected(sdkReasonName: String?) {
-        val s = session ?: return // biz allaqachon o'zimiz chiqib bo'lganmiz
+    private fun onDisconnected(s: LessonSession, sdkReasonName: String?) {
+        // M6: bu hodisa ESKI sessiyadan kechikib kelgan bo'lishi mumkin (tez
+        // "Qayta boshlash"); yangi sessiyaga tegmaymiz.
+        if (current !== s) return
 
         // ⚠️ QAYTA ULANISH UCHUN ATAYLAB UZILGAN — dars TUGAMAGAN.
         //
@@ -544,8 +575,6 @@ class RoomViewModel @Inject constructor(
         //   → `Disconnected(CLIENT_INITIATED)` → bu handler uni "ustoz chiqdi"
         //   deb tushunib MediaProjection va foreground servisni bo'shatardi
         //   → dars O'LARDI.
-        // Ya'ni C-11 uchun yozilgan tuzatish o'zi darsni tugatardi.
-        //
         // Shu bayroq ikkalasini ajratadi: bizning uzilishimiz jimgina o'tadi,
         // haqiqiy uzilish esa avvalgidek qayta ishlanadi.
         if (reconnects.intentional) {
@@ -559,7 +588,6 @@ class RoomViewModel @Inject constructor(
         // Dars TUGADI — tiklaydigan ulashish yo'q (aks holda "Qayta boshlash"
         // dan keyin ustoz so'ramagan taklif chiqib qolardi).
         screenShare.reset()
-        ShareFrameOverlay.hide()
 
         _state.update {
             it.copy(
@@ -580,42 +608,21 @@ class RoomViewModel @Inject constructor(
             ).withAudioReason()
         }
 
-        // Bo'shatish ALOHIDA korutinada: `releaseSession()` kuzatuvchi job'larni
-        // bekor qiladi va biz hozir AYNAN o'sha job ichida turamiz — shu joyda
-        // to'g'ridan-to'g'ri chaqirsak o'zimizni bekor qilib, tozalashni yarim
-        // yo'lda qoldirardik.
-        viewModelScope.launch {
+        // Bo'shatish ALOHIDA korutinada: `cancelObservers()` kuzatuvchi job'larni
+        // bekor qiladi va biz hozir AYNAN o'sha job ichida turamiz.
+        val recording = takeActiveRecording()
+        cancelObservers()
+        current = null
+        joinGuard.onFailed()
+        appScope.launch {
             // Lokal yozuvni AVVAL to'xtatib yuklash navbatiga qo'yamiz (ekran
             // ulashish/projection bo'shatilishidan oldin fayl finalize bo'lsin).
-            stopAndUploadLocalRecording(s)
+            stopAndUploadLocalRecording(s, recording)
             runCatching { s.stopScreenShare() }
                 .onFailure { log("ulashishni to'xtatish XATO: ${it.message}") }
-            releaseSession()
-            LessonService.stop(appContext)
+            sessions.release(s)
             log("MediaProjection va foreground servis bo'shatildi")
         }
-    }
-
-    /**
-     * Tarmoq almashuvini kuzatadi (C-11).
-     *
-     * LiveKit SDK'sining o'z qayta ulanishi bor, lekin Android'da eski interfeys
-     * DARHOL o'lmaydi: soket ochiq ko'rinadi, paket ketmaydi. SDK buni faqat
-     * timeout orqali sezadi va ustoz shu vaqt jim ekranga qarab turadi.
-     * Transport o'zgarishi esa "eski yo'l yaroqsiz" degan ANIQ signal.
-     *
-     * Qaror [NetworkSwitchPolicy] da — u sof va testlar bilan qotirilgan.
-     */
-    private fun observeNetwork() {
-        observeJobs += reconnects.observeNetwork(_state) { session }
-    }
-
-    /**
-     * Majburiy qayta ulanish. Sikl va uning sabablari `ReconnectController` da.
-     */
-    private fun forceReconnect() {
-        val s = session ?: return
-        reconnects.force(s, isCurrent = { session === it })
     }
 
     /**
@@ -681,7 +688,7 @@ class RoomViewModel @Inject constructor(
             }
 
             is RoomSignal.Chat -> {
-                val myId = session?.roomToken?.identity
+                val myId = current?.roomToken?.identity
                 val ui = ChatMessageUi(
                     id = signal.id,
                     name = signal.senderName,
@@ -755,7 +762,7 @@ class RoomViewModel @Inject constructor(
 
     /** Xabar yuboradi. `to` bo'sh bo'lsa — hammaga. */
     fun sendChat(body: String, to: String = "") {
-        val s = session ?: return
+        val s = current ?: return
         val lessonId = s.roomToken.lessonId
         if (lessonId.isBlank() || body.isBlank()) return
         viewModelScope.launch {
@@ -780,7 +787,7 @@ class RoomViewModel @Inject constructor(
      * emas va "Qayta urinish → xonaga qayta ulanish" ma'nosiz javob bo'lardi.
      */
     fun sendChatFile(uri: android.net.Uri, body: String = "", to: String = "") {
-        val s = session ?: return
+        val s = current ?: return
         val lessonId = s.roomToken.lessonId
         if (lessonId.isBlank() || _state.value.chatUploading) return
         _state.update { it.copy(chatUploading = true) }
@@ -807,7 +814,7 @@ class RoomViewModel @Inject constructor(
      * ko'rinmaydi (tarix qayta yuklanganda tiklanadi), lekin sabab ko'rsatiladi.
      */
     fun deleteChat(messageId: String) {
-        val s = session ?: return
+        val s = current ?: return
         val lessonId = s.roomToken.lessonId
         if (lessonId.isBlank() || messageId.isBlank()) return
         _state.update { st -> st.copy(chat = st.chat.filterNot { it.id == messageId }) }
@@ -827,7 +834,7 @@ class RoomViewModel @Inject constructor(
      * (data-channel), ya'ni qo'shimcha lokal yozuv DUBLIKAT bo'lardi.
      */
     fun sendReaction(emoji: String) {
-        val s = session ?: return
+        val s = current ?: return
         val lessonId = s.roomToken.lessonId
         if (lessonId.isBlank() || !Reactions.isAllowed(emoji)) return
         viewModelScope.launch {
@@ -867,13 +874,13 @@ class RoomViewModel @Inject constructor(
      * beradi va ustoz bosgan tugma natijasi bilan bir manbadan keladi.
      */
     fun refreshRoster() {
-        val lessonId = session?.roomToken?.lessonId ?: return
+        val lessonId = current?.roomToken?.lessonId ?: return
         if (lessonId.isBlank()) return
         viewModelScope.launch {
             rooms.participants(lessonId)
                 .onSuccess { items ->
                     val raised = _state.value.hands.map { it.identity }.toSet()
-                    val me = session?.roomToken?.identity
+                    val me = current?.roomToken?.identity
                     _state.update { st ->
                         // Ustozni filtrlash + qo'l belgisi — sof [RosterBuilder] da.
                         st.copy(
@@ -895,14 +902,18 @@ class RoomViewModel @Inject constructor(
     /**
      * Moderatsiya amali. Har biridan keyin ro'yxat yangilanadi — ustoz natijani
      * darhol ko'rsin (aks holda "bosdim, hech nima o'zgarmadi" hissi qoladi).
+     *
+     * Xato [notice] ga (H2): repozitoriy endi 403/404/500 ni haqiqatan xato deb
+     * qaytaradi va ustoz "mute qildim" deb yanglishmaydi. `error` emas —
+     * u "Ulanmadi + Qayta urinish" kartasini chiqarardi.
      */
-    private fun moderate(action: suspend (String) -> Unit) {
-        val lessonId = session?.roomToken?.lessonId ?: return
+    private fun moderate(action: suspend (String) -> Result<Unit>) {
+        val lessonId = current?.roomToken?.lessonId ?: return
         if (lessonId.isBlank()) return
         viewModelScope.launch {
-            runCatching { action(lessonId) }
+            action(lessonId)
                 .onSuccess { refreshRoster() }
-                .onFailure { _state.update { st -> st.copy(error = ApiErrors.humanError(it)) } }
+                .onFailure { _state.update { st -> st.copy(notice = ApiErrors.humanError(it)) } }
         }
     }
 
@@ -942,8 +953,7 @@ class RoomViewModel @Inject constructor(
     /** Foreground bildirishnoma matnini joriy signallar bilan yangilaydi. */
     private fun notifySignals(vibrate: Boolean) {
         val st = _state.value
-        LessonNotifications.updateSignals(
-            ctx = appContext,
+        platform.updateSignals(
             hands = st.hands.size,
             lastReaction = st.reactions.firstOrNull()?.let { "${it.emoji} ${it.name}".trim() },
             vibrate = vibrate,
@@ -957,7 +967,7 @@ class RoomViewModel @Inject constructor(
      */
     private fun observe(s: LessonSession) {
         observeJobs += viewModelScope.launch {
-            s.room.events.collect { event ->
+            s.events.collect { event ->
                 when (event) {
                     is RoomEvent.Connected -> {
                         _state.update { it.copy(reconnecting = false) }
@@ -983,7 +993,7 @@ class RoomViewModel @Inject constructor(
                     is RoomEvent.Disconnected -> {
                         log("uzildi: ${event.reason}")
                         setConn(s.room)
-                        onDisconnected(event.reason?.name)
+                        onDisconnected(s, event.reason?.name)
                     }
                     // M16: aloqa sifati — FAQAT o'zimizning ko'rsatkichimiz
                     // (o'quvchining yomon interneti ustozning indikatorini qizartirmasin).
@@ -1002,10 +1012,23 @@ class RoomViewModel @Inject constructor(
                         refreshParticipants(s.room)
                     }
                     // M20: video plitkalari aynan shu hodisalarda paydo bo'ladi/yo'qoladi.
-                    is RoomEvent.TrackSubscribed,
-                    is RoomEvent.TrackUnsubscribed,
+                    //
+                    // H3: o'quvchi ovozi LOKAL YOZUVGA ham shu yerda ulanadi. Avval
+                    // sink'lar faqat yozuv boshlanganda ulanardi — Record bosilgandan
+                    // KEYIN kirgan o'quvchi yozuvda jim qolardi.
+                    is RoomEvent.TrackSubscribed -> {
+                        (event.track as? AudioTrack)?.let { s.localRecordingOnRemoteAudio(it, added = true) }
+                        refreshParticipants(s.room)
+                    }
+                    is RoomEvent.TrackUnsubscribed -> {
+                        (event.track as? AudioTrack)?.let { s.localRecordingOnRemoteAudio(it, added = false) }
+                        refreshParticipants(s.room)
+                    }
                     is RoomEvent.TrackMuted,
                     is RoomEvent.TrackUnmuted,
+                    // M5: "gapiryapti" nuri aynan shu hodisada o'zgaradi — usiz plitka
+                    // keyingi tasodifiy hodisagacha eski holatda qotib turardi.
+                    is RoomEvent.ActiveSpeakersChanged,
                     -> refreshParticipants(s.room)
                     // DIQQAT: TrackPublicationFailed'da exception `val` emas (SDK 2.27.0),
                     // shuning uchun faqat track nomini log qilamiz.
@@ -1035,13 +1058,17 @@ class RoomViewModel @Inject constructor(
                 // ustoz BOSHQA ilovaga o'tsa ham efir/yozuv ketayotganini ko'radi.
                 // Yozuv yoniq bo'lsa qizil, aks holda mint (ShareFrameOverlay izohi).
                 if (on) {
-                    ShareFrameOverlay.show(
-                        appContext,
-                        ShareFrameOverlay.colorFor(_state.value.recordingEnabled),
-                    )
+                    platform.showShareFrame(recording = _state.value.recordingEnabled)
                     onShareStarted()
                 } else {
-                    ShareFrameOverlay.hide()
+                    platform.hideShareFrame()
+                }
+                // H5: yozuv ekran trekiga bog'liq — trek ketsa segment yakunlanadi,
+                // qaytsa (ustoz xohlagan bo'lsa) yangisi boshlanadi. Qaror sof.
+                when (RecordControl.onShareChanged(on, recordWanted, s.isLocalRecording())) {
+                    RecordControl.ShareAction.STOP -> stopAndUploadLocalRecording(s, takeActiveRecording())
+                    RecordControl.ShareAction.START -> beginLocalRecording(s)
+                    RecordControl.ShareAction.NONE -> Unit
                 }
             }
         }
@@ -1067,7 +1094,7 @@ class RoomViewModel @Inject constructor(
     private fun setConn(room: Room) {
         _state.update {
             it.copy(
-                connState = room.state.name.lowercase(),
+                connState = ConnState.fromSdk(room.state.name),
                 participantCount = room.remoteParticipants.size + 1,
             )
         }
@@ -1105,7 +1132,7 @@ class RoomViewModel @Inject constructor(
     }
 
     fun toggleMic() = viewModelScope.launch {
-        val s = session ?: return@launch
+        val s = current ?: return@launch
         val target = !_state.value.micOn
         runCatching { s.setMicrophoneEnabled(target) }
             .onSuccess { _state.update { it.copy(micOn = target).withAudioReason() } }
@@ -1113,7 +1140,7 @@ class RoomViewModel @Inject constructor(
     }
 
     fun toggleCam() = viewModelScope.launch {
-        val s = session ?: return@launch
+        val s = current ?: return@launch
         val target = !_state.value.camOn
         runCatching { s.setCameraEnabled(target) }
             .onSuccess { _state.update { it.copy(camOn = target) } }
@@ -1122,7 +1149,7 @@ class RoomViewModel @Inject constructor(
 
     /** M12: old ↔ orqa. Kamera o'chiq bo'lsa hech narsa qilinmaydi (UI ham bloklaydi). */
     fun flipCamera() {
-        val s = session ?: return
+        val s = current ?: return
         if (s.flipCamera()) {
             log(if (s.cameraFront.value) "old kameraga o'tildi" else "orqa kameraga o'tildi")
         } else {
@@ -1141,17 +1168,19 @@ class RoomViewModel @Inject constructor(
      *     endi proyeksiya ruxsati bor, shuning uchun tip qabul qilinadi.
      *  2. Keyin `setScreenShareEnabled(true, ScreenCaptureParams(...))`.
      *     SDK ichida ham FGS avval, `startCapture()` keyin (LocalParticipant.kt:389-390).
+     *
+     * Yozuv bu yerda boshlanmaydi — u `screenShareOn` oqimidan (trek HAQIQATAN
+     * chiqqanda) boshlanadi, shunda tiklangan ulashish ham bir xil yo'ldan o'tadi.
      */
     fun startScreenShare(resultData: Intent) = viewModelScope.launch {
-        val s = session ?: run { log("ekran: sessiya yo'q"); return@launch }
+        val s = current ?: run { log("ekran: sessiya yo'q"); return@launch }
         screenShare.start(s, resultData)
-        maybeStartLocalRecording(s)
         notifySignals(vibrate = false)
     }
 
     fun stopScreenShare() = viewModelScope.launch {
-        val s = session ?: return@launch
-        stopAndUploadLocalRecording(s)
+        val s = current ?: return@launch
+        stopAndUploadLocalRecording(s, takeActiveRecording())
         screenShare.stop(s)
         notifySignals(vibrate = false)
     }
@@ -1159,26 +1188,23 @@ class RoomViewModel @Inject constructor(
     // ─── Client-side (lokal) yozuv orkestratsiyasi ─────────────────────────────
 
     /**
-     * AVTO-yozuv: dars sozlamasi (`is_recording_enabled`) yoniq bo'lsa, ekran
-     * ulashilganда yozuvni o'zi boshlaydi. O'chirilgan bo'lsa hech narsa qilmaydi —
-     * ustoz xohlasa Record tugmasi bilan [toggleRecording] orqali qo'lда boshlaydi.
-     */
-    private fun maybeStartLocalRecording(s: LessonSession) {
-        if (!_state.value.recordingEnabled) return
-        beginLocalRecording(s)
-    }
-
-    /**
      * ⭐ RECORD tugmasi (Zoom kabi) — yozuvni QO'LDA boshlash/to'xtatish.
      *
      * Yozuv EKRANni yozadi, shuning uchun ekran ulashilmagan bo'lsa boshlab
-     * bo'lmaydi — ustozga hint ko'rsatiladi (avval ulashsin).
+     * bo'lmaydi — ustozga hint ko'rsatiladi (avval ulashsin). Qo'lda tanlov
+     * [recordWanted] niyatini ham yangilaydi (H5).
      */
     fun toggleRecording() {
-        val s = session ?: return
+        val s = current ?: return
         when (RecordControl.toggle(s.isLocalRecording(), _state.value.screenOn)) {
-            RecordControl.Action.STOP -> stopAndUploadLocalRecording(s)
-            RecordControl.Action.START -> beginLocalRecording(s)
+            RecordControl.Action.STOP -> {
+                recordWanted = false
+                stopAndUploadLocalRecording(s, takeActiveRecording())
+            }
+            RecordControl.Action.START -> {
+                recordWanted = true
+                beginLocalRecording(s)
+            }
             RecordControl.Action.HINT_NO_SCREEN -> _state.update {
                 it.copy(recordHint = "Yozib olish ekranni yozadi — avval ekran ulashing")
             }
@@ -1204,11 +1230,10 @@ class RoomViewModel @Inject constructor(
                 return@launch
             }
             // Ekran treki tayyor bo'lishini kutamiz (3 urinish).
-            repeat(3) { attempt ->
-                val file = s.startLocalRecording(lessonId, LOCAL_REC_BITRATE)
+            repeat(3) {
+                val file = s.startLocalRecording(LOCAL_REC_BITRATE)
                 if (file != null) {
-                    localRecId = id
-                    localRecStartMs = System.currentTimeMillis()
+                    activeRecording = ActiveRecording(id, System.currentTimeMillis())
                     _state.update { it.copy(isRecording = true) }
                     log("lokal yozuv boshlandi: ${file.name}")
                     return@launch
@@ -1220,31 +1245,40 @@ class RoomViewModel @Inject constructor(
         }
     }
 
-    /** Lokal yozuvni to'xtatadi va app-scoped korutinada serverga yuklaydi. */
-    @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
-    private fun stopAndUploadLocalRecording(s: LessonSession) {
-        if (!s.isLocalRecording()) return
+    /** Joriy yozuv qatorini oladi va holatni "yozilmayapti" ga o'tkazadi. */
+    private fun takeActiveRecording(): ActiveRecording? {
+        val rec = activeRecording
+        activeRecording = null
         _state.update { it.copy(isRecording = false) }
-        val id = localRecId
-        val startMs = localRecStartMs
-        localRecId = null
-        val file = s.stopLocalRecording()
-        // Yuklash/yetim-fayl qarori sof [RecordControl] da.
-        if (!RecordControl.canUpload(id, file != null)) {
-            if (RecordControl.deleteOrphan(id, file != null)) file?.delete()
-            return
+        return rec
+    }
+
+    /**
+     * Lokal yozuvni to'xtatadi va ilova qamrovida serverga yuklaydi.
+     *
+     * Yozuvchini yakunlash bloklaydi (muxer), shuning uchun [appScope] da:
+     * u ekran yopilsa ham tugaydi (H4: avval `GlobalScope` edi) va asosiy
+     * oqimni ushlab turmaydi (M3). Yuklangan fayl O'CHIRILADI — u shu yozuvga
+     * xos (nom noyob), jonli yozuvchi hech qachon o'sha yo'lni ushlamaydi.
+     */
+    private fun stopAndUploadLocalRecording(s: LessonSession, recording: ActiveRecording?): Job =
+        appScope.launch {
+            if (!s.isLocalRecording()) return@launch
+            val file = s.stopLocalRecording()
+            // Yuklash/yetim-fayl qarori sof [RecordControl] da.
+            if (!RecordControl.canUpload(recording?.id, file != null)) {
+                if (RecordControl.deleteOrphan(recording?.id, file != null)) file?.delete()
+                return@launch
+            }
+            uploadRecording(recording ?: return@launch, file ?: return@launch)
         }
-        val recId = id!!
-        val recFile = file!!
-        val durationSec = RecordControl.durationSec(startMs, System.currentTimeMillis())
+
+    private suspend fun uploadRecording(recording: ActiveRecording, file: File) {
+        val durationSec = RecordControl.durationSec(recording.startedAtMs, System.currentTimeMillis())
         val endedAt = java.time.Instant.now().toString()
-        // App-scoped: xonadan chiqilgach ham yuklash davom etsin (MVP; keyinroq
-        // WorkManager bilan qattiqlashtiriladi — ilova o'ldirilsa omon qolsin).
-        GlobalScope.launch(Dispatchers.IO) {
-            localRec.upload(recId, recFile, durationSec, endedAt)
-                .onSuccess { recFile.delete() }
-                .onFailure { android.util.Log.e("RoomVM", "lokal yozuv yuklash XATO", it) }
-        }
+        localRec.upload(recording.id, file, durationSec, endedAt)
+            .onSuccess { file.delete() }
+            .onFailure { android.util.Log.e("RoomVM", "lokal yozuv yuklash XATO — fayl saqlanadi", it) }
     }
 
     /**
@@ -1287,7 +1321,7 @@ class RoomViewModel @Inject constructor(
      * ishga tushira olmaydi).
      */
     private fun restoreScreenShare() {
-        val s = session ?: return
+        val s = current ?: return
         val consent = screenShare.planAfterReconnect(s) ?: return
         viewModelScope.launch { screenShare.start(s, consent) }
     }
@@ -1299,34 +1333,55 @@ class RoomViewModel @Inject constructor(
      * `live` bo'lib qolaveradi. Mobil ilovada yakunlash yo'li YO'Q edi — shu
      * sabab darslar abadiy "Jonli" bo'lib turardi.
      *
-     * Server xatosi bo'lsa ham mahalliy resurslar baribir bo'shatiladi: ustoz
-     * ekranda qulflanib qolmasligi kerak (dars statusini keyin ro'yxatdan yoki
-     * web'dan tuzatish mumkin).
+     * C1: server so'rovi ham, bo'shatish ham [appScope] da. Avval bu
+     * `viewModelScope` da edi — UI "Yakunlash" dan keyin darhol ekranni
+     * yopardi, qamrov bekor bo'lardi va `leave()` HECH QACHON bajarilmasdi:
+     * xona, servis, MediaProjection tirik, yozuv `moov`siz. Server xatosi
+     * bo'lsa ham mahalliy resurslar baribir bo'shatiladi.
      */
     fun endLesson(lessonId: String) {
-        viewModelScope.launch {
+        val s = current
+        val recording = takeActiveRecording()
+        resetLocalState()
+        appScope.launch {
             rooms.endLesson(lessonId)
                 .onSuccess { log("dars yakunlandi (server)") }
                 .onFailure { log("yakunlash XATO: ${it.message}") }
-            leave()
+            if (s != null) teardown(s, recording)
         }
     }
 
     /** Darsni tark etish (xonani yopmaydi — bu `POST /lessons/:id/end` ishi). */
     fun leave() {
-        ShareFrameOverlay.hide()
-        // Lokal yozuvni AVVAL finalize qilib yuklash navbatiga qo'yamiz — aks holda
-        // `cancelObservers()` disconnect kuzatuvchisini o'chirib, `session=null` esa
-        // `onDisconnected()` dagi to'xtatishni ham chetlab o'tardi → fayl `moov`siz
-        // yaroqsiz qolardi (Yakunlash yo'li yozuvni orfan qilib qo'yardi).
-        session?.let { stopAndUploadLocalRecording(it) }
+        val s = current
+        val recording = takeActiveRecording()
+        resetLocalState()
+        if (s != null) appScope.launch { teardown(s, recording) }
+    }
+
+    /**
+     * ViewModel'ning O'Z holatini darhol tozalaydi (sinxron) — ekran shu zahoti
+     * "chiqdim" holatini ko'rsatadi; og'ir bo'shatish [teardown] da davom etadi.
+     */
+    private fun resetLocalState() {
+        platform.hideShareFrame()
         cancelObservers()
-        LessonSessionHolder.stop()
-        session = null
+        current = null
+        recordWanted = false
         screenShare.reset()
         shareBackgroundHandled = false
         joinGuard.onReleased()
-        LessonService.stop(appContext)
-        _state.value = RoomUiState()
+        _state.value = RoomUiState(autoBackgroundOnShare = uiPrefs.autoBackgroundOnShare)
+    }
+
+    /**
+     * To'liq bo'shatish — ilova qamrovida. Tartib: yozuvni yakunlab yuklashga
+     * qo'yish → store orqali sessiya + servis. Yozuv AVVAL: `release()` ham
+     * yozuvni yakunlaydi (C2), lekin faqat shu yerda uni serverga bog'laydigan
+     * ID bor.
+     */
+    private suspend fun teardown(s: LessonSession, recording: ActiveRecording?) {
+        stopAndUploadLocalRecording(s, recording).join()
+        sessions.release(s)
     }
 }

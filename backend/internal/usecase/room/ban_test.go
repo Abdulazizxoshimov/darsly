@@ -59,7 +59,7 @@ func banSetupWithBlocklist(t *testing.T) (
 	cache = testutil.NewFakeCache()
 	blk = testutil.NewFakeBlocklistRepo()
 	hands := roomstate.New(lrepo, lk, cache, nil, testutil.NewLogger())
-	uc = room.New(lrepo, urepo, lk, cache, testutil.NewLogger(), nil, hands, blk)
+	uc = room.New(lrepo, urepo, lk, cache, testutil.NewLogger(), nil, hands, blk, testutil.NewFakeBanRepo())
 	return uc, lrepo, lk, cache, blk
 }
 
@@ -108,6 +108,34 @@ func TestEnforceJoin_IgnoresForeignRoomAndEmptyIdentity(t *testing.T) {
 	uc.EnforceJoin(ctx, shared.RoomName(testLessonID), "", "")
 
 	require.Empty(t, lk.RemovedList())
+}
+
+// ⭐ DURABLE BAN (system-design audit R2): Redis o'chsa/FLUSHDB bo'lsa ham
+// kick amalda qoladi — ban PG'ga write-through qilingan va gate PG'dan o'qiydi.
+func TestEnforceJoin_DurableAfterRedisLoss(t *testing.T) {
+	ctx := context.Background()
+	lrepo := testutil.NewFakeLessonRepo()
+	urepo := testutil.NewFakeUserRepo()
+	require.NoError(t, urepo.Create(ctx, &entity.User{ID: "mentor1", FullName: "Dilnoza", Role: "mentor"}))
+	require.NoError(t, lrepo.Create(ctx, &entity.Lesson{ID: testLessonID, MentorID: "mentor1", Status: entity.LessonStatusLive}))
+	lk := testutil.NewFakeLiveKit()
+	cache := testutil.NewFakeCache()
+	hands := roomstate.New(lrepo, lk, cache, nil, testutil.NewLogger())
+	uc := room.New(lrepo, urepo, lk, cache, testutil.NewLogger(), nil, hands, testutil.NewFakeBlocklistRepo(), testutil.NewFakeBanRepo())
+
+	require.NoError(t, uc.RemoveParticipant(ctx, "mentor1", testLessonID, "buzgunchi", ""))
+	require.Len(t, lk.RemovedList(), 1)
+
+	// Redis kalitini yo'qotamiz (Redis restart / FLUSHDB simulyatsiyasi).
+	require.NoError(t, cache.Del(ctx, shared.BanKey(testLessonID, "buzgunchi")))
+	require.False(t, shared.IsBanned(ctx, cache, testLessonID, "buzgunchi"), "Redis'da endi yo'q")
+
+	// PG'da ban bor → qaytib kirgan buzg'unchi baribir uziladi.
+	uc.EnforceJoin(ctx, shared.RoomName(testLessonID), "buzgunchi", "Buzg'unchi")
+	require.Equal(t, []string{"buzgunchi", "buzgunchi"}, lk.RemovedList(), "Redis o'chsa ham durable PG ban kick qiladi")
+
+	// Va kesh qayta isitildi.
+	require.True(t, shared.IsBanned(ctx, cache, testLessonID, "buzgunchi"), "kesh qayta isitilishi kerak")
 }
 
 // Ban XONA ICHIDAGI barcha ochiq endpointlarda qo'llanishi kerak — bittasi
@@ -280,7 +308,7 @@ func audioSetup(t *testing.T, muteOnEntry, allowSelfUnmute bool) (room.UseCase, 
 	lk := testutil.NewFakeLiveKit()
 	cache := testutil.NewFakeCache()
 	hands := roomstate.New(lrepo, lk, cache, nil, testutil.NewLogger())
-	return room.New(lrepo, urepo, lk, cache, testutil.NewLogger(), nil, hands, testutil.NewFakeBlocklistRepo()), lk
+	return room.New(lrepo, urepo, lk, cache, testutil.NewLogger(), nil, hands, testutil.NewFakeBlocklistRepo(), testutil.NewFakeBanRepo()), lk
 }
 
 // mute_on_entry: BIRINCHI audio publish mute qilinadi, KEYINGISI tegilmaydi —

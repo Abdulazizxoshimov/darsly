@@ -41,9 +41,16 @@ func redactQuery(raw string) string {
 func Logger(log logger.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
-		path := c.Request.URL.Path
 
 		c.Next()
+
+		// Xom URL path EMAS, route shabloni (/waitingroom/:request_id/status) loglanadi:
+		// path parametrlarida capability (request_id, join slug) bor — ular Loki'ga
+		// tushmasligi kerak. Mos route topilmasa (404/skaner) "unmatched".
+		path := c.FullPath()
+		if path == "" {
+			path = "unmatched"
+		}
 
 		status := c.Writer.Status()
 		reqID, _ := c.Get(HeaderRequestID)

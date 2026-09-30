@@ -59,8 +59,10 @@ type CreatePollReq struct {
 }
 
 // VoteReq — ovoz berish. Token — guest'ning LiveKit access token'i (room-auth).
+// Token'ga `validate:"required"` qo'yilmagan: yo'q token 400 emas, 401 bo'lishi kerak
+// (qarang [HandReq]); handler o'zi tekshiradi.
 type VoteReq struct {
-	Token       string `json:"token"        validate:"required"`
+	Token       string `json:"token"`
 	OptionIndex int    `json:"option_index" validate:"min=0"`
 }
 

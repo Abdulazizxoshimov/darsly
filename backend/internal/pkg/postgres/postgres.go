@@ -43,6 +43,15 @@ func New(ctx context.Context, cfg *config.Config, log logger.Logger) (*Postgres,
 		poolCfg.ConnConfig.RuntimeParams = map[string]string{}
 	}
 	poolCfg.ConnConfig.RuntimeParams["statement_timeout"] = stmtTimeout
+	// Session-guard'lar: tranzaksiya ichida osilib qolgan sessiya lock/conn ushlamasin;
+	// lock kutish cheklangan; pg_stat_activity'da jarayon roli ko'rinsin.
+	poolCfg.ConnConfig.RuntimeParams["idle_in_transaction_session_timeout"] = "30000"
+	poolCfg.ConnConfig.RuntimeParams["lock_timeout"] = "5000"
+	role := cfg.App.Role
+	if role == "" {
+		role = "api"
+	}
+	poolCfg.ConnConfig.RuntimeParams["application_name"] = "darsly-" + role
 
 	pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()

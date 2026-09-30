@@ -16,6 +16,8 @@ import java.io.File
 import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import uz.darsly.mentor.data.livekit.RecorderPipeline.DrainAction
 
@@ -42,8 +44,15 @@ import uz.darsly.mentor.data.livekit.RecorderPipeline.DrainAction
  * ## Audio — AudioSink orqali
  * LiveKit audio treklaridan (ustoz + o'quvchilar) PCM olinib [AudioMixer]
  * bilan aralashtiriladi (AudioPlaybackCapture call-ovozini ushlolmaydi).
+ *
+ * ## Oqimlar (M3)
+ * Kodek callback'lari `local-rec-enc` oqimida. [stop] ham butun bo'shatishni
+ * AYNAN o'sha oqimga yuboradi va tugashini kutadi: shunda `drain()` bilan
+ * `muxer.stop()` hech qachon bir vaqtda ishlamaydi (avval bu asosiy oqimda
+ * edi va bo'shatilgan kodek ustidan kelgan `drain` `IllegalStateException`
+ * bilan ilovani yiqitardi).
  */
-class LocalRecorder(private val outputFile: File) {
+class LocalRecorder(private val outputFile: File) : Recorder {
 
     // Boshlash/to'xtatish idempotentligi — sof, atomik hayot sikli (JVM testida qulflangan).
     private val lifecycle = RecorderLifecycle()
@@ -53,6 +62,9 @@ class LocalRecorder(private val outputFile: File) {
     private var videoTrack: VideoTrack? = null
     private val videoSink = FrameSink()
     private val pendingFrames = ConcurrentLinkedQueue<ByteArray>() // OUT_W×OUT_H I420 tuvallar
+    // Tuval buferlari qayta ishlatiladi (M8): har kadrda 1.38 MB ajratish
+    // ushlash oqimini GC bilan to'xtatib turardi.
+    private val framePool = FramePool(OUT_W * OUT_H * 3 / 2)
     @Volatile private var bitrate = 2_000_000
     private var videoStarted = AtomicBoolean(false)
 
@@ -81,7 +93,7 @@ class LocalRecorder(private val outputFile: File) {
      * @param remoteAudio o'quvchilar audio treklari
      * @return muvaffaqiyat (false → egress fallback)
      */
-    fun start(
+    override fun start(
         screenVideo: VideoTrack,
         videoBitrate: Int,
         localAudio: AudioTrack?,
@@ -110,23 +122,42 @@ class LocalRecorder(private val outputFile: File) {
             true
         } catch (t: Throwable) {
             Log.e(TAG, "local recording start failed — egress fallback", t)
+            // Boshlanishda yiqildi — kodek oqimi hali callback bermaydi, shu
+            // yerda to'g'ridan-to'g'ri bo'shatish xavfsiz.
             safeStop()
             lifecycle.failStart()
             false
         }
     }
 
-    fun addRemoteAudio(track: AudioTrack) {
+    override fun addRemoteAudio(track: AudioTrack) {
         if (lifecycle.isRunning()) attachSink(track)
     }
 
-    fun removeRemoteAudio(track: AudioTrack) {
+    override fun removeRemoteAudio(track: AudioTrack) {
         audioSinks.remove(track)?.let { track.removeSink(it) }
     }
 
-    fun stop() {
+    /**
+     * Yozuvni yakunlaydi. Bo'shatish kodek oqimida bajariladi va shu yerda
+     * kutiladi (eng ko'pi [STOP_TIMEOUT_MS]) — chaqiruvchi fayl tayyor deb
+     * ishonishi mumkin. BLOKLAYDI: asosiy oqimdan chaqirilmasin
+     * ([LocalRecordingController.stop] `Dispatchers.Default` da chaqiradi).
+     */
+    override fun stop() {
         if (!lifecycle.beginStop()) return
-        safeStop()
+        val done = CountDownLatch(1)
+        val posted = ::encHandler.isInitialized && encHandler.post {
+            safeStop()
+            done.countDown()
+        }
+        if (!posted) {
+            safeStop()
+            return
+        }
+        if (!done.await(STOP_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+            Log.w(TAG, "local recording stop timed out — muxer may be unfinished")
+        }
         Log.i(TAG, "local recording stopped: ${outputFile.name} (${outputFile.length()} bytes)")
     }
 
@@ -145,10 +176,17 @@ class LocalRecorder(private val outputFile: File) {
             }
             // Kadrni nisbatini saqlab gorizontal tuval markaziga joylaymiz
             // (letterbox). Natija — doim OUT_W×OUT_H zich I420 bayt massivi.
-            val canvas = composeLandscape(frame.buffer, w, h) ?: return
+            // Bo'sh bufer yo'q — encoder orqada, kadr tashlanadi (M8).
+            val canvas = framePool.acquire() ?: return
+            if (!composeLandscape(frame.buffer, w, h, canvas)) {
+                framePool.release(canvas)
+                return
+            }
             pendingFrames.offer(canvas)
             // Navbat cheksiz o'smasin (encoder sekin bo'lsa eski kadr tashlansin).
-            while (RecorderPipeline.shouldDropOldest(pendingFrames.size)) pendingFrames.poll()
+            while (RecorderPipeline.shouldDropOldest(pendingFrames.size)) {
+                pendingFrames.poll()?.let { framePool.release(it) }
+            }
         }
     }
 
@@ -180,26 +218,27 @@ class LocalRecorder(private val outputFile: File) {
 
     /**
      * Manba kadrini ([src], [srcW]×[srcH]) gorizontal tuval ([OUT_W]×[OUT_H])
-     * ichiga nisbatini saqlab joylashtiradi va zich I420 bayt massivi qaytaradi
-     * (Y+U+V, stride'siz — [VideoCallback] shu tartibda kutadi). Bo'sh joy qora.
+     * ichiga nisbatini saqlab [canvas] ga joylashtiradi — zich I420 (Y+U+V,
+     * stride'siz — [VideoCallback] shu tartibda kutadi). Bo'sh joy qora.
      *
      * Joylashuv hisobi [LetterboxFit] da (sof, JVM test ostida). Masshtablash
      * LiveKit/libwebrtc `cropAndScale` bilan (native, tez).
+     *
+     * @return `false` — kadr o'girilmadi (tuval qaytariladi).
      */
-    private fun composeLandscape(src: VideoFrame.Buffer, srcW: Int, srcH: Int): ByteArray? {
+    private fun composeLandscape(src: VideoFrame.Buffer, srcW: Int, srcH: Int, canvas: ByteArray): Boolean {
         val fit = LetterboxFit.fit(srcW, srcH, OUT_W, OUT_H)
         val scaled = try {
             src.cropAndScale(0, 0, srcW, srcH, fit.w, fit.h)
         } catch (t: Throwable) {
-            Log.e(TAG, "cropAndScale failed", t); return null
+            Log.e(TAG, "cropAndScale failed", t); return false
         }
         val i420 = scaled.toI420()
         return try {
-            if (i420 == null) return null
-            val canvas = ByteArray(OUT_W * OUT_H * 3 / 2)
+            if (i420 == null) return false
             fillBlack(canvas)
             blit(i420, canvas, fit.x, fit.y)
-            canvas
+            true
         } finally {
             i420?.release()
             scaled.release()
@@ -259,6 +298,9 @@ class LocalRecorder(private val outputFile: File) {
                 codec.queueInputBuffer(index, 0, size, pts, 0)
             } catch (t: Throwable) {
                 Log.e(TAG, "video input error", t)
+            } finally {
+                // Kadr kodekka ko'chirildi — tuval keyingi kadr uchun bo'sh (M8).
+                framePool.release(frame)
             }
         }
         override fun onOutputBufferAvailable(codec: MediaCodec, index: Int, info: MediaCodec.BufferInfo) {
@@ -269,7 +311,7 @@ class LocalRecorder(private val outputFile: File) {
         }
         override fun onOutputFormatChanged(codec: MediaCodec, format: MediaFormat) {
             synchronized(muxerLock) {
-                videoTrackIndex = muxer!!.addTrack(format)
+                videoTrackIndex = muxer?.addTrack(format) ?: return
                 maybeStartMuxer()
             }
         }
@@ -343,7 +385,7 @@ class LocalRecorder(private val outputFile: File) {
         }
         override fun onOutputFormatChanged(codec: MediaCodec, format: MediaFormat) {
             synchronized(muxerLock) {
-                audioTrackIndex = muxer!!.addTrack(format)
+                audioTrackIndex = muxer?.addTrack(format) ?: return
                 maybeStartMuxer()
             }
         }
@@ -368,28 +410,43 @@ class LocalRecorder(private val outputFile: File) {
     // ─── Muxer ────────────────────────────────────────────────────────────────
 
     private fun maybeStartMuxer() {
+        val m = muxer ?: return
         if (!muxerStarted && RecorderPipeline.muxerReady(videoTrackIndex, audioTrackIndex)) {
-            muxer!!.start()
+            m.start()
             muxerStarted = true
         }
     }
 
+    /**
+     * Kodek chiqishini muxerga yozadi.
+     *
+     * Bo'shatishga QARSHI QO'RIQLANGAN (M3): [stop] kodek oqimida bajarilgani
+     * uchun bu funksiya u bilan bir vaqtda ishlamaydi, lekin navbatda qolgan
+     * callback bo'shatishdan KEYIN kelishi mumkin — u holda kodek allaqachon
+     * o'lik va har chaqiruv istisno beradi. Shu sabab hayot sikli tekshiriladi
+     * va SDK chaqiruvlari `runCatching` ichida.
+     */
     private fun drain(codec: MediaCodec, index: Int, info: MediaCodec.BufferInfo, video: Boolean) {
-        val isConfig = info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0
-        val out = if (isConfig) null else codec.getOutputBuffer(index)
-        synchronized(muxerLock) {
-            // Qaror sof [RecorderPipeline] da: config buferi YOZILMAYDI, muxer
-            // boshlanmagan yoki bo'sh bufer ham (aks holda fayl buziladi).
-            val action = RecorderPipeline.drainAction(isConfig, if (out != null) info.size else 0, muxerStarted)
-            if (action == DrainAction.WRITE) {
-                out!!.position(info.offset)
-                out.limit(info.offset + info.size)
-                muxer!!.writeSampleData(if (video) videoTrackIndex else audioTrackIndex, out, info)
+        if (!lifecycle.isRunning()) return
+        runCatching {
+            val isConfig = info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0
+            val out = if (isConfig) null else codec.getOutputBuffer(index)
+            synchronized(muxerLock) {
+                // Qaror sof [RecorderPipeline] da: config buferi YOZILMAYDI, muxer
+                // boshlanmagan yoki bo'sh bufer ham (aks holda fayl buziladi).
+                val action = RecorderPipeline.drainAction(isConfig, out?.let { info.size } ?: 0, muxerStarted)
+                val m = muxer
+                if (action == DrainAction.WRITE && out != null && m != null) {
+                    out.position(info.offset)
+                    out.limit(info.offset + info.size)
+                    m.writeSampleData(if (video) videoTrackIndex else audioTrackIndex, out, info)
+                }
             }
-        }
-        codec.releaseOutputBuffer(index, false)
+            codec.releaseOutputBuffer(index, false)
+        }.onFailure { Log.w(TAG, "drain after teardown ignored (${if (video) "video" else "audio"})", it) }
     }
 
+    /** Barcha resurslarni bo'shatadi. Kodek oqimida chaqiriladi ([stop]) — `drain` bilan poyga yo'q. */
     private fun safeStop() {
         runCatching { videoTrack?.removeRenderer(videoSink) }; videoTrack = null
         audioSinks.forEach { (t, s) -> runCatching { t.removeSink(s) } }
@@ -410,6 +467,9 @@ class LocalRecorder(private val outputFile: File) {
     companion object {
         private const val TAG = "LocalRecorder"
         const val VIDEO_FPS = 24
+
+        /** Muxer yakunlanishini kutish chegarasi — undan keyin fayl "qanday bo'lsa shunday". */
+        private const val STOP_TIMEOUT_MS = 5_000L
 
         /**
          * Yozuv DOIM shu gorizontal tuvalga (16:9) chiqadi. Manba tik bo'lsa

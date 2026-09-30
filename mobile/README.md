@@ -307,9 +307,9 @@ adb shell am start -n uz.darsly.mentor/.MainActivity
 | 6c | Ro'yxatda **500 tadan ko'p** dars bo'lsa qolgani ko'rsatilmaydi | 10 × 50 sahifa chegarasi. Jim qirqilmaydi — ustozga xabar chiqadi (`LessonsRepository.MAX_PAGES`) |
 | 7 | Kutish xonasi (WS) yo'q | `TODO(M27)` — BE-1 backend tomonda ✅, mobil tomon keyingi blokda |
 | 8 | Release build imzolanmagan, R8 o'chiq | `TODO` imzo kaliti + proguard (tarqatishdan oldin) |
-| 9 | Room hali servis ichida emas | Process-singleton (`LessonSessionHolder`) + FGS. Activity o'lsa ham process tirik, lekin `TODO` egalikni servisga to'liq ko'chirish |
+| 9 | Room `Service` obyekti ichida emas | Yagona ega — `LessonSessionStore` (Hilt singleton, `StateFlow<LessonSession?>`), bo'shatish ilova qamrovida; `LessonService` (FGS) qorovul: recents'dan surilsa bo'shatadi, store esa servisni to'xtatadi |
 | 10 | `EncryptedSharedPreferences` shifrlash qatlami JVM testida sinalmaydi | Testlar `PrefsTokenStore` mantiqini qoplaydi; Keystore/Tink qismi **haqiqiy qurilma** talab qiladi (§10 QA ro'yxati) |
-| 11 | `RoomViewModel` uchun unit test yo'q | LiveKit `Room`/`Application`siz JVM'da yaratib bo'lmaydi. Ajratilgan `JoinGuard` sinaladi, qolgani — qurilma sinovi |
+| 11 | `RoomViewModel` JVM testi LiveKit hodisalarini qoplamaydi | `LessonSession` interfeysi + `LessonPlatform` seam'i bilan ViewModel JVM'da yaratiladi (`RoomViewModelTest`: yakunlash/chiqish/yozuv segmentlari). `RoomEvent` (Room talab qiladi) yo'llari — qurilma sinovi |
 | 12 | ~~Repository qatlami yarim~~ | ✅ **2-blokda yopildi** — `LessonsRepository` (tarmoq + offline kesh). Qolgani: `RoomViewModel` va `UpdateGate` hamon `Net.api` ni to'g'ridan-to'g'ri chaqiradi |
 | 13 | 2-blok UI'si **qurilmada sinalmagan** | Bo'limlar ko'rinishi, pull-to-refresh imosi, aviarejimda offline chizig'i, Telegram "Ulashish" oynasi — adb'ga qurilma ulanmagani uchun faqat kod darajasida tekshirilgan |
 
@@ -347,7 +347,7 @@ mobile/
         │       │   └── UiPrefs.kt        # interfeys sozlamalari (B-1 tushuntirish bayrog'i)
         │       ├── data/repo/
         │       │   └── LessonsRepository.kt   # tarmoq + kesh + sahifalash (M6 · M7)
-        │       ├── data/livekit/         # LessonSession (⭐ ekran ulashish), LessonSessionHolder
+        │       ├── data/livekit/         # LessonSession (interfeys) · LiveKitLessonSession (⭐ ekran ulashish) · LessonSessionStore (ega)
         │       ├── service/              # LessonService (FGS), LessonNotifications
         │       ├── util/
         │       │   ├── Semver.kt         # semver solishtirish (M42)

@@ -8,6 +8,7 @@ import (
 
 	"github.com/zoom/darsly/internal/entity"
 	ws "github.com/zoom/darsly/internal/infrastructure/websocket"
+	apperr "github.com/zoom/darsly/internal/pkg/errors"
 	"github.com/zoom/darsly/internal/testutil"
 	"github.com/zoom/darsly/internal/usecase/notification"
 )
@@ -52,4 +53,13 @@ func TestNotify_ScopedPerUser(t *testing.T) {
 
 	ca, _ := uc.UnreadCount(ctx, "a")
 	require.Equal(t, 1, ca, "foydalanuvchi faqat o'z bildirishnomasini ko'radi")
+}
+
+// Yaroqsiz :id DB'ga yetmasligi kerak — 404 (500 emas).
+func TestMarkRead_InvalidID_NotFound(t *testing.T) {
+	uc := newNotifUC()
+	for _, id := range []string{"abc", "", "' OR 1=1 --"} {
+		err := uc.MarkRead(context.Background(), "u", id)
+		require.True(t, apperr.IsNotFound(err), "id=%q → 404, oldi: %v", id, err)
+	}
 }

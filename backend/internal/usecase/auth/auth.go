@@ -25,15 +25,21 @@ const (
 	//
 	// Nega IP yetmaydi: IP rate-limit (middleware) bitta IP'ni to'xtatadi, lekin
 	// taqsimlangan hujum (botnet, ko'p IP) bitta hisobga cheksiz parol sinaydi.
-	// Bu yerdagi qulf HISOB (email) bo'yicha — hujum qayerdan kelishidan qat'i nazar.
+	// Qulf (email + IP) JUFTLIGI bo'yicha: bitta IP'dan hujum baribir to'siladi,
+	// lekin hujumchi qurbonning emailini BOSHQA foydalanuvchilar uchun qulflay
+	// olmaydi (klassik account-lockout DoS yopilgan — qurbon o'z IP'sidan kira
+	// oladi). Taqsimlangan (ko'p IP) hujumni IP rate-limit middleware'i va
+	// har-IP 5 urinish chegarasi sekinlashtiradi.
 	//
-	// Tradeoff (ataylab qabul qilingan): hujumchi qurbonning emailiga qasddan
-	// noto'g'ri parol yuborib uni vaqtincha qulflab qo'yishi mumkin (klassik
-	// account-lockout DoS). Buni yumshatish uchun hisoblagich FAQAT MAVJUD
-	// hisoblar uchun oshiriladi — soxta email spam'i Redis'ni to'ldirmaydi.
+	// Hisoblagich FAQAT MAVJUD hisoblar uchun oshiriladi — soxta email spam'i
+	// Redis'ni to'ldirmaydi.
 	maxLoginAttempts  = 5
 	loginFailWindow   = 15 * time.Minute
 	loginLockCooldown = 15 * time.Minute
+
+	// forgot-password per-email throttle: oynada ko'pi bilan shuncha email yuboriladi.
+	maxForgotPerWindow = 3
+	forgotWindow       = 15 * time.Minute
 )
 
 type useCase struct {
@@ -49,6 +55,9 @@ type useCase struct {
 	// tx — ko'p-yozuvli oqim uchun (ixtiyoriy; nil bo'lsa kompensatsiya yo'li).
 	tx  TxRunner
 	log logger.Logger
+	// dummyHash — configlangan bcrypt cost bilan startup'da yasalgan soxta hash
+	// (mavjud bo'lmagan user / qulf uchun timing-himoya; cost haqiqiy hashlarniki bilan teng).
+	dummyHash string
 }
 
 func New(
@@ -64,7 +73,14 @@ func New(
 	tx TxRunner,
 	log logger.Logger,
 ) UseCase {
+	// Startup'da bir marta: hasher'ning O'Z cost'i bilan (const hash cost 12 edi,
+	// default BCRYPT_COST=11 — vaqt farqi enumeration oracle bo'lardi).
+	dummy, err := h.Hash("darsly-timing-dummy-password")
+	if err != nil {
+		dummy = dummyBcryptHash // zaxira (kutilmagan)
+	}
 	return &useCase{
+		dummyHash:   dummy,
 		userRepo:    userRepo,
 		authRepo:    authRepo,
 		tokens:      tokens,
@@ -184,14 +200,16 @@ func (uc *useCase) createUserAndTokenCompensating(
 
 func (uc *useCase) Login(ctx context.Context, req *entity.LoginReq, ip, userAgent string) (*entity.TokenPair, error) {
 	emailKey := normalizeEmail(req.Email)
+	// Qulf kaliti (email+IP) — qurbon emailini begona IP'dan qulflab bo'lmaydi.
+	lockID := emailKey + "|" + ip
 
 	// B4 — hisob qulflanganmi? Parol tekshiruvidan OLDIN. `cache` nil bo'lsa
 	// (test yoki Redis'siz konfiguratsiya) lockout o'chadi — login ishlayveradi.
 	if uc.cache != nil {
-		if locked, _ := uc.cache.Get(ctx, loginLockKey(emailKey)); locked != "" {
+		if locked, _ := uc.cache.Get(ctx, loginLockKey(lockID)); locked != "" {
 			uc.log.Warn(ctx, "auth.Login: account locked (brute-force)", logger.SafeEmail("email", req.Email))
 			// Timing/enumeration himoyasi: qulflangan javobda ham bcrypt vaqtini sarflaymiz.
-			uc.hasher.Check(req.Password, dummyBcryptHash)
+			uc.hasher.Check(req.Password, uc.dummyHash)
 			return nil, apperr.Unauthorized("too many failed attempts, try again later")
 		}
 	}
@@ -203,21 +221,23 @@ func (uc *useCase) Login(ctx context.Context, req *entity.LoginReq, ip, userAgen
 		// shunda "user bor/yo'q" javob vaqti farqidan bilib bo'lmaydi (enumeration).
 		// Hisoblagich ATAYLAB oshirilmaydi: mavjud bo'lmagan email soxta bo'lishi
 		// mumkin (Redis spam) — qulf faqat haqiqiy hisoblar uchun.
-		uc.hasher.Check(req.Password, dummyBcryptHash)
+		uc.hasher.Check(req.Password, uc.dummyHash)
+		return nil, apperr.Unauthorized("invalid credentials")
+	}
+	// TARTIB: avval PAROL, keyin faollik. Aks holda noto'g'ri parol bilan ham
+	// "account is deactivated" (403) javobi deaktiv akkaunt mavjudligini oshkor qilardi.
+	if !uc.hasher.Check(req.Password, user.PasswordHash) {
+		uc.log.Warn(ctx, "auth.Login: wrong password", logger.String("user_id", user.ID))
+		uc.registerFailedLogin(ctx, lockID, req.Email)
 		return nil, apperr.Unauthorized("invalid credentials")
 	}
 	if !user.IsActive {
 		uc.log.Warn(ctx, "auth.Login: account deactivated", logger.String("user_id", user.ID))
 		return nil, apperr.Forbidden("account is deactivated")
 	}
-	if !uc.hasher.Check(req.Password, user.PasswordHash) {
-		uc.log.Warn(ctx, "auth.Login: wrong password", logger.String("user_id", user.ID))
-		uc.registerFailedLogin(ctx, emailKey, req.Email)
-		return nil, apperr.Unauthorized("invalid credentials")
-	}
 	// Muvaffaqiyat — hisoblagich va qulfni tozalaymiz.
 	if uc.cache != nil {
-		_ = uc.cache.Del(ctx, loginFailKey(emailKey), loginLockKey(emailKey))
+		_ = uc.cache.Del(ctx, loginFailKey(lockID), loginLockKey(lockID))
 	}
 
 	sessionID := uuid.NewString()
@@ -276,6 +296,12 @@ func (uc *useCase) Login(ctx context.Context, req *entity.LoginReq, ip, userAgen
 		return nil, fmt.Errorf("auth.Login store session: %w", err)
 	}
 
+	// Oxirgi kirish vaqti — best-effort (xato login'ni to'smaydi).
+	if err := uc.userRepo.UpdateLastLogin(ctx, user.ID); err != nil {
+		uc.log.Warn(ctx, "auth.Login: last_login_at yozilmadi",
+			logger.String("user_id", user.ID), logger.SafeString("err", err.Error()))
+	}
+
 	uc.log.Info(ctx, "auth.Login: success", logger.String("user_id", user.ID))
 	return &entity.TokenPair{AccessToken: access, RefreshToken: refresh}, nil
 }
@@ -296,14 +322,48 @@ func (uc *useCase) Refresh(ctx context.Context, req *entity.RefreshReq) (*entity
 	return &entity.TokenPair{AccessToken: access, RefreshToken: refresh}, nil
 }
 
-func (uc *useCase) Logout(ctx context.Context, req *entity.LogoutReq) error {
-	// Redis'dagi sessiya (access) va refresh JTI'sini bekor qilish — refresh
-	// token'dan sid/jti olib. Bu access token'ni ham darhol yaroqsiz qiladi.
-	if err := uc.tokens.RevokeRefresh(ctx, req.RefreshToken); err != nil {
+func (uc *useCase) Logout(ctx context.Context, userID, sessionID string, req *entity.LogoutReq) error {
+	refresh := ""
+	if req != nil {
+		refresh = req.RefreshToken
+	}
+	if sessionID == "" && refresh == "" {
+		return apperr.BadRequest("session or refresh_token required")
+	}
+
+	// Joriy (access token'dagi) sessiya HAR DOIM bekor qilinadi — refresh token
+	// yuborilmasa ham (avval klient 204 olardi, sessiya esa tirik qolardi).
+	if sessionID != "" {
+		if err := uc.tokens.RevokeSession(ctx, sessionID); err != nil {
+			uc.log.Warn(ctx, "auth.Logout: session revoke failed", logger.SafeString("err", err.Error()))
+		}
+	}
+
+	if refresh == "" {
+		uc.log.Info(ctx, "auth.Logout: success (session only)", logger.String("user_id", userID))
+		return nil
+	}
+
+	// Refresh token CHAQIRUVCHINIKI bo'lishi shart: boshqa foydalanuvchining
+	// (o'g'irlangan/taxminiy) tokeni bilan uning sessiyasini o'chirib bo'lmasin.
+	if sid, err := uc.tokens.SessionFromRefresh(refresh); err == nil && sessionID != "" && sid != sessionID {
+		uc.log.Warn(ctx, "auth.Logout: refresh token boshqa sessiyaga tegishli — o'tkazib yuborildi",
+			logger.String("user_id", userID))
+		return nil
+	}
+	rt, rtErr := uc.authRepo.GetRefreshTokenByHash(ctx, hashToken(refresh))
+	if rtErr == nil && userID != "" && rt.UserID != userID {
+		uc.log.Warn(ctx, "auth.Logout: refresh token boshqa foydalanuvchiniki — o'tkazib yuborildi",
+			logger.String("user_id", userID))
+		return nil
+	}
+
+	// Redis'dagi refresh JTI (va sessiya) — refresh token'dan sid/jti olib.
+	if err := uc.tokens.RevokeRefresh(ctx, refresh); err != nil {
 		uc.log.Warn(ctx, "auth.Logout: token revoke failed", logger.SafeString("err", err.Error()))
 	}
 	// DB'dagi refresh token qatorini ham bekor qilish (audit/tarix uchun).
-	if rt, err := uc.authRepo.GetRefreshTokenByHash(ctx, hashToken(req.RefreshToken)); err == nil {
+	if rtErr == nil {
 		if err := uc.authRepo.RevokeRefreshToken(ctx, rt.ID); err != nil {
 			uc.log.Warn(ctx, "auth.Logout: db revoke failed", logger.String("user_id", rt.UserID), logger.SafeString("err", err.Error()))
 		}
@@ -313,9 +373,25 @@ func (uc *useCase) Logout(ctx context.Context, req *entity.LogoutReq) error {
 }
 
 func (uc *useCase) ForgotPassword(ctx context.Context, req *entity.ForgotPasswordReq) error {
+	// Per-email throttle: oshsa JIMGINA nil (email yubormasdan) — javob har doim
+	// bir xil 204, shuning uchun enumeration/timing buzilmaydi. Email spam va
+	// reset-token ko'payishini to'xtatadi. Cache nil bo'lsa o'chadi.
+	if uc.cache != nil {
+		if n, err := uc.cache.Incr(ctx, forgotKey(normalizeEmail(req.Email)), forgotWindow); err == nil && n > maxForgotPerWindow {
+			uc.log.Warn(ctx, "auth.ForgotPassword: throttled", logger.SafeEmail("email", req.Email))
+			return nil
+		}
+	}
 	user, err := uc.userRepo.GetByEmail(ctx, req.Email)
 	if err != nil {
 		return nil
+	}
+
+	// Yangi token berishdan oldin eskilarini bekor qilamiz: bir vaqtda faqat
+	// BITTA yaroqli reset havolasi bo'lsin (eski xatlar/skrinshotlar yaroqsiz).
+	if err := uc.authRepo.InvalidateUserPasswordResets(ctx, user.ID); err != nil {
+		uc.log.Warn(ctx, "auth.ForgotPassword: eski reset tokenlarni bekor qilib bo'lmadi",
+			logger.String("user_id", user.ID), logger.SafeString("err", err.Error()))
 	}
 
 	rawToken := uuid.NewString()
@@ -378,8 +454,7 @@ func (uc *useCase) ResetPassword(ctx context.Context, req *entity.ResetPasswordR
 	return uc.authRepo.MarkPasswordResetUsed(ctx, pr.ID)
 }
 
-// dummyBcryptHash — mavjud bo'lmagan foydalanuvchi uchun timing-himoya:
-// hasher.Check shu yaroqli bcrypt hash bilan haqiqiy taqqoslash vaqtini sarflaydi.
+// dummyBcryptHash — faqat hasher.Hash xato bersa zaxira.
 const dummyBcryptHash = "$2a$12$C6UzMDM.H6dfI/f/IKcEeO.iI1jOZ0mSDfyz.9vI0lQ2sMOr0aWTa"
 
 func hashToken(t string) string {
@@ -389,16 +464,16 @@ func hashToken(t string) string {
 
 // registerFailedLogin — noto'g'ri parol hisoblagichini oshiradi va chegaraga
 // yetganda hisobni qulflaydi (B4). Faqat MAVJUD hisoblar uchun chaqiriladi.
-func (uc *useCase) registerFailedLogin(ctx context.Context, emailKey, rawEmail string) {
+func (uc *useCase) registerFailedLogin(ctx context.Context, lockID, rawEmail string) {
 	if uc.cache == nil {
 		return
 	}
-	n, err := uc.cache.Incr(ctx, loginFailKey(emailKey), loginFailWindow)
+	n, err := uc.cache.Incr(ctx, loginFailKey(lockID), loginFailWindow)
 	if err != nil {
 		return
 	}
 	if n >= maxLoginAttempts {
-		_ = uc.cache.Set(ctx, loginLockKey(emailKey), "1", loginLockCooldown)
+		_ = uc.cache.Set(ctx, loginLockKey(lockID), "1", loginLockCooldown)
 		uc.log.Warn(ctx, "auth.Login: account locked after too many failed attempts",
 			logger.SafeEmail("email", rawEmail))
 	}
@@ -407,5 +482,7 @@ func (uc *useCase) registerFailedLogin(ctx context.Context, emailKey, rawEmail s
 // normalizeEmail — qulf kalitini "Case" bilan chetlab o'tishning oldini oladi.
 func normalizeEmail(email string) string { return strings.ToLower(strings.TrimSpace(email)) }
 
-func loginFailKey(email string) string { return "loginfail:" + email }
-func loginLockKey(email string) string { return "loginlock:" + email }
+// id — "email|ip" juftligi (Login'da yig'iladi).
+func loginFailKey(id string) string { return "loginfail:" + id }
+func loginLockKey(id string) string { return "loginlock:" + id }
+func forgotKey(email string) string { return "forgotpw:" + email }

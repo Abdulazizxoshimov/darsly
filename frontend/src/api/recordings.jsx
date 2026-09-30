@@ -6,8 +6,9 @@ export function startRecording(lessonId) {
 export function stopRecording(recordingId) {
   return api.post(`/recordings/${recordingId}/stop`)
 }
+// Backend bo'sh ro'yxatni `null` qaytaradi — chaqiruvchi har doim massiv oladi.
 export function listRecordings(lessonId) {
-  return api.get(`/lessons/${lessonId}/recordings`)
+  return api.get(`/lessons/${lessonId}/recordings`).then((items) => (Array.isArray(items) ? items : []))
 }
 export function downloadRecording(recordingId) {
   return api.get(`/recordings/${recordingId}/download`)

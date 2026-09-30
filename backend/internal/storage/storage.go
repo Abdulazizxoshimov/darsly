@@ -26,6 +26,7 @@ type Storage struct {
 	Chat         repository.ChatRepository
 	Poll         repository.PollRepository
 	Blocklist    repository.BlocklistRepository
+	Ban          repository.BanRepository
 	Telegram     repository.TelegramRepository
 }
 
@@ -41,6 +42,7 @@ func New(pg *postgres.Postgres) *Storage {
 		Chat:         pgRepo.NewChatRepo(pg),
 		Poll:         pgRepo.NewPollRepo(pg),
 		Blocklist:    pgRepo.NewBlocklistRepo(pg),
+		Ban:          pgRepo.NewBanRepo(pg),
 		Telegram:     pgRepo.NewTelegramRepo(pg),
 	}
 }

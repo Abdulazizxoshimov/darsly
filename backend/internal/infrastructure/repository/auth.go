@@ -15,6 +15,9 @@ type AuthRepository interface {
 
 	CreatePasswordReset(ctx context.Context, pr *entity.PasswordReset) error
 	GetPasswordResetByHash(ctx context.Context, hash string) (*entity.PasswordReset, error)
+	// InvalidateUserPasswordResets foydalanuvchining ishlatilmagan reset tokenlarini
+	// bekor qiladi (yangi token berishdan oldin — eskilari yaroqsiz bo'lsin).
+	InvalidateUserPasswordResets(ctx context.Context, userID string) error
 	MarkPasswordResetUsed(ctx context.Context, id string) error
 	DeleteExpiredPasswordResets(ctx context.Context) error
 }

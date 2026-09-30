@@ -164,6 +164,15 @@ func (uc *useCase) Join(ctx context.Context, slug, clientIP string, req *entity.
 		return resp, nil
 	}
 
+	// Dars hali jonli emas (scheduled) — token BERILMAYDI: aks holda participant
+	// token bilan bo'sh xona yaratilib, host kirmasdan egress/auto-end holatlari
+	// chalkashardi. Klient host kirgach qayta urinadi.
+	if l.Status != entity.LessonStatusLive {
+		resp.NextStep = entity.JoinNextStepWaitingForHost
+		uc.log.Info(ctx, "joinlink.Join: host hali kirmagan", logger.String("lesson_id", l.ID))
+		return resp, nil
+	}
+
 	// To'g'ridan-to'g'ri kirish — participant tokeni beriladi.
 	identity := "guest_" + uuid.NewString()
 	displayName := "Mehmon"
@@ -231,6 +240,9 @@ func (uc *useCase) toPublic(ctx context.Context, l *entity.Lesson) *entity.Lesso
 	}
 }
 
+// mentorNameCacheTTL — "mentorname:<id>" keshi muddati (qisqa: invalidatsiya yo'q).
+const mentorNameCacheTTL = 5 * time.Minute
+
 // mentorName mentor ismini qaytaradi — Redis cache bilan (har join'da DB o'qishni kamaytiradi).
 func (uc *useCase) mentorName(ctx context.Context, mentorID string) string {
 	key := "mentorname:" + mentorID
@@ -242,7 +254,10 @@ func (uc *useCase) mentorName(ctx context.Context, mentorID string) string {
 		name = m.FullName
 	}
 	if name != "" {
-		_ = uc.cache.Set(ctx, key, name, time.Hour)
+		// TTL qisqa (5 min): ism o'zgarganda (user.UpdateCurrentUser/admin Update)
+		// kesh invalidatsiya qilinmaydi — user usecase'da cache yo'q, uni ulash invaziv.
+		// Eskirgan ism ko'pi bilan mentorNameCacheTTL ko'rinadi.
+		_ = uc.cache.Set(ctx, key, name, mentorNameCacheTTL)
 	}
 	return name
 }

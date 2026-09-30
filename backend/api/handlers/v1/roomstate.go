@@ -1,6 +1,8 @@
 package v1
 
 import (
+	"net/http"
+
 	"github.com/gin-gonic/gin"
 
 	"github.com/zoom/darsly/api/handlers"
@@ -22,7 +24,7 @@ func roomTokenIdentity(c *gin.Context, h *handlers.Handler, token, lessonID stri
 		return "", "", false
 	}
 	if h.LiveKit == nil || !h.LiveKit.Enabled() {
-		hs.Error(c, nil)
+		hs.AbortError(c, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "video service is not available")
 		return "", "", false
 	}
 	identity, name, room, err := h.LiveKit.VerifyToken(token)
@@ -31,7 +33,7 @@ func roomTokenIdentity(c *gin.Context, h *handlers.Handler, token, lessonID stri
 		return "", "", false
 	}
 	if room != shared.RoomName(lessonID) {
-		hs.Error(c, nil)
+		hs.Forbidden(c, "room token is not valid for this lesson")
 		return "", "", false
 	}
 	return identity, name, true
@@ -104,10 +106,11 @@ func SendReaction(h *handlers.Handler) gin.HandlerFunc {
 func GetRoomState(h *handlers.Handler) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		lessonID := c.Param("lessonID")
-		if _, _, ok := roomTokenIdentity(c, h, c.Query("token"), lessonID); !ok {
+		identity, _, ok := roomTokenIdentity(c, h, c.Query("token"), lessonID)
+		if !ok {
 			return
 		}
-		st, err := h.RoomState.State(c.Request.Context(), lessonID)
+		st, err := h.RoomState.State(c.Request.Context(), lessonID, identity)
 		if err != nil {
 			hs.Error(c, err)
 			return

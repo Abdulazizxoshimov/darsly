@@ -33,7 +33,7 @@ func TestUpdateCurrentUser_CannotEscalateRole(t *testing.T) {
 	require.NoError(t, users.Create(context.Background(), &entity.User{
 		ID: testUserID, Email: "s@x.uz", FullName: "Student", Role: "student", IsActive: true,
 	}))
-	h := &handlers.Handler{User: user.New(users, hasher.New(4), testutil.NewFakeTokenMaker(), testutil.NewLogger())}
+	h := &handlers.Handler{User: user.New(users, hasher.New(4), testutil.NewFakeTokenMaker(), testutil.NewFakeLessonRepo(), testutil.NewLogger())}
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)

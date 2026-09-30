@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"fmt"
 	"net/http"
 	"runtime/debug"
 
@@ -22,6 +23,13 @@ func Recover(log logger.Logger) gin.HandlerFunc {
 					logger.String("path", c.Request.URL.Path),
 					logger.String("method", c.Request.Method),
 				)
+				// Xatoni gin'ga ham yozamiz: tashqi Sentry middleware 5xx'da c.Errors'ni
+				// o'qiydi — aks holda u faqat bo'sh "GET /x → 500" xabarini yuborardi.
+				stack := string(debug.Stack())
+				if len(stack) > 4000 {
+					stack = stack[:4000]
+				}
+				_ = c.Error(fmt.Errorf("panic: %v\n%s", r, stack))
 				hs.AbortError(c, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
 			}
 		}()

@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { ConnectionQuality } from 'livekit-client'
+import { ConnectionError, ConnectionErrorReason, ConnectionQuality } from 'livekit-client'
 import {
   applyHandEvent,
+  connectFailure,
   isChatVisible,
+  MAX_AUTO_RECONNECT,
+  pollReplayMessage,
+  reconnectDelay,
   galleryOrder,
   galleryPage,
   GALLERY_PAGE_SIZE,
@@ -175,6 +179,66 @@ describe('rateLimiter', () => {
   })
 })
 
+// ─── connectFailure / reconnectDelay — qayta ulanish SIYOSATI ─────────────────
+// Avval `room.connect()` xatosi yutilardi va ekran har 5 soniyada AYNI eskirgan
+// token bilan abadiy urinardi («Dars davom etmoqda» deb).
+describe('connectFailure', () => {
+  it('NotAllowed (token rad etildi) → auth — qayta urinish emas, yangilash', () => {
+    expect(connectFailure(new ConnectionError('invalid token', ConnectionErrorReason.NotAllowed, 401))).toBe('auth')
+  })
+
+  it('server yetib bo‘lmadi / timeout / WS / noma’lum → network', () => {
+    expect(connectFailure(new ConnectionError('x', ConnectionErrorReason.ServerUnreachable))).toBe('network')
+    expect(connectFailure(new ConnectionError('x', ConnectionErrorReason.Timeout))).toBe('network')
+    expect(connectFailure(new ConnectionError('x', ConnectionErrorReason.WebSocket))).toBe('network')
+    expect(connectFailure(new ConnectionError('x', ConnectionErrorReason.InternalError))).toBe('network')
+    expect(connectFailure(new Error('boom'))).toBe('network')
+  })
+
+  // Bug: effekt tozalanganda (`Cancelled`) «uzildi» ekrani chiqsa, sahifadan
+  // chiqayotgan foydalanuvchi bir lahza yolg'on xato ko'radi.
+  it('Cancelled / LeaveRequest → null (biz o‘zimiz bekor qildik)', () => {
+    expect(connectFailure(new ConnectionError('x', ConnectionErrorReason.Cancelled))).toBeNull()
+    expect(connectFailure(new ConnectionError('x', ConnectionErrorReason.LeaveRequest))).toBeNull()
+  })
+})
+
+describe('reconnectDelay', () => {
+  it('5s → 10s → 20s → 40s → 60s (cap)', () => {
+    expect(reconnectDelay(0)).toBe(5_000)
+    expect(reconnectDelay(1)).toBe(10_000)
+    expect(reconnectDelay(2)).toBe(20_000)
+    expect(reconnectDelay(3)).toBe(40_000)
+    expect(reconnectDelay(4)).toBe(60_000)
+    expect(reconnectDelay(5)).toBe(60_000)
+  })
+
+  // Bug: chegara bo'lmasa uzoq uzilishda serverga abadiy urib turardi.
+  it('MAX_AUTO_RECONNECT dan keyin null — faqat qo‘lda', () => {
+    expect(reconnectDelay(MAX_AUTO_RECONNECT)).toBeNull()
+    expect(reconnectDelay(MAX_AUTO_RECONNECT + 3)).toBeNull()
+  })
+})
+
+// ─── pollReplayMessage — kech kirganga faol so'rovnoma ────────────────────────
+describe('pollReplayMessage', () => {
+  const ACTIVE = { id: 'p2', question: 'S?', options: ['a', 'b'], is_active: true, results_visibility: 'public', lesson_id: 'l1' }
+
+  it('faol so‘rovnomani `open` xabari sifatida qaytaradi (faqat kerakli maydonlar)', () => {
+    expect(pollReplayMessage([{ id: 'p1', is_active: false, question: 'x', options: [] }, ACTIVE])).toEqual({
+      kind: 'poll',
+      action: 'open',
+      poll: { id: 'p2', question: 'S?', options: ['a', 'b'], results_visibility: 'public' },
+    })
+  })
+
+  it('faol so‘rovnoma yo‘q / ro‘yxat yo‘q → null', () => {
+    expect(pollReplayMessage([{ id: 'p1', is_active: false }])).toBeNull()
+    expect(pollReplayMessage(undefined)).toBeNull()
+    expect(pollReplayMessage([])).toBeNull()
+  })
+})
+
 describe('messaging (wire format)', () => {
   // Bu shakl SERVER bilan shartnoma (`usecase/roomstate.handMsg`) — u o'zgarsa
   // qo'llar jimgina ko'rinmay qo'yadi, shuning uchun aynan shu yerda qotirilgan.
@@ -322,7 +386,12 @@ describe('acceptData — data-channel ishonch modeli', () => {
   })
 
   it('to‘liq zanjir: decode → accept (mehmon soxta backend-shaklidagi chat yuboradi)', () => {
-    const wire = encodeData({ sender_name: 'Ustoz Ali', body: 'Havolani bosing', sender_identity: 'mentor-uuid' })
+    const wire = encodeData({
+      id: 'soxta-1',
+      sender_name: 'Ustoz Ali',
+      body: 'Havolani bosing',
+      sender_identity: 'mentor-uuid',
+    })
     expect(decodeData(wire)).toMatchObject({ kind: 'chat', name: 'Ustoz Ali' }) // decode ishlaydi…
     expect(acceptData(decodeData(wire), GUEST)).toBeNull() // …lekin filtr uzadi
   })

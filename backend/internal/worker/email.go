@@ -66,12 +66,44 @@ func (w *EmailWorker) consumeLoop(ctx context.Context) error {
 				continue
 			}
 			if err := w.sender.SendRaw(ctx, job.To, job.Subject, job.Body); err != nil {
-				w.log.Warn(ctx, "email worker: send failed", logger.SafeString("err", err.Error()))
+				w.log.Warn(ctx, "email worker: send failed",
+					logger.Int("attempt", job.Attempt), logger.SafeString("err", err.Error()))
+				retry, next := nextAttempt(job, maxEmailAttempts)
+				if !retry {
+					// Poison xabar: cheksiz requeue-loop o'rniga tashlaymiz (DLQ yo'q —
+					// navbat argumentlarini o'zgartirish mavjud durable navbatni buzardi).
+					w.log.Error(ctx, "email worker: max attempts reached, dropping message",
+						logger.Int("attempts", job.Attempt))
+					_ = d.Nack(false, false)
+					continue
+				}
 				time.Sleep(2 * time.Second) // backoff — SMTP'ni bombalatmaslik uchun
-				_ = d.Nack(false, true)     // qayta urinish uchun navbatga qaytaramiz
+				// Attempt oshirilgan nusxani qayta publish qilib, eskisini ack qilamiz
+				// (Nack(requeue) body'ni o'zgartira olmaydi → hisoblagich oshmasdi).
+				if perr := w.mq.Publish(ctx, rabbitmq.QueueEmailSend, next); perr != nil {
+					_ = d.Nack(false, true) // publish bo'lmadi — xabar yo'qolmasin
+					continue
+				}
+				_ = d.Ack(false)
 				continue
 			}
 			_ = d.Ack(false)
 		}
 	}
+}
+
+// maxEmailAttempts — bitta email uchun jami urinishlar (birinchisi ham hisobda).
+const maxEmailAttempts = 5
+
+// nextAttempt keyingi urinish kerakmi va Attempt oshirilgan job'ni qaytaradi.
+// Attempt 0/1 dan boshlanadi (QueuedSender 1 yozadi); chegaraga yetgach retry=false.
+func nextAttempt(job email.EmailJob, max int) (retry bool, next email.EmailJob) {
+	if job.Attempt < 1 {
+		job.Attempt = 1
+	}
+	if job.Attempt >= max {
+		return false, job
+	}
+	job.Attempt++
+	return true, job
 }

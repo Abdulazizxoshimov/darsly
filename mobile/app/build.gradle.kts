@@ -14,11 +14,17 @@ plugins {
 // mobile/local.properties (gitignore'da) ichida ixtiyoriy ravishda beriladi:
 //   darsly.testEmail=...
 //   darsly.testPassword=...
+//   darsly.devPrefill=true   ← S3: login formasini oldindan to'ldirish uchun
+//                              ALOHIDA opt-in. `debug` build'ning o'zi yetarli
+//                              EMAS: aks holda har debug APK'da haqiqiy sinov
+//                              hisobi kompilyatsiya qilinardi.
 val localProps = Properties().apply {
     val f = rootProject.file("local.properties")
     if (f.exists()) f.inputStream().use { load(it) }
 }
 fun localProp(key: String, default: String = "") = localProps.getProperty(key) ?: default
+val devPrefill = localProp("darsly.devPrefill") == "true"
+fun devCred(key: String) = if (devPrefill) localProp(key) else ""
 
 // ── Muhit manzillari (M13) ───────────────────────────────────────────────────
 // Avval staging IP (`app.194.163.139.242.sslip.io`) reliz variantiga ham
@@ -44,10 +50,10 @@ fun envUrl(gradleKey: String, localKey: String): String =
 // yaratilmaydi va `assembleRelease` imzosiz APK beradi — ya'ni boshqa mashinada
 // yoki CI'da qurish buzilmaydi, faqat tarqatib bo'lmaydi.
 //
-// NEGA DEBUG APK TARQATILMAYDI: debug variantida `TEST_EMAIL`/`TEST_PASSWORD`
-// (haqiqiy sinov hisobi) `BuildConfig` ga yoziladi. Ochiq `/download/` manzilida
-// turgan debug APK'dan bu parollarni ajratib olish jiddiy mehnat talab qilmaydi.
-// Relizda ular bo'sh satr.
+// NEGA DEBUG APK TARQATILMAYDI: debug variantida `darsly.devPrefill=true` bo'lsa
+// `TEST_EMAIL`/`TEST_PASSWORD` (haqiqiy sinov hisobi) `BuildConfig` ga yoziladi.
+// Ochiq `/download/` manzilida turgan debug APK'dan bu parollarni ajratib olish
+// jiddiy mehnat talab qilmaydi. Relizda ular HAR DOIM bo'sh satr.
 val keystoreProps = Properties().apply {
     val f = rootProject.file("keystore.properties")
     if (f.exists()) f.inputStream().use { load(it) }
@@ -115,8 +121,9 @@ android {
             // Hozir API bilan bir xil host, lekin ATAYLAB alohida: API alohida
             // subdomenga (`api.*`) ko'chirilsa, join havolalari jimgina buzilmasin.
             buildConfigField("String", "WEB_BASE_URL", "\"${envUrl("darslyWebUrl", "darsly.webUrl")}\"")
-            buildConfigField("String", "TEST_EMAIL", "\"${localProp("darsly.testEmail")}\"")
-            buildConfigField("String", "TEST_PASSWORD", "\"${localProp("darsly.testPassword")}\"")
+            // S3: faqat `darsly.devPrefill=true` bo'lsa (yuqorida) — debug'ning o'zi emas.
+            buildConfigField("String", "TEST_EMAIL", "\"${devCred("darsly.testEmail")}\"")
+            buildConfigField("String", "TEST_PASSWORD", "\"${devCred("darsly.testPassword")}\"")
             // Debug'da crash-hisobotlari default O'CHIQ: dasturchi mashinasidagi
             // yiqilishlar production statistikasini ifloslantirmasin.
             buildConfigField("String", "SENTRY_DSN", "\"${localProp("darsly.sentryDsn")}\"")

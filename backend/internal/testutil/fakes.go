@@ -257,7 +257,12 @@ func (r *FakeUserRepo) UpdatePassword(_ context.Context, userID, hash string) er
 	return apperr.NotFound("user")
 }
 
-func (r *FakeUserRepo) UpdateLastLogin(_ context.Context, _ string) error { return nil }
+func (r *FakeUserRepo) UpdateLastLogin(_ context.Context, _ string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.Calls["UpdateLastLogin"]++
+	return nil
+}
 
 func (r *FakeUserRepo) SetDeletionRequested(_ context.Context, userID string, requested bool) error {
 	r.mu.Lock()
@@ -276,11 +281,24 @@ func (r *FakeUserRepo) SetDeletionRequested(_ context.Context, userID string, re
 func (r *FakeUserRepo) SoftDelete(_ context.Context, id string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if u, ok := r.byID[id]; ok {
+	if u, ok := r.byID[id]; ok && u.DeletedAt == nil {
 		now := time.Now()
 		u.DeletedAt = &now
+		return nil
 	}
-	return nil
+	return apperr.NotFound("user")
+}
+
+func (r *FakeUserRepo) CountActiveAdmins(_ context.Context) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := 0
+	for _, u := range r.byID {
+		if u.Role == "admin" && u.IsActive && u.DeletedAt == nil {
+			n++
+		}
+	}
+	return n, nil
 }
 
 func (r *FakeUserRepo) DeleteHard(_ context.Context, id string) error {
@@ -383,7 +401,21 @@ func (r *FakeAuthRepo) GetPasswordResetByHash(_ context.Context, hash string) (*
 }
 
 func (r *FakeAuthRepo) MarkPasswordResetUsed(_ context.Context, _ string) error { return nil }
-func (r *FakeAuthRepo) DeleteExpiredPasswordResets(_ context.Context) error     { return nil }
+
+// InvalidateUserPasswordResets — foydalanuvchining barcha reset tokenlarini olib tashlaydi
+// (fake'da "used" ≈ yo'q: GetPasswordResetByHash topa olmaydi).
+func (r *FakeAuthRepo) InvalidateUserPasswordResets(_ context.Context, userID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.Calls["InvalidateUserPasswordResets"]++
+	for h, pr := range r.resets {
+		if pr.UserID == userID {
+			delete(r.resets, h)
+		}
+	}
+	return nil
+}
+func (r *FakeAuthRepo) DeleteExpiredPasswordResets(_ context.Context) error { return nil }
 
 // ─── TokenMaker ──────────────────────────────────────────────────────────────
 
@@ -552,13 +584,12 @@ func (c *FakeCache) Incr(_ context.Context, key string, _ time.Duration) (int64,
 	c.counters[key] = n
 	return n, nil
 }
-func (c *FakeCache) Ping(_ context.Context) error                       { return nil }
-func (c *FakeCache) Keys(_ context.Context, _ string) ([]string, error) { return nil, nil }
+func (c *FakeCache) Ping(_ context.Context) error { return nil }
+func (c *FakeCache) Close() error                 { return nil }
 func (c *FakeCache) Scan(_ context.Context, _ uint64, _ string, _ int64) ([]string, uint64, error) {
 	return nil, 0, nil
 }
-func (c *FakeCache) ScanDel(_ context.Context, _ string) error             { return nil }
-func (c *FakeCache) MGet(_ context.Context, _ ...string) ([]string, error) { return nil, nil }
+func (c *FakeCache) ScanDel(_ context.Context, _ string) error { return nil }
 func (c *FakeCache) HSet(_ context.Context, key string, values map[string]any, _ time.Duration) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -613,12 +644,11 @@ func (c *FakeCache) AcquireLock(_ context.Context, _, _ string, _ time.Duration)
 	return true, nil
 }
 func (c *FakeCache) ReleaseLock(_ context.Context, _, _ string) error { return nil }
-func (c *FakeCache) Eval(_ context.Context, _ string, _ []string, _ ...any) (any, error) {
-	return nil, nil
-}
-func (c *FakeCache) Client() *goredis.Client { return nil }
+func (c *FakeCache) Client() *goredis.Client                          { return nil }
 
 // ─── Minio ───────────────────────────────────────────────────────────────────
+
+func (m *FakeMinio) Ping(_ context.Context) error { return nil }
 
 type FakeMinio struct {
 	Objects map[string]bool
@@ -696,6 +726,8 @@ type FakeRoomUC struct {
 	// EmptyNoted / OccupiedNoted — avto-yakun uchun bo'shlik signallari (xona nomlari).
 	EmptyNoted    []string
 	OccupiedNoted []string
+	// ParticipantErr — bo'lsa ParticipantToken shu xatoni qaytaradi (token xatosi testlari).
+	ParticipantErr error
 }
 
 func (r *FakeRoomUC) HostToken(_ context.Context, _, _ string) (*entity.RoomToken, error) {
@@ -703,6 +735,9 @@ func (r *FakeRoomUC) HostToken(_ context.Context, _, _ string) (*entity.RoomToke
 }
 func (r *FakeRoomUC) ParticipantToken(_ context.Context, _ *entity.Lesson, identity, name string) (*entity.RoomToken, error) {
 	r.ParticipantCalls++
+	if r.ParticipantErr != nil {
+		return nil, r.ParticipantErr
+	}
 	return &entity.RoomToken{Token: "part-tok", Identity: identity, Role: entity.RoomRoleParticipant}, nil
 }
 func (r *FakeRoomUC) EndLesson(_ context.Context, _, _ string) error { return nil }
@@ -805,12 +840,87 @@ func (r *FakeLessonRepo) Update(_ context.Context, l *entity.Lesson) error {
 	r.byID[l.ID] = &cp
 	return nil
 }
+func (r *FakeLessonRepo) UpdateFields(_ context.Context, id string, p *entity.LessonPatch) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	l, ok := r.byID[id]
+	if !ok || l.DeletedAt != nil {
+		return nil
+	}
+	if p.Title != nil {
+		l.Title = *p.Title
+	}
+	if p.Description != nil {
+		l.Description = p.Description
+	}
+	if p.ScheduledAt != nil {
+		l.ScheduledAt = p.ScheduledAt
+	}
+	if p.DurationMin != nil {
+		l.DurationMin = *p.DurationMin
+	}
+	if p.RecurrenceRule != nil {
+		l.RecurrenceRule = p.RecurrenceRule
+	}
+	if p.ClearPasscode {
+		l.PasscodeHash = nil
+	} else if p.PasscodeHash != nil {
+		l.PasscodeHash = p.PasscodeHash
+	}
+	if p.IsLocked != nil {
+		l.IsLocked = *p.IsLocked
+	}
+	if p.IsRecordingEnabled != nil {
+		l.IsRecordingEnabled = *p.IsRecordingEnabled
+	}
+	if p.IsWaitingRoomEnabled != nil {
+		l.IsWaitingRoomEnabled = *p.IsWaitingRoomEnabled
+	}
+	if p.MuteOnEntry != nil {
+		l.MuteOnEntry = *p.MuteOnEntry
+	}
+	if p.AllowSelfUnmute != nil {
+		l.AllowSelfUnmute = *p.AllowSelfUnmute
+	}
+	return nil
+}
+
+// ClaimStart — atomik `live`ga o'tkazish imitatsiyasi.
+func (r *FakeLessonRepo) ClaimStart(_ context.Context, id string, startedAt time.Time) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	l, ok := r.byID[id]
+	if !ok || l.DeletedAt != nil || (l.Status != entity.LessonStatusScheduled && l.Status != entity.LessonStatusLive) {
+		return false, nil
+	}
+	l.Status = entity.LessonStatusLive
+	if l.StartedAt == nil {
+		s := startedAt
+		l.StartedAt = &s
+	}
+	return true, nil
+}
+
 func (r *FakeLessonRepo) SoftDelete(_ context.Context, id string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if l, ok := r.byID[id]; ok {
 		now := time.Now()
 		l.DeletedAt = &now
+	}
+	return nil
+}
+
+// CancelByMentor — mentorning barcha faol darslarini bekor qiladi.
+func (r *FakeLessonRepo) CancelByMentor(_ context.Context, mentorID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := time.Now()
+	for _, l := range r.byID {
+		if l.MentorID == mentorID && l.DeletedAt == nil {
+			l.DeletedAt = &now
+			l.Status = entity.LessonStatusCancelled
+		}
 	}
 	return nil
 }
@@ -834,7 +944,7 @@ func (r *FakeLessonRepo) ClaimEnd(_ context.Context, id string, endedAt time.Tim
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	l, ok := r.byID[id]
-	if !ok || l.DeletedAt != nil || l.Status != entity.LessonStatusLive {
+	if !ok || l.DeletedAt != nil || (l.Status != entity.LessonStatusLive && l.Status != entity.LessonStatusScheduled) {
 		return false, nil
 	}
 	l.Status = entity.LessonStatusEnded
@@ -864,6 +974,13 @@ func (r *FakeLessonRepo) ClaimReminder(_ context.Context, id string) (bool, erro
 	}
 	r.reminded[id] = true
 	return true, nil
+}
+
+func (r *FakeLessonRepo) UnclaimReminder(_ context.Context, id string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.reminded, id)
+	return nil
 }
 
 // ─── BlocklistRepo ───────────────────────────────────────────────────────────
@@ -959,6 +1076,32 @@ func (r *FakeBlocklistRepo) Delete(_ context.Context, mentorID, id string) error
 	return apperr.NotFound("blocklist entry")
 }
 
+// ─── FakeBanRepo — dars-darajali durable ban (in-memory, audit R2) ───────────
+
+type FakeBanRepo struct {
+	mu   sync.Mutex
+	bans map[string]bool // "lessonID|identity" → true
+}
+
+func NewFakeBanRepo() *FakeBanRepo {
+	return &FakeBanRepo{bans: map[string]bool{}}
+}
+
+func banFakeKey(lessonID, identity string) string { return lessonID + "|" + identity }
+
+func (r *FakeBanRepo) AddBan(_ context.Context, lessonID, identity, _ string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.bans[banFakeKey(lessonID, identity)] = true
+	return nil
+}
+
+func (r *FakeBanRepo) IsBanned(_ context.Context, lessonID, identity string) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.bans[banFakeKey(lessonID, identity)], nil
+}
+
 // ─── WaitingRoomRepo ─────────────────────────────────────────────────────────
 
 type FakeWaitingRepo struct {
@@ -1016,6 +1159,18 @@ func (r *FakeWaitingRepo) ListPendingByMentor(_ context.Context, mentorID string
 		out = append(out, &cp)
 	}
 	return out, nil
+}
+
+func (r *FakeWaitingRepo) CountPendingByLesson(_ context.Context, lessonID string) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := 0
+	for _, w := range r.byID {
+		if w.LessonID == lessonID && w.Status == entity.WaitingStatusPending {
+			n++
+		}
+	}
+	return n, nil
 }
 
 func (r *FakeWaitingRepo) TransitionFromPending(_ context.Context, id, newStatus string, decidedAt time.Time) (bool, error) {
@@ -1428,19 +1583,34 @@ func (r *FakeRecordingRepo) UpdateStatus(_ context.Context, id, status string) e
 	}
 	return nil
 }
-func (r *FakeRecordingRepo) MarkReady(_ context.Context, egressID, objectKey string, dur int, size int64, endedAt time.Time) error {
+func (r *FakeRecordingRepo) CountActive(_ context.Context) (int, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	var n int
 	for _, rec := range r.byID {
-		if rec.EgressID == egressID {
+		if rec.Status == entity.RecordingStatusRecording {
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (r *FakeRecordingRepo) MarkReady(_ context.Context, egressID, objectKey string, dur int, size int64, endedAt time.Time) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var changed bool
+	for _, rec := range r.byID {
+		if rec.EgressID == egressID &&
+			(rec.Status == entity.RecordingStatusRecording || rec.Status == entity.RecordingStatusProcessing) {
 			rec.Status = entity.RecordingStatusReady
 			rec.ObjectKey = objectKey
 			rec.DurationSec = dur
 			rec.SizeBytes = size
 			rec.EndedAt = &endedAt
+			changed = true
 		}
 	}
-	return nil
+	return changed, nil
 }
 
 // ── Qayta kodlash navbati ────────────────────────────────────────────────────
@@ -1523,16 +1693,35 @@ func (r *FakeRecordingRepo) TranscodeStatus(id string) string {
 	return r.transcode[id]
 }
 
-func (r *FakeRecordingRepo) MarkFailed(_ context.Context, egressID string, endedAt time.Time) error {
+func (r *FakeRecordingRepo) MarkFailed(_ context.Context, egressID string, endedAt time.Time) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	var changed bool
 	for _, rec := range r.byID {
-		if rec.EgressID == egressID {
+		if rec.EgressID == egressID &&
+			(rec.Status == entity.RecordingStatusRecording || rec.Status == entity.RecordingStatusProcessing) {
 			rec.Status = entity.RecordingStatusFailed
 			rec.EndedAt = &endedAt
+			changed = true
 		}
 	}
-	return nil
+	return changed, nil
+}
+
+// FailStale — eskirgan `recording` yozuvlarni failed qiladi.
+func (r *FakeRecordingRepo) FailStale(_ context.Context, olderThan, endedAt time.Time) (int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var n int64
+	for _, rec := range r.byID {
+		if rec.Status == entity.RecordingStatusRecording && rec.StartedAt.Before(olderThan) {
+			rec.Status = entity.RecordingStatusFailed
+			e := endedAt
+			rec.EndedAt = &e
+			n++
+		}
+	}
+	return n, nil
 }
 
 // ─── ChatRepo ────────────────────────────────────────────────────────────────
@@ -1728,6 +1917,10 @@ func (r *FakePollRepo) Publish(_ context.Context, id string) (*entity.Poll, erro
 func (r *FakePollRepo) Vote(_ context.Context, pollID, identity string, optionIndex int) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	// Haqiqiy repo kabi: faqat faol poll'ga yoziladi (vote-after-close poygasi).
+	if p, ok := r.polls[pollID]; !ok || !p.IsActive {
+		return apperr.BadRequest("poll is closed")
+	}
 	if r.votes[pollID] == nil {
 		r.votes[pollID] = map[string]int{}
 	}

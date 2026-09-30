@@ -236,6 +236,10 @@ describe('ChatPanel — fayl ulashish', () => {
     await waitFor(() => expect(screen.queryByText('42%')).not.toBeInTheDocument())
   })
 
+  // Panel KONTRAKTI: `onSendFile(file, to, onProgress, signal)` — 4-argument
+  // `AbortSignal`, «Bekor qilish» uni uzadi. Signal XHR'gacha yetib borishi
+  // (LiveRoom → api.upload) `LiveRoom.test.jsx` da alohida sinaladi — avval
+  // bu test o'tsa ham xona uni tashlab yuborar va tugma hech nima qilmasdi.
   it('yuklash davomida panel yopilmaydi, lekin BEKOR qilsa bo‘ladi', async () => {
     const user = userEvent.setup()
     let abortedSignal = null

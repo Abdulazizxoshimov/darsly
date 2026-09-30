@@ -15,13 +15,14 @@ import (
 )
 
 const (
-	QueueWebhookDelivery = "webhook_delivery"
-	QueueEmailSend       = "email_send"
-	QueueAutomation      = "automation_event"
+	QueueEmailSend = "email_send"
 )
 
+// confirmTimeout — broker Publish'ni tasdiqlashini kutish chegarasi.
+const confirmTimeout = 5 * time.Second
+
 // declaredQueues — startda va har reconnect'da e'lon qilinadigan navbatlar.
-var declaredQueues = []string{QueueEmailSend, QueueWebhookDelivery}
+var declaredQueues = []string{QueueEmailSend}
 
 var errNotConnected = errors.New("rabbitmq: not connected")
 
@@ -80,6 +81,14 @@ func (c *Client) connect() error {
 		ch.Close()
 		conn.Close()
 		return fmt.Errorf("rabbitmq.PublishChannel: %w", err)
+	}
+	// Publisher confirms: broker xabarni qabul qilganini tasdiqlamaguncha Publish
+	// muvaffaqiyatli hisoblanmaydi (aks holda uzilgan/to'la broker xabarni jimgina yutardi).
+	if err := pubCh.Confirm(false); err != nil {
+		pubCh.Close()
+		ch.Close()
+		conn.Close()
+		return fmt.Errorf("rabbitmq.Confirm: %w", err)
 	}
 	for _, q := range declaredQueues {
 		if _, err := ch.QueueDeclare(q, true, false, false, false, nil); err != nil {
@@ -179,7 +188,7 @@ func (c *Client) Publish(ctx context.Context, queue string, payload any) error {
 	if ch == nil {
 		return errNotConnected
 	}
-	return ch.PublishWithContext(ctx,
+	conf, err := ch.PublishWithDeferredConfirmWithContext(ctx,
 		"",    // exchange
 		queue, // routing key
 		false, // mandatory
@@ -191,6 +200,20 @@ func (c *Client) Publish(ctx context.Context, queue string, payload any) error {
 			Timestamp:    time.Now(),
 		},
 	)
+	if err != nil {
+		return err
+	}
+	// Broker ack'ini kutamiz (pubMu ushlab turilgan — confirm'lar tartibi saqlanadi).
+	cctx, cancel := context.WithTimeout(ctx, confirmTimeout)
+	defer cancel()
+	acked, err := conf.WaitContext(cctx)
+	if err != nil {
+		return fmt.Errorf("rabbitmq.Publish confirm: %w", err)
+	}
+	if !acked {
+		return errors.New("rabbitmq.Publish: broker nack")
+	}
+	return nil
 }
 
 // Consume — queue'dan xabarlarni o'qiydi (joriy kanal orqali). Kanal yopilsa

@@ -1,15 +1,14 @@
 package uz.darsly.mentor.ui.room
 
-import android.content.Context
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import uz.darsly.mentor.data.livekit.LessonSession
-import uz.darsly.mentor.data.livekit.NetworkMonitor
 import uz.darsly.mentor.data.livekit.NetworkSwitchPolicy
 import uz.darsly.mentor.data.livekit.Transport
+import uz.darsly.mentor.data.livekit.TransportSource
 
 /**
  * Tarmoq almashuvi va majburiy qayta ulanish (C-11).
@@ -22,15 +21,18 @@ import uz.darsly.mentor.data.livekit.Transport
  * ichida boshqa yettita mas'uliyat bilan aralashib yotgan edi.
  *
  * Qaror [NetworkSwitchPolicy] da (sof, testlar bilan qotirilgan) — bu yerda
- * faqat uni bajarish va sikl holatini ushlash.
+ * faqat uni bajarish va sikl holatini ushlash. Tarmoq manbai [TransportSource]
+ * orqali — testda qo'lda boshqariladi; kutish [sleep] bilan almashtiriladi.
  */
 class ReconnectController(
-    private val appContext: Context,
+    private val transports: TransportSource,
     private val scope: CoroutineScope,
     private val onState: ((RoomUiState) -> RoomUiState) -> Unit,
     private val onLog: (String) -> Unit,
     /** Qayta ulangach ekran ulashishni tiklash imkonini beradi. */
     private val onReconnected: () -> Unit,
+    /** Test uchun: haqiqiy kutishni almashtirish. */
+    private val sleep: suspend (Long) -> Unit = { delay(it) },
 ) {
 
     /**
@@ -57,9 +59,8 @@ class ReconnectController(
     fun observeNetwork(state: MutableStateFlow<RoomUiState>, session: () -> LessonSession?): Job =
         scope.launch {
             var prev: Transport? = null
-            NetworkMonitor.transports(appContext).collect { now ->
-                val st = state.value
-                val connected = st.connState == "connected" || st.connState == "reconnecting"
+            transports.transports().collect { now ->
+                val connected = state.value.connState.inRoom
                 val note = NetworkSwitchPolicy.label(prev, now)
                 if (note != null) onLog("tarmoq: $note")
                 onState { it.copy(networkNote = note) }
@@ -94,7 +95,7 @@ class ReconnectController(
                 runCatching { s.room.disconnect() }
 
                 for ((attempt, delayMs) in RECONNECT_DELAYS.withIndex()) {
-                    delay(delayMs)
+                    sleep(delayMs)
                     if (!isCurrent(s)) return@launch // sessiya almashdi/yopildi
                     val result = runCatching { s.connect() }
                     if (result.isSuccess) {
@@ -128,7 +129,7 @@ class ReconnectController(
         intentional = false
     }
 
-    private companion object {
+    internal companion object {
         /**
          * Majburiy qayta ulanish urinishlari orasidagi kutish (ms).
          *

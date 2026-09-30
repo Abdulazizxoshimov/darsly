@@ -79,7 +79,12 @@ func LocalCompleteRecording(h *handlers.Handler) gin.HandlerFunc {
 		}
 		var endedAt time.Time
 		if req.EndedAt != "" {
-			endedAt, _ = time.Parse(time.RFC3339, req.EndedAt)
+			var perr error
+			endedAt, perr = time.Parse(time.RFC3339, req.EndedAt)
+			if perr != nil {
+				hs.Error(c, apperr.BadRequest("ended_at must be RFC3339"))
+				return
+			}
 		}
 		if err := h.Recording.LocalComplete(c.Request.Context(), mentorID, recordingID, req.DurationSec, endedAt); err != nil {
 			hs.Error(c, err)

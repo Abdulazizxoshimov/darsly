@@ -101,8 +101,15 @@ func Refresh(h *handlers.Handler) gin.HandlerFunc {
 func Logout(h *handlers.Handler) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req entity.LogoutReq
-		_ = c.ShouldBindJSON(&req)
-		if err := h.Auth.Logout(c.Request.Context(), &req); err != nil {
+		// Bo'sh tana ruxsat (faqat joriy sessiya), lekin buzuq JSON — 400
+		// (avval xato jimgina tashlanardi va klient 204 olardi).
+		if c.Request.ContentLength != 0 {
+			if err := c.ShouldBindJSON(&req); err != nil {
+				hs.BadRequest(c, err.Error())
+				return
+			}
+		}
+		if err := h.Auth.Logout(c.Request.Context(), c.GetString(middleware.CtxUserID), c.GetString(middleware.CtxSessionID), &req); err != nil {
 			hs.Error(c, err)
 			return
 		}

@@ -194,6 +194,76 @@ func (r *lessonRepo) Update(ctx context.Context, l *entity.Lesson) error {
 	return err
 }
 
+// UpdateFields — faqat berilgan maydonlarni yangilaydi (Squirrel .Set shartli).
+func (r *lessonRepo) UpdateFields(ctx context.Context, id string, p *entity.LessonPatch) error {
+	b := r.builder.Update("lessons").Set("updated_at", sq.Expr("NOW()"))
+	if p.Title != nil {
+		b = b.Set("title", *p.Title)
+	}
+	if p.Description != nil {
+		b = b.Set("description", *p.Description)
+	}
+	if p.ScheduledAt != nil {
+		b = b.Set("scheduled_at", *p.ScheduledAt)
+	}
+	if p.DurationMin != nil {
+		b = b.Set("duration_min", *p.DurationMin)
+	}
+	if p.RecurrenceRule != nil {
+		b = b.Set("recurrence_rule", *p.RecurrenceRule)
+	}
+	switch {
+	case p.ClearPasscode:
+		b = b.Set("passcode_hash", nil)
+	case p.PasscodeHash != nil:
+		b = b.Set("passcode_hash", *p.PasscodeHash)
+	}
+	if p.IsLocked != nil {
+		b = b.Set("is_locked", *p.IsLocked)
+	}
+	if p.IsRecordingEnabled != nil {
+		b = b.Set("is_recording_enabled", *p.IsRecordingEnabled)
+	}
+	if p.IsWaitingRoomEnabled != nil {
+		b = b.Set("is_waiting_room_enabled", *p.IsWaitingRoomEnabled)
+	}
+	if p.MuteOnEntry != nil {
+		b = b.Set("mute_on_entry", *p.MuteOnEntry)
+	}
+	if p.AllowSelfUnmute != nil {
+		b = b.Set("allow_self_unmute", *p.AllowSelfUnmute)
+	}
+	sql, args, err := b.Where(sq.And{sq.Eq{"id": id}, sq.Eq{"deleted_at": nil}}).ToSql()
+	if err != nil {
+		return fmt.Errorf("lessonRepo.UpdateFields: %w", err)
+	}
+	if _, err = r.db.Exec(ctx, sql, args...); err != nil {
+		return fmt.Errorf("lessonRepo.UpdateFields: %w", err)
+	}
+	return nil
+}
+
+// ClaimStart — darsni ATOMIK `live` qiladi (scheduled yoki allaqachon live bo'lsa).
+// started_at faqat birinchi marta yoziladi (COALESCE). Tugagan/bekor qilingan dars
+// qayta jonlanmaydi — HostToken va EndLesson poygasida 'ended' bosilib ketmaydi.
+func (r *lessonRepo) ClaimStart(ctx context.Context, id string, startedAt time.Time) (bool, error) {
+	sql, args, _ := r.builder.
+		Update("lessons").
+		Set("status", entity.LessonStatusLive).
+		Set("started_at", sq.Expr("COALESCE(started_at, ?)", startedAt)).
+		Set("updated_at", sq.Expr("NOW()")).
+		Where(sq.And{
+			sq.Eq{"id": id},
+			sq.Eq{"status": []string{entity.LessonStatusScheduled, entity.LessonStatusLive}},
+			sq.Eq{"deleted_at": nil},
+		}).ToSql()
+	tag, err := r.db.Exec(ctx, sql, args...)
+	if err != nil {
+		return false, fmt.Errorf("lessonRepo.ClaimStart: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
 func (r *lessonRepo) ListUpcomingUnreminded(ctx context.Context, from, to time.Time) ([]*entity.Lesson, error) {
 	sql, args, _ := r.builder.
 		Select(lessonCols).From("lessons").
@@ -230,6 +300,20 @@ func (r *lessonRepo) ClaimReminder(ctx context.Context, id string) (bool, error)
 		return false, fmt.Errorf("lessonRepo.ClaimReminder: %w", err)
 	}
 	return tag.RowsAffected() == 1, nil
+}
+
+// UnclaimReminder — reminder yuborilmasa (Notify uzil-kesil xato) belgini
+// qaytaradi, shunda keyingi tick qayta uriladi (audit realtime #11: aks holda
+// eslatma abadiy yo'qolardi). Notify muvaffaqiyatsizligi = bildirishnoma
+// yaratilmagan, ya'ni qayta yuborish dublikat yasamaydi.
+func (r *lessonRepo) UnclaimReminder(ctx context.Context, id string) error {
+	sql, args, _ := r.builder.
+		Update("lessons").Set("reminder_sent_at", nil).
+		Where(sq.Eq{"id": id}).ToSql()
+	if _, err := r.db.Exec(ctx, sql, args...); err != nil {
+		return fmt.Errorf("lessonRepo.UnclaimReminder: %w", err)
+	}
+	return nil
 }
 
 // ListLive — hozir jonli darslar. Avto-yakun ishchisi (4 soatlik limit va bo'sh
@@ -274,7 +358,9 @@ func (r *lessonRepo) ClaimEnd(ctx context.Context, id string, endedAt time.Time)
 		Set("updated_at", sq.Expr("NOW()")).
 		Where(sq.And{
 			sq.Eq{"id": id},
-			sq.Eq{"status": entity.LessonStatusLive},
+			// scheduled ham: hech boshlanmagan darsni mentor yakunlashi mumkin.
+			// ended/cancelled ga tegilmaydi (ended_at qayta yozilmaydi).
+			sq.Eq{"status": []string{entity.LessonStatusLive, entity.LessonStatusScheduled}},
 			sq.Eq{"deleted_at": nil},
 		}).ToSql()
 	tag, err := r.db.Exec(ctx, sql, args...)
@@ -282,6 +368,21 @@ func (r *lessonRepo) ClaimEnd(ctx context.Context, id string, endedAt time.Time)
 		return false, fmt.Errorf("lessonRepo.ClaimEnd: %w", err)
 	}
 	return tag.RowsAffected() == 1, nil
+}
+
+// CancelByMentor — mentorning barcha faol darslarini bekor qiladi va yashiradi.
+func (r *lessonRepo) CancelByMentor(ctx context.Context, mentorID string) error {
+	sql, args, err := r.builder.
+		Update("lessons").
+		Set("deleted_at", sq.Expr("NOW()")).
+		Set("status", entity.LessonStatusCancelled).
+		Where(sq.And{sq.Eq{"mentor_id": mentorID}, sq.Eq{"deleted_at": nil}}).
+		ToSql()
+	if err != nil {
+		return fmt.Errorf("lessonRepo.CancelByMentor: %w", err)
+	}
+	_, err = r.db.Exec(ctx, sql, args...)
+	return err
 }
 
 func (r *lessonRepo) SoftDelete(ctx context.Context, id string) error {

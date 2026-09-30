@@ -10,6 +10,7 @@ import (
 	apperr "github.com/zoom/darsly/internal/pkg/errors"
 	"github.com/zoom/darsly/internal/testutil"
 	"github.com/zoom/darsly/internal/usecase/poll"
+	"github.com/zoom/darsly/internal/usecase/shared"
 )
 
 // testLessonID — haqiqiy UUID: usecase ID formatini tekshiradi (shared.ValidateID).
@@ -110,4 +111,60 @@ func TestPoll_InvalidIDRejectedBeforeDB(t *testing.T) {
 	require.False(t, apperr.As(err).HTTPStatus == 500, "500 emas, validatsiya xatosi bo'lishi kerak")
 
 	require.Error(t, uc.Vote(ctx, "abc", "g", "lesson_"+testLessonID, 0))
+}
+
+// staleRepo — GetByID "eskirgan" (hali faol) poll qaytaradi, Vote esa haqiqiy holatni
+// (yopilgan) ko'radi: usecase is_active'ni o'qigandan keyin Close kelgan poygani modellaydi.
+type staleRepo struct {
+	*testutil.FakePollRepo
+	stale *entity.Poll
+}
+
+func (r *staleRepo) GetByID(_ context.Context, _ string) (*entity.Poll, error) {
+	cp := *r.stale
+	return &cp, nil
+}
+
+func TestPoll_Vote_AfterCloseRace_Rejected(t *testing.T) {
+	ctx := context.Background()
+	lrepo := testutil.NewFakeLessonRepo()
+	require.NoError(t, lrepo.Create(ctx, &entity.Lesson{ID: testLessonID, MentorID: "mentor1", Status: entity.LessonStatusLive}))
+	base := testutil.NewFakePollRepo()
+	uc := poll.New(base, lrepo, testutil.NewFakeLiveKit(), testutil.NewFakeCache(), testutil.NewLogger())
+
+	p, err := uc.Create(ctx, "mentor1", testLessonID, "Q", []string{"A", "B"}, "")
+	require.NoError(t, err)
+	stale := *p // IsActive=true snapshot
+	_, err = uc.Close(ctx, "mentor1", p.ID)
+	require.NoError(t, err)
+
+	raced := poll.New(&staleRepo{FakePollRepo: base, stale: &stale}, lrepo, testutil.NewFakeLiveKit(), testutil.NewFakeCache(), testutil.NewLogger())
+	err = raced.Vote(ctx, p.ID, "guest_a", "lesson_"+testLessonID, 0)
+	require.True(t, apperr.IsBadRequest(err), "yopilgan poll'ga poyga ovozi rad etilishi kerak: %v", err)
+
+	res, err := uc.Results(ctx, p.ID, "mentor1", "lesson_"+testLessonID)
+	require.NoError(t, err)
+	require.Equal(t, 0, res.Total)
+}
+
+// Chiqarilgan (ban) ishtirokchi natijani o'qiy olmaydi.
+func TestPoll_Results_BannedViewerForbidden(t *testing.T) {
+	ctx := context.Background()
+	lrepo := testutil.NewFakeLessonRepo()
+	require.NoError(t, lrepo.Create(ctx, &entity.Lesson{ID: testLessonID, MentorID: "mentor1", Status: entity.LessonStatusLive}))
+	cache := testutil.NewFakeCache()
+	uc := poll.New(testutil.NewFakePollRepo(), lrepo, testutil.NewFakeLiveKit(), cache, testutil.NewLogger())
+
+	p, err := uc.Create(ctx, "mentor1", testLessonID, "Q", []string{"A", "B"}, entity.PollResultsPublic)
+	require.NoError(t, err)
+	_, err = uc.Publish(ctx, "mentor1", testLessonID, p.ID)
+	require.NoError(t, err)
+
+	room := "lesson_" + testLessonID
+	_, err = uc.Results(ctx, p.ID, "guest_ok", room)
+	require.NoError(t, err)
+
+	require.NoError(t, shared.Ban(ctx, cache, testLessonID, "guest_kicked"))
+	_, err = uc.Results(ctx, p.ID, "guest_kicked", room)
+	require.True(t, apperr.IsForbidden(err), "banlangan natijani o'qimasligi kerak: %v", err)
 }

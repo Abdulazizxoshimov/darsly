@@ -1,12 +1,23 @@
-import { createContext, useContext, useEffect, useState, useCallback } from 'react'
+import { createContext, useContext, useEffect, useMemo, useState, useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { tokenStore, setUnauthorizedHandler, ApiError, errorText } from '../api/api'
 import { me, login as apiLogin, register as apiRegister, logout as apiLogout } from '../api/auth'
 import { connectRealtime } from '../lib/ws'
 import { setLogoutReason } from '../lib/logoutReason'
 import { toast } from '../lib/toast'
+import { qk } from './data'
 
 const AppContext = createContext(null)
+
+// Bootstrap (`me()`) tarmoq sababli yiqilsa qayta urinish oralig'i: 3s → 6s →
+// 12s → 24s → 30s (cap). Avval qayta urinish UMUMAN yo'q edi: `authed=true`,
+// `user=null` holat qolib ketardi va foydalanuvchi sahifani qo'lda
+// yangilamaguncha rol/ism yo'q "yarim kirgan" ilovani ko'rardi.
+export const BOOTSTRAP_RETRY_BASE_MS = 3_000
+export const BOOTSTRAP_RETRY_MAX_MS = 30_000
+export function bootstrapRetryDelay(attempt) {
+  return Math.min(BOOTSTRAP_RETRY_MAX_MS, BOOTSTRAP_RETRY_BASE_MS * 2 ** attempt)
+}
 
 export function AppProvider({ children }) {
   const qc = useQueryClient()
@@ -28,39 +39,57 @@ export function AppProvider({ children }) {
 
   // Boshlang'ich: token bo'lsa foydalanuvchini yuklaymiz.
   useEffect(() => {
+    if (!tokenStore.isAuthed) {
+      // Token yo'q — ilova bir martalik yuklanishida darhol "tayyor" (bootstrap).
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- bir martalik bootstrap
+      setReady(true)
+      return
+    }
     let alive = true
-    if (tokenStore.isAuthed && !user) {
+    let timer = null
+    let attempt = 0
+
+    const load = () => {
       me()
-        .then((u) => alive && setUser(u))
+        .then((u) => {
+          if (alive) setUser(u)
+        })
         .catch((e) => {
           if (!alive) return
           // Sessiyani FAQAT token haqiqatan rad etilganda tozalaymiz.
           //
-          // Avval har qanday xato logout qilardi: server 30 soniya javob
-          // bermasa yoki internet bir lahzaga uzilsa foydalanuvchi tizimdan
-          // chiqarilardi va qaytadan parol kiritishga majbur bo'lardi —
-          // dars boshlanishida bu eng yomon paytda sodir bo'ladi.
-          //
-          // 401 esa `api.jsx` da allaqachon refresh bilan bir marta
-          // qayta urinilgan; bu yerga yetgan bo'lsa sessiya rostan o'lgan.
+          // 401 `api.jsx` da allaqachon refresh bilan bir marta qayta
+          // urinilgan; bu yerga yetgan bo'lsa sessiya rostan o'lgan.
           if (e instanceof ApiError && e.status === 401) {
             tokenStore.clear()
             return
           }
           // Tarmoq/server xatosi — token saqlanadi, foydalanuvchi xabardor
-          // qilinadi va keyingi so'rov o'z-o'zidan tiklanadi.
-          toast.error(errorText(e, 'Serverga ulanib bo‘lmadi — qayta urinilmoqda'))
+          // qilinadi (faqat birinchi marta) va so'rov o'zi qayta uriniladi.
+          // Ilova esa ochilaveradi (`ready`): kutish ekranida qotib qolmaydi.
+          if (attempt === 0) toast.error(errorText(e, 'Serverga ulanib bo‘lmadi — qayta urinilmoqda'))
+          timer = setTimeout(load, bootstrapRetryDelay(attempt))
+          attempt += 1
         })
-        .finally(() => alive && setReady(true))
-    } else {
-      // Token yo'q — ilova bir martalik yuklanishida darhol "tayyor" (bootstrap).
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- bir martalik bootstrap
-      setReady(true)
+        .finally(() => {
+          if (alive) setReady(true)
+        })
     }
+    // Internet qaytishi bilan kutmasdan urinamiz.
+    const onOnline = () => {
+      if (!timer) return
+      clearTimeout(timer)
+      timer = null
+      load()
+    }
+    window.addEventListener('online', onOnline)
+    load()
+
     return () => {
       alive = false
+      window.removeEventListener('online', onOnline)
+      if (timer) clearTimeout(timer)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // Real-time kanal — faqat authed bo'lganda.
@@ -69,12 +98,12 @@ export function AppProvider({ children }) {
     const disconnect = connectRealtime((msg) => {
       switch (msg.type) {
         case 'notification':
-          qc.invalidateQueries({ queryKey: ['notifications'] })
-          qc.invalidateQueries({ queryKey: ['unread-count'] })
+          qc.invalidateQueries({ queryKey: qk.notifications })
+          qc.invalidateQueries({ queryKey: qk.unreadCount })
           if (msg.payload && msg.payload.title) toast.info(msg.payload.title)
           break
         case 'waiting_room.request':
-          qc.invalidateQueries({ queryKey: ['waiting'] })
+          qc.invalidateQueries({ queryKey: qk.waiting })
           toast.info("Kutish xonasiga yangi so'rov")
           break
         default:
@@ -104,15 +133,20 @@ export function AppProvider({ children }) {
     qc.clear()
   }, [qc])
 
-  const value = {
-    user,
-    setUser,
-    authed: !!user || tokenStore.isAuthed,
-    ready,
-    doLogin,
-    doRegister,
-    doLogout,
-  }
+  // Memo: har renderda yangi obyekt bo'lsa kontekstning HAR BIR iste'molchisi
+  // (butun daraxt) qayta render bo'lardi — jonli xonada ham.
+  const value = useMemo(
+    () => ({
+      user,
+      setUser,
+      authed: !!user || tokenStore.isAuthed,
+      ready,
+      doLogin,
+      doRegister,
+      doLogout,
+    }),
+    [user, ready, doLogin, doRegister, doLogout],
+  )
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>
 }

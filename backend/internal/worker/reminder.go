@@ -17,6 +17,8 @@ type ReminderWorker struct {
 	lessonRepo repository.LessonRepository
 	notif      notification.UseCase
 	log        logger.Logger
+	// retryBackoff — Notify qayta urinishlari orasidagi boshlang'ich kutish (0 = default; testlar uchun).
+	retryBackoff time.Duration
 }
 
 func NewReminderWorker(lessonRepo repository.LessonRepository, notif notification.UseCase, log logger.Logger) *ReminderWorker {
@@ -57,8 +59,45 @@ func (w *ReminderWorker) tick(ctx context.Context, lead time.Duration) {
 		}
 		body := fmt.Sprintf("«%s» darsi tez orada boshlanadi.", l.Title)
 		lessonID := l.ID
-		if _, err := w.notif.Notify(ctx, l.MentorID, entity.NotificationTypeLessonReminder, "Dars eslatmasi", body, &lessonID); err != nil {
-			w.log.Warn(ctx, "reminder tick: notify failed", logger.String("lesson_id", l.ID), logger.SafeString("err", err.Error()))
+		if err := w.notifyWithRetry(ctx, l.MentorID, body, &lessonID); err != nil {
+			// Qayta urinishlar ham yiqildi — claim'ni QAYTARAMIZ, shunda keyingi
+			// tick qayta uriladi (audit realtime #11). Notify muvaffaqiyatsiz =
+			// bildirishnoma yaratilmagan, ya'ni qayta yuborish dublikat yasamaydi.
+			w.log.Error(ctx, "reminder tick: notify failed after retries — unclaiming",
+				logger.String("lesson_id", l.ID), logger.SafeString("err", err.Error()))
+			if uerr := w.lessonRepo.UnclaimReminder(ctx, l.ID); uerr != nil {
+				w.log.Warn(ctx, "reminder tick: unclaim failed (eslatma yo'qolishi mumkin)",
+					logger.String("lesson_id", l.ID), logger.SafeString("err", uerr.Error()))
+			}
 		}
 	}
+}
+
+// notifyAttempts / retryBackoff — claim-before-send tufayli bir martalik DB/Redis
+// uzilishi eslatmani abadiy yo'qotmasligi uchun qisqa qayta urinish.
+const notifyAttempts = 3
+
+// notifyWithRetry — Notify'ni eksponensial kutish bilan qayta urinadi (ctx bekor bo'lsa to'xtaydi).
+func (w *ReminderWorker) notifyWithRetry(ctx context.Context, mentorID, body string, lessonID *string) error {
+	backoff := w.retryBackoff
+	if backoff == 0 {
+		backoff = 300 * time.Millisecond
+	}
+	var err error
+	for attempt := 1; attempt <= notifyAttempts; attempt++ {
+		if _, err = w.notif.Notify(ctx, mentorID, entity.NotificationTypeLessonReminder, "Dars eslatmasi", body, lessonID); err == nil {
+			return nil
+		}
+		w.log.Warn(ctx, "reminder tick: notify failed", logger.Int("attempt", attempt), logger.SafeString("err", err.Error()))
+		if attempt == notifyAttempts {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(backoff):
+			backoff *= 2
+		}
+	}
+	return err
 }

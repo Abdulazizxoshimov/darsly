@@ -1,13 +1,11 @@
 package uz.darsly.mentor.ui.room
 
-import android.content.Context
 import android.content.Intent
 import android.os.Build
 import io.livekit.android.util.LKLog
 import uz.darsly.mentor.data.livekit.LessonSession
 import uz.darsly.mentor.data.livekit.ScreenSharePlan
-import uz.darsly.mentor.service.LessonNotifications
-import uz.darsly.mentor.service.LessonService
+import uz.darsly.mentor.service.LessonPlatform
 
 /**
  * Ekran ulashish: boshlash, to'xtatish va uzilishdan keyin tiklash.
@@ -22,7 +20,7 @@ import uz.darsly.mentor.service.LessonService
  *
  * Alohida sinf sifatida u LiveKit'siz, Compose'siz sinaladi: qaror
  * [ScreenSharePlan] da (sof), bu yerda esa faqat uni bajarish va holatni
- * ushlash.
+ * ushlash. Tizim chegarasi [LessonPlatform] orqali — testda soxta.
  *
  * ## Nega ViewModel emas
  *
@@ -32,11 +30,13 @@ import uz.darsly.mentor.service.LessonService
  *
  * @param onState UI holatini yangilash (ViewModel `_state.update` ni beradi).
  * @param onLog   diagnostika jurnaliga yozish.
+ * @param sdkInt  Android API darajasi — oshkora, JVM testida `Build.VERSION.SDK_INT` 0 beradi.
  */
 class ScreenShareController(
-    private val appContext: Context,
+    private val platform: LessonPlatform,
     private val onState: ((RoomUiState) -> RoomUiState) -> Unit,
     private val onLog: (String) -> Unit,
+    private val sdkInt: Int = Build.VERSION.SDK_INT,
 ) {
 
     /**
@@ -67,10 +67,21 @@ class ScreenShareController(
     suspend fun start(session: LessonSession, resultData: Intent) {
         // TARTIB (Android 14+ uchun majburiy): avval `mediaProjection` tipli
         // foreground servis, keyin capture. Teskarisida tizim tipni rad etadi.
-        LessonService.start(appContext, withProjection = true)
+        //
+        // M4: `startService` Android 12+ da fon rejimidan OTADI
+        // (`ForegroundServiceStartNotAllowedException`). Qoplanmagan bo'lsa
+        // korutina jim o'lar, ustoz "Boshlash" ni bosgan-u, hech nima bo'lmasdi.
+        val fgs = runCatching { platform.startService(withProjection = true) }
+        if (fgs.isFailure) {
+            val t = fgs.exceptionOrNull()
+            LKLog.w(t) { "mediaProjection FGS ishga tushmadi" }
+            onLog("FGS XATO: ${t?.let { it::class.simpleName }}: ${t?.message}")
+            onFailed()
+            return
+        }
         onLog("FGS mediaProjection tipi bilan ishga tushdi")
 
-        val notification = LessonNotifications.build(appContext, "Ekran ulashilmoqda", summary = false)
+        val notification = platform.screenShareNotification()
         runCatching { session.startScreenShare(resultData, notification) }
             .onSuccess {
                 onLog("EKRAN ULASHISH BOSHLANDI (720p/15fps)")
@@ -85,21 +96,27 @@ class ScreenShareController(
             .onFailure { t ->
                 LKLog.w(t) { "ekran ulashish boshlanmadi" }
                 onLog("EKRAN ULASHISH XATO: ${t::class.simpleName}: ${t.message}")
-                // Saqlangan rozilik yaroqsiz bo'lib chiqdi (Android uni bir marta
-                // beradi) — uni tashlaymiz, aks holda keyingi tiklash ham shu
-                // o'lik token bilan urinardi.
-                consent = null
-                onState {
-                    if (wanted) {
-                        // Ustoz ulashayotgan edi: bu TIKLASH urinishining yiqilishi.
-                        // "Qayta urinib ko'ring" o'rniga bir bosishlik taklif kerak.
-                        it.copy(restoreShare = true)
-                    } else {
-                        it.copy(error = "Ekranni ulashib bo'lmadi — qayta urinib ko'ring")
-                    }
-                }
-                LessonService.start(appContext, withProjection = false)
+                onFailed()
+                runCatching { platform.startService(withProjection = false) }
             }
+    }
+
+    /**
+     * Boshlash yiqildi. Saqlangan rozilik yaroqsiz bo'lib chiqdi (Android uni
+     * bir marta beradi) — uni tashlaymiz, aks holda keyingi tiklash ham shu
+     * o'lik token bilan urinardi.
+     */
+    private fun onFailed() {
+        consent = null
+        onState {
+            if (wanted) {
+                // Ustoz ulashayotgan edi: bu TIKLASH urinishining yiqilishi.
+                // "Qayta urinib ko'ring" o'rniga bir bosishlik taklif kerak.
+                it.copy(restoreShare = true)
+            } else {
+                it.copy(error = "Ekranni ulashib bo'lmadi — qayta urinib ko'ring")
+            }
+        }
     }
 
     suspend fun stop(session: LessonSession) {
@@ -109,7 +126,8 @@ class ScreenShareController(
         runCatching { session.stopScreenShare() }
             .onSuccess { onLog("ekran ulashish to'xtatildi") }
             .onFailure { onLog("to'xtatish XATO: ${it.message}") }
-        LessonService.start(appContext, withProjection = false)
+        runCatching { platform.startService(withProjection = false) }
+            .onFailure { onLog("FGS tipini qaytarib bo'lmadi: ${it.message}") }
     }
 
     /** Ustoz "Keyinroq" dedi — taklif yopiladi, lekin niyat saqlanadi. */
@@ -143,7 +161,7 @@ class ScreenShareController(
                 wanted = wanted,
                 sharingNow = sharingNow,
                 hasToken = consent != null,
-                sdkInt = Build.VERSION.SDK_INT,
+                sdkInt = sdkInt,
             )
         ) {
             ScreenSharePlan.Action.NONE -> null
@@ -157,10 +175,7 @@ class ScreenShareController(
                 onLog("ekran ulashish uzildi — rozilik qayta so'raladi (Android 14+)")
                 onState { it.copy(restoreShare = true) }
                 // Ustoz boshqa ilovada bo'lsa kartani ko'rmaydi — titratamiz.
-                LessonNotifications.alert(
-                    appContext,
-                    "Ekran ulashish uzildi — davom ettirish uchun bosing",
-                )
+                platform.alert("Ekran ulashish uzildi — davom ettirish uchun bosing")
                 null
             }
         }

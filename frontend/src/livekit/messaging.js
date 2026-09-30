@@ -9,40 +9,80 @@ export function encodeData(msg) {
   return new Uint8Array(enc.encode(JSON.stringify(msg)))
 }
 
-// Kelgan data'ni normalizatsiya qiladi. Qaytadi: {kind:'chat'|'reaction'|'hand'|'poll'|'wb', ...} yoki null.
+/**
+ * @typedef {object} ChatEntry  Chat paneli tushunadigan yozuv.
+ * @property {string} id
+ * @property {string} name
+ * @property {string} body
+ * @property {string} senderIdentity
+ * @property {string|null} toIdentity
+ * @property {{name:string,size:number,mime:string,url:string}|null} file
+ * @property {number} ts
+ */
+
+/**
+ * Backend `ChatMessage` (REST javobi ham, data-channel ham bir xil shakl) →
+ * `ChatEntry`. Bitta joyda: avval bu xaritalash to'rt joyda qo'lda takrorlanardi.
+ *
+ * `sender_identity` va `to_identity` ham olib o'tiladi: klient shular asosida
+ * "bu meniki" va "bu shaxsiy" degan qarorni chiqaradi. Fayl (`file`) presigned
+ * havola bilan keladi — u ham o'tadi.
+ *
+ * @returns {ChatEntry|null} shakl noto'g'ri bo'lsa `null`
+ */
+export function chatEntryFromServer(m) {
+  if (!m || typeof m !== 'object') return null
+  if (typeof m.id !== 'string' || typeof m.sender_name !== 'string' || typeof m.body !== 'string') return null
+  return {
+    id: m.id,
+    name: m.sender_name,
+    body: m.body,
+    senderIdentity: typeof m.sender_identity === 'string' ? m.sender_identity : '',
+    toIdentity: typeof m.to_identity === 'string' && m.to_identity ? m.to_identity : null,
+    file: m.file && typeof m.file === 'object' ? m.file : null,
+    ts: Date.parse(m.created_at) || Date.now(),
+  }
+}
+
+const isStr = (v) => typeof v === 'string'
+const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v)
+
+// Ochiq so'rovnoma payload'i: savol va variantlar SHART. Buzuq `poll` xabari
+// (masalan eski host klienti yoki qasddan yuborilgan) o'quvchi panelini
+// `options.map` da yiqitardi — hamma o'quvchida bir vaqtda.
+function validPoll(p) {
+  return isObj(p) && isStr(p.id) && isStr(p.question) && Array.isArray(p.options) && p.options.every(isStr)
+}
+
+// Har `kind` uchun minimal shakl — UI shu maydonlarga tekshiruvsiz tayanadi.
+const SHAPE = {
+  chat: (o) => isStr(o.id) && isStr(o.name) && isStr(o.body),
+  chat_deleted: (o) => isStr(o.id),
+  reaction: (o) => isStr(o.emoji),
+  hand: (o) => o.act === 'lower_all' || isStr(o.identity),
+  poll: (o) =>
+    (o.action === 'open' && validPoll(o.poll)) ||
+    (o.action === 'close' && isObj(o.poll) && isStr(o.poll.id)),
+  poll_published: (o) => isObj(o.results) && (o.results.poll === undefined || validPoll(o.results.poll)),
+  wb: (o) => isStr(o.act),
+  policy: () => true,
+}
+
+/**
+ * Kelgan data'ni normalizatsiya qiladi va SHAKLINI tekshiradi.
+ * Qaytadi: {kind:'chat'|'chat_deleted'|'reaction'|'hand'|'poll'|'poll_published'|'wb'|'policy', ...}
+ * yoki null (noma'lum tur / buzuq shakl / JSON emas).
+ */
 export function decodeData(payload) {
   try {
     const obj = JSON.parse(dec.decode(payload))
-    if (obj && typeof obj === 'object') {
-      if (
-        obj.kind === 'chat' ||
-        obj.kind === 'chat_deleted' ||
-        obj.kind === 'reaction' ||
-        obj.kind === 'hand' ||
-        obj.kind === 'poll' ||
-        obj.kind === 'poll_published' ||
-        obj.kind === 'wb' ||
-        obj.kind === 'policy'
-      ) {
-        return obj
-      }
-      // Backend ChatMessage (kind yo'q, sender_name + body bor).
-      // Fayl biriktirilgan bo'lsa `file` ham olib o'tiladi (nom/hajm/mime/url).
-      // `sender_identity` va `to_identity` ham olib o'tiladi: klient shular
-      // asosida "bu meniki" va "bu shaxsiy" degan qarorni chiqaradi. Ularsiz
-      // o'z xabaringiz begonanikidek ko'rinardi.
-      if (typeof obj.sender_name === 'string' && typeof obj.body === 'string') {
-        return {
-          kind: 'chat',
-          id: obj.id,
-          name: obj.sender_name,
-          body: obj.body,
-          senderIdentity: obj.sender_identity || '',
-          toIdentity: obj.to_identity || null,
-          file: obj.file || null,
-          ts: Date.parse(obj.created_at) || Date.now(),
-        }
-      }
+    if (!isObj(obj)) return null
+    const check = SHAPE[obj.kind]
+    if (check) return check(obj) ? obj : null
+    // Backend ChatMessage (kind yo'q, sender_name + body bor).
+    if (obj.kind === undefined) {
+      const entry = chatEntryFromServer(obj)
+      if (entry) return { kind: 'chat', ...entry }
     }
   } catch {
     /* e'tiborsiz */

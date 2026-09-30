@@ -8,8 +8,26 @@ import { setLogoutReason } from '../lib/logoutReason'
 
 const BASE = (import.meta.env.VITE_API_URL || '') + '/api/v1'
 
-const ACCESS_KEY = 'darsly.access'
-const REFRESH_KEY = 'darsly.refresh'
+const ACCESS_KEY = 'jonly.access'
+const REFRESH_KEY = 'jonly.refresh'
+
+// Rebrand (Darsly → Jonly) dan oldingi kalitlar. Bir marta ko'chiriladi —
+// aks holda deploy'dan keyin HAR BIR foydalanuvchi tizimdan chiqib ketardi.
+const LEGACY_KEYS = { 'darsly.access': ACCESS_KEY, 'darsly.refresh': REFRESH_KEY }
+function migrateLegacyKeys() {
+  try {
+    for (const [from, to] of Object.entries(LEGACY_KEYS)) {
+      const v = localStorage.getItem(from)
+      if (v !== null) {
+        if (localStorage.getItem(to) === null) localStorage.setItem(to, v)
+        localStorage.removeItem(from)
+      }
+    }
+  } catch {
+    /* storage yopiq — eski sessiya shunchaki tiklanmaydi */
+  }
+}
+migrateLegacyKeys()
 
 export const tokenStore = {
   get access() {
@@ -84,20 +102,24 @@ export function setUnauthorizedHandler(fn) {
   onUnauthorized = fn
 }
 
-// Bir vaqtda ko'p 401 → faqat bitta refresh so'rovi.
-// Qaytadi: `{ access, revoked }` — `revoked` bo'lsa sessiya BEKOR qilingan
-// (boshqa qurilmada kirilgan), ya'ni qayta urinishning ma'nosi yo'q va
-// foydalanuvchiga aniq sabab aytiladi.
-let refreshing = null
+// Qaytadi: `{ access, revoked, network }`
+//   access  — yangi access token (muvaffaqiyat) yoki null;
+//   revoked — sessiya BEKOR qilingan (boshqa qurilmada kirilgan): qayta
+//             urinishning ma'nosi yo'q, foydalanuvchiga aniq sabab aytiladi;
+//   network — serverga YETIB BORMADI (offline, timeout, 5xx): sessiya haqida
+//             hech narsa ma'lum emas. Avval bu ham "expired" deb hisoblanib
+//             foydalanuvchi tizimdan chiqarilardi — metro/lift uzilishida
+//             dars boshlanishida parol so'rash eng yomon payt.
 async function refreshTokens() {
   const refresh_token = tokenStore.refresh
-  if (!refresh_token) return { access: null, revoked: false }
+  if (!refresh_token) return { access: null, revoked: false, network: false }
   try {
     const res = await fetch(`${BASE}/auth/refresh`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refresh_token }),
     })
+    if (res.status >= 500) return { access: null, revoked: false, network: true }
     if (!res.ok) {
       let code = ''
       try {
@@ -105,14 +127,48 @@ async function refreshTokens() {
       } catch {
         /* bo'sh body */
       }
-      return { access: null, revoked: code === 'SESSION_REVOKED' }
+      return { access: null, revoked: code === 'SESSION_REVOKED', network: false }
     }
     const json = await res.json()
     tokenStore.set(json.data)
-    return { access: json.data.access_token, revoked: false }
+    return { access: json.data.access_token, revoked: false, network: false }
   } catch {
-    return { access: null, revoked: false }
+    return { access: null, revoked: false, network: true }
   }
+}
+
+// Bir vaqtda ko'p 401 → faqat bitta refresh so'rovi. WS kanali ham shu
+// yo'ldan yangilaydi (`lib/ws.js`) — ikkita parallel refresh bo'lmasin.
+let refreshing = null
+export function refreshAccess() {
+  if (!refreshing) {
+    refreshing = refreshTokens().finally(() => {
+      refreshing = null
+    })
+  }
+  return refreshing
+}
+
+// 401 dan keyingi YAGONA qaror yo'li (`request` ham, `upload` ham shu yerdan
+// o'tadi — avval ikki nusxa edi va ular bir-biridan sekin farqlanib ketardi).
+// Qaytadi: `true` — token yangilandi, so'rovni BIR MARTA takrorlash mumkin.
+// Aks holda mos xatoni tashlaydi (kerak bo'lsa tizimdan chiqarib).
+async function recoverUnauthorized(err) {
+  // Sessiya BEKOR qilingan bo'lsa refresh ham 401 beradi — bekorga
+  // urinmaymiz va sababni saqlab qolamiz (login sahifasi ko'rsatadi).
+  if (err.code === 'SESSION_REVOKED') {
+    onUnauthorized('session_revoked')
+    throw err
+  }
+  const r = await refreshAccess()
+  if (r.access) return true
+  // Tarmoq: sessiya tirik bo'lishi mumkin — chiqarmaymiz, keyingi so'rov
+  // o'zi qayta urinib ko'radi.
+  if (r.network) throw new ApiError('NETWORK', 'Serverga ulanib bo‘lmadi', 0)
+  onUnauthorized(r.revoked ? 'session_revoked' : 'expired')
+  throw r.revoked
+    ? new ApiError('SESSION_REVOKED', 'Boshqa qurilmada kirildi', 401)
+    : new ApiError('UNAUTHORIZED', 'Sessiya tugadi', 401)
 }
 
 async function parseError(res) {
@@ -191,23 +247,8 @@ async function request(method, path, { body, auth = true, raw = false, blob = fa
 
   // 401 → refresh + qayta urinish (bir marta)
   if (res.status === 401 && auth && !_retried) {
-    // Sessiya BEKOR qilingan bo'lsa refresh ham 401 beradi — bekorga
-    // urinmaymiz va sababni saqlab qolamiz (login sahifasi ko'rsatadi).
-    const err = await parseError(res)
-    if (err.code === 'SESSION_REVOKED') {
-      onUnauthorized('session_revoked')
-      throw err
-    }
-    refreshing = refreshing ?? refreshTokens()
-    const r = await refreshing
-    refreshing = null
-    if (r.access) {
-      return request(method, path, { body, auth, raw, blob, _retried: true })
-    }
-    onUnauthorized(r.revoked ? 'session_revoked' : 'expired')
-    throw r.revoked
-      ? new ApiError('SESSION_REVOKED', 'Boshqa qurilmada kirildi', 401)
-      : new ApiError('UNAUTHORIZED', 'Sessiya tugadi', 401)
+    await recoverUnauthorized(await parseError(res))
+    return request(method, path, { body, auth, raw, blob, _retried: true })
   }
 
   if (res.status === 204) return null
@@ -303,19 +344,8 @@ async function upload(path, formData, opts = {}) {
     return await sendUpload(path, formData, opts)
   } catch (e) {
     if (!(e instanceof ApiError) || e.status !== 401 || !auth || _retried) throw e
-
-    if (e.code === 'SESSION_REVOKED') {
-      onUnauthorized('session_revoked')
-      throw e
-    }
-    refreshing = refreshing ?? refreshTokens()
-    const r = await refreshing
-    refreshing = null
-    if (r.access) return upload(path, formData, { ...opts, _retried: true })
-    onUnauthorized(r.revoked ? 'session_revoked' : 'expired')
-    throw r.revoked
-      ? new ApiError('SESSION_REVOKED', 'Boshqa qurilmada kirildi', 401)
-      : new ApiError('UNAUTHORIZED', 'Sessiya tugadi', 401)
+    await recoverUnauthorized(e)
+    return upload(path, formData, { ...opts, _retried: true })
   }
 }
 

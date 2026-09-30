@@ -57,7 +57,7 @@ type CreateUserReq struct {
 
 type UpdateUserReq struct {
 	FullName  *string `json:"full_name"  validate:"omitempty,min=2,max=255"`
-	AvatarURL *string `json:"avatar_url" validate:"omitempty,url"`
+	AvatarURL *string `json:"avatar_url" validate:"omitempty,httpurl"`
 	Color     *string `json:"color"      validate:"omitempty,len=7"`
 	Timezone  *string `json:"timezone"   validate:"omitempty,max=64"`
 	Language  *string `json:"language"   validate:"omitempty,max=8"`

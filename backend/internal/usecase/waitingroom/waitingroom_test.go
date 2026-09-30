@@ -280,3 +280,62 @@ func TestAdmitAll_InvalidLessonID(t *testing.T) {
 	_, err := uc.AdmitAll(context.Background(), "mentor1", "not-a-uuid")
 	require.True(t, apperr.IsNotFound(err))
 }
+
+// Token xatosi bo'lsa so'rov `pending` qolishi kerak (abadiy tokensiz admitted emas).
+func TestAdmit_TokenFailure_KeepsPending(t *testing.T) {
+	wrepo := testutil.NewFakeWaitingRepo()
+	lrepo := testutil.NewFakeLessonRepo()
+	lesson := &entity.Lesson{ID: uuid.NewString(), MentorID: "mentor1", Status: entity.LessonStatusLive}
+	require.NoError(t, lrepo.Create(context.Background(), lesson))
+	roomUC := &testutil.FakeRoomUC{ParticipantErr: apperr.BadRequest("lk down")}
+	uc := waitingroom.New(wrepo, lrepo, roomUC, ws.NewHub(testutil.NewLogger()), testutil.NewFakeCache(), testutil.NewLogger())
+
+	req, err := uc.CreateRequest(context.Background(), lesson, "X")
+	require.NoError(t, err)
+
+	_, err = uc.Admit(context.Background(), "mentor1", req.ID)
+	require.Error(t, err)
+	st, _ := uc.Status(context.Background(), req.ID)
+	require.Equal(t, entity.WaitingStatusPending, st.Status)
+
+	// AdmitAll ham: hech kim admitted'ga o'tmaydi.
+	resp, err := uc.AdmitAll(context.Background(), "mentor1", lesson.ID)
+	require.NoError(t, err)
+	require.Equal(t, 0, resp.Admitted)
+	st, _ = uc.Status(context.Background(), req.ID)
+	require.Equal(t, entity.WaitingStatusPending, st.Status)
+
+	// Token tiklangach qayta urinish ishlaydi.
+	roomUC.ParticipantErr = nil
+	_, err = uc.Admit(context.Background(), "mentor1", req.ID)
+	require.NoError(t, err)
+}
+
+// Live bo'lmagan darsga admit/admit-all rad etiladi va so'rov pending qoladi.
+func TestAdmit_LessonNotLive_Rejected(t *testing.T) {
+	uc, _, lrepo, lesson := setup(t)
+	req, err := uc.CreateRequest(context.Background(), lesson, "X")
+	require.NoError(t, err)
+
+	lesson.Status = entity.LessonStatusScheduled
+	require.NoError(t, lrepo.Update(context.Background(), lesson))
+
+	_, err = uc.Admit(context.Background(), "mentor1", req.ID)
+	require.True(t, apperr.IsBadRequest(err), "scheduled darsga admit -> 400, oldi: %v", err)
+	_, err = uc.AdmitAll(context.Background(), "mentor1", lesson.ID)
+	require.True(t, apperr.IsBadRequest(err))
+	st, _ := uc.Status(context.Background(), req.ID)
+	require.Equal(t, entity.WaitingStatusPending, st.Status)
+}
+
+// Ochiq endpoint spam cap'i: darsga maxPending'dan ortiq pending so'rov yaratilmaydi.
+func TestCreateRequest_PendingCap(t *testing.T) {
+	uc, _, _, lesson := setup(t)
+	for i := 0; i < 200; i++ {
+		_, err := uc.CreateRequest(context.Background(), lesson, "G")
+		require.NoError(t, err)
+	}
+	_, err := uc.CreateRequest(context.Background(), lesson, "G")
+	require.Error(t, err)
+	require.Equal(t, 429, apperr.As(err).HTTPStatus)
+}

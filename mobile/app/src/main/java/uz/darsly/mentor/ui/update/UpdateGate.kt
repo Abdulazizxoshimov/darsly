@@ -26,6 +26,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import uz.darsly.mentor.BuildConfig
+import uz.darsly.mentor.util.SafeLinks
+
+/** APK yuklab olinadigan ruxsat etilgan hostlar — API va web bazalari (`/download/`). */
+private val APK_HOSTS = SafeLinks.hostsOf(BuildConfig.API_BASE_URL, BuildConfig.WEB_BASE_URL)
 
 /** Ishga tushganda `GET /api/v1/app-config` ni bir marta so'raydi (M42). */
 @HiltViewModel
@@ -63,6 +67,13 @@ fun UpdateGate(vm: UpdateViewModel = hiltViewModel()) {
 
     fun openApk(url: String) {
         if (url.isBlank()) return
+        // S2: APK FAQAT o'z serverimizdan va faqat https. Bu dialog majburiy
+        // rejimda yopilmaydi — begona havola ustozning yagona chiqish yo'li
+        // bo'lib qolmasligi kerak.
+        if (!SafeLinks.isAllowed(url, allowedHosts = APK_HOSTS, allowCleartext = BuildConfig.DEBUG)) {
+            LKLog.w { "apk_url rad etildi: ${url.take(64)}" }
+            return
+        }
         runCatching {
             ctx.startActivity(
                 Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),

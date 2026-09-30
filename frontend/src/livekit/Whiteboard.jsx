@@ -600,7 +600,10 @@ export const Whiteboard = memo(function Whiteboard({
     try {
       const buf = await file.arrayBuffer()
       const pdfjsLib = await loadPdfjs()
-      const doc = await pdfjsLib.getDocument({ data: buf }).promise
+      // `isEvalSupported:false` — PDF ichidagi funksiya (PostScript) kodi
+      // `eval` orqali emas, xavfsiz interpretator bilan bajariladi. Fayl
+      // ustoz tanlagan bo'lsa ham ishonchli manba emas (GHSA-hq66-cqwq-w95j).
+      const doc = await pdfjsLib.getDocument({ data: buf, isEvalSupported: false }).promise
       try {
         pdfDocRef.current?.destroy?.()
       } catch {
