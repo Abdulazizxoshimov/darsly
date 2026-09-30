@@ -191,6 +191,11 @@ ROOM_STATE = obj(
     },
 )
 
+CHAT_FILE = obj(
+    ["name", "size", "mime", "url", "expires_in_s"],
+    {"name": _STR, "size": _INT, "mime": _STR, "url": _STR, "expires_in_s": _INT},
+)
+
 CHAT_MESSAGE = obj(
     ["id", "lesson_id", "sender_identity", "sender_name", "body", "created_at"],
     {
@@ -199,6 +204,7 @@ CHAT_MESSAGE = obj(
         "sender_identity": _STR,
         "sender_name": _STR,
         "body": _STR,
+        "file": CHAT_FILE,
     },
 )
 

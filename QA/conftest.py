@@ -184,6 +184,52 @@ def requires_livekit(livekit_available):
         pytest.skip("LiveKit ishlamayapti — room-token/egress testi o'tkazib yuboriladi")
 
 
+@pytest.fixture(scope="session")
+def minio_available(admin, backend_url) -> bool:
+    """MinIO (fayl saqlash) ishlaydimi — chat-fayl upload bilan bir marta aniqlanadi.
+
+    Backend non-production'da MinIO yo'q bo'lsa nop-client'ga o'tadi (startup yiqilmaydi)
+    va upload 5xx qaytaradi. Shu probe orqali fayl-saqlash testlari MinIO yo'q bo'lsa
+    (masalan CI) `requires_minio` bilan TOZA skip bo'ladi. MinIO loyihada qoladi.
+    """
+    from lib.client import Client
+
+    m = create_user(admin, role="mentor")
+    mc = Client(backend_url, token=m.access)
+    lid = None
+    try:
+        lr = mc.post(
+            "/api/v1/lessons",
+            json={"title": "MinIO probe", "duration_min": 30,
+                  "is_recording_enabled": False, "is_waiting_room_enabled": False},
+        )
+        if lr.status_code != 201:
+            return False
+        lid = lr.json()["data"]["id"]
+        r = mc.post(
+            f"/api/v1/lessons/{lid}/chat/upload",
+            files={"file": ("probe.txt", b"minio probe", "text/plain")},
+        )
+        return r.status_code == 201
+    except Exception:
+        return False
+    finally:
+        try:
+            if lid:
+                mc.delete(f"/api/v1/lessons/{lid}")
+            admin.delete(f"/api/v1/users/{m.user_id}")
+        except Exception:
+            pass
+        mc.close()
+
+
+@pytest.fixture
+def requires_minio(minio_available):
+    """MinIO yo'q bo'lsa fayl-saqlash testini skip qiladi (chat upload / arxiv material)."""
+    if not minio_available:
+        pytest.skip("MinIO mavjud emas — fayl saqlash testi o'tkazib yuboriladi")
+
+
 @pytest.fixture
 def factory(admin, backend_url):
     """Test ma'lumot fabrikasi — yaratganini teardown'da tozalaydi."""

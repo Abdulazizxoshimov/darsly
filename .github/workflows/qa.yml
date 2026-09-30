@@ -35,15 +35,16 @@ jobs:
           cache: pip
           cache-dependency-path: QA/requirements.txt
 
-      # Infra (postgres 5442 / redis 6399 / minio 9020 / rabbitmq 5682) — dev compose.
-      # Backend .env.example aynan shu portlarga sozlangan (xostda `go run`).
+      # Infra — FAQAT postgres (5442) + redis (6399). MinIO/RabbitMQ CI'da tashlanadi
+      # (non-fatal + MinIO Docker Hub image'i buzuq — QA/docker-compose.ci.yml izohiga qara).
+      # Portlar backend/.env.example bilan mos (xostda `go run`).
       - name: Infra ko'tarish
-        working-directory: backend
+        working-directory: QA
         run: |
-          docker compose -f docker-compose.dev.yml up -d
+          docker compose -f docker-compose.ci.yml up -d
           echo "postgres tayyor bo'lguncha kutamiz..."
           for i in $(seq 1 30); do
-            docker compose -f docker-compose.dev.yml exec -T postgres pg_isready -U postgres && break
+            docker compose -f docker-compose.ci.yml exec -T postgres pg_isready -U postgres && break
             sleep 2
           done
 

@@ -9,9 +9,13 @@
 > (skip = LiveKit SFU kerak bo'lgan room-token yo'llari — `requires_livekit` bilan TOZA skip),
 > **25 test fayli**. Qamrov: backend 18 domen (5-bo'lim), web kontrakt, mobil kontrakt, E2E oqim.
 > **CI (P2) yozildi:** `.github/workflows/qa.yml` — push/PR/kunlik CI runnerda ephemeral
-> backend (docker-compose.dev.yml + `go run`) ko'tarib butun Python suite'ni yugurtiradi
-> (LiveKit testlari avto-skip). Telegram alert SHARTLI (`QA_TG_BOT_TOKEN`/`QA_TG_CHAT_ID`
-> sirlari qo'shilsa yoqiladi). Prod-monitor (P6) job'i deploy bo'lgach yoqiladi (izohli shablon).
+> backend (`QA/docker-compose.ci.yml` = **postgres+redis** + `go run`) ko'tarib butun Python
+> suite'ni yugurtiradi (LiveKit va MinIO testlari avto-skip). **MinIO/RabbitMQ CI'da
+> tashlangan:** MinIO Docker Hub image'i endi pull qilinmaydi (MinIO public teglarni olib
+> tashlagan) VA backend startup'ida ikkalasi non-fatal (nop-client). MinIO loyihada QOLADI —
+> faqat CI test-infra'sidan chiqarilgan; fayl-saqlash testlari `requires_minio` bilan (LiveKit
+> kabi) MinIO bor lokalda ISHLAYDI, CI'da TOZA skip. Telegram alert SHARTLI
+> (`QA_TG_BOT_TOKEN`/`QA_TG_CHAT_ID` sirlari qo'shilsa). Prod-monitor (P6) deploy bo'lgach.
 > Keyingi: Telegram sirlarini qo'shish + prod deploy → prod-monitor, keyin Espresso/Appium (P7).
 > Muallif: QA. Sana: 2026-09-21 (reja) · 2026-09-30 (resurslar + backend + web/mobil + e2e + CI).
 

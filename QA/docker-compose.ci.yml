@@ -1,0 +1,30 @@
+# QA CI infra — FAQAT postgres + redis (backend startup uchun majburiy bo'lganlar).
+#
+# Nega dev compose emas: dev `docker-compose.dev.yml` `minio/minio:latest` ni oladi,
+# lekin MinIO Docker Hub'dan `latest` (va umuman public teglar) ni OLIB TASHLAGAN
+# → CI'da pull yiqiladi. MinIO va RabbitMQ backend startup'ida NON-FATAL (app.go:
+# non-production'da warn + nop-client bilan davom etadi), va QA'da ISHLAYDIGAN
+# testlarning hech biri ularga tegmaydi (upload/download positive → LiveKit-skip;
+# list=DB, download-nonexistent=404 DB'dan). Shuning uchun CI'da ikkalasi tashlanadi.
+#
+# Portlar backend/.env.example bilan MOS (xostda `go run` shu portlarga ulanadi).
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5442:5432"
+    environment:
+      POSTGRES_DB: darsly
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6399:6379"

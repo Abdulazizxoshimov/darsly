@@ -11,7 +11,7 @@ Host yo'li LiveKit'siz ishlaydi (broadcast best-effort). Guest yo'li room-token 
 import pytest
 
 from lib import rooms
-from lib.schemas import CHAT_MESSAGE, data_array, validate
+from lib.schemas import CHAT_FILE, CHAT_MESSAGE, data_array, validate
 
 pytestmark = pytest.mark.destructive
 
@@ -94,6 +94,41 @@ def test_transcript_invalid_format(as_mentor, factory):
     lesson = factory.lesson(as_mentor)
     r = as_mentor.get(f"/api/v1/lessons/{lesson['id']}/chat/transcript", params={"format": "pdf"})
     as_mentor.expect(r, 400)
+
+
+# ── Fayl ulashish (host) — MinIO kerak ──────────────────────────
+def test_host_upload_file(requires_minio, as_mentor, factory):
+    """Host fayl yuklaydi → 201 ChatMessage.file {name,size,mime,url,expires_in_s} (presigned)."""
+    lesson = factory.lesson(as_mentor)
+    r = as_mentor.post(
+        f"/api/v1/lessons/{lesson['id']}/chat/upload",
+        files={"file": ("uy_ishi.txt", b"matematika uy ishi", "text/plain")},
+        data={"body": "Uy ishi"},
+    )
+    as_mentor.expect(r, 201)
+    msg = as_mentor.data(r)
+    validate(msg, CHAT_MESSAGE)
+    assert msg.get("file"), "upload javobida file bo'lishi kerak"
+    validate(msg["file"], CHAT_FILE)
+    assert msg["file"]["url"].startswith("http"), "file.url presigned havola bo'lishi kerak"
+
+
+def test_upload_rejects_bad_extension(as_mentor, factory):
+    """Ruxsatsiz kengaytma → 400 (MinIO'gача yetmasdan rad etiladi — guard shart emas)."""
+    lesson = factory.lesson(as_mentor)
+    r = as_mentor.post(
+        f"/api/v1/lessons/{lesson['id']}/chat/upload",
+        files={"file": ("zararli.exe", b"MZ\x90\x00binary", "application/octet-stream")},
+    )
+    as_mentor.expect(r, 400)
+
+
+def test_upload_requires_auth(client):
+    r = client.post(
+        f"/api/v1/lessons/{NIL_UUID}/chat/upload",
+        files={"file": ("x.txt", b"x", "text/plain")},
+    )
+    client.expect(r, 401)
 
 
 # ── Guest yo'li (room-token) — LiveKit kerak ────────────────────
