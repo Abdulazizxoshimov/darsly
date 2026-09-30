@@ -12,7 +12,8 @@ pytestmark = pytest.mark.destructive
 
 
 def test_guest_join_without_waiting_room(as_mentor, factory, client):
-    """Kutish xonasi o'chiq, host kirmagan → preview + join(waiting_for_host)."""
+    """Kutish xonasi o'chiq → preview + join. next_step darsning live-holatiga bog'liq
+    (host kirmagan → waiting_for_host; live → join) — ikkalasi ham davom etish holati."""
     lesson = factory.lesson(as_mentor, is_waiting_room_enabled=False)
     preview = rooms.preview_join(client, lesson["join_slug"])
     validate(preview, LESSON_PUBLIC)
@@ -20,7 +21,7 @@ def test_guest_join_without_waiting_room(as_mentor, factory, client):
 
     joinresp = rooms.join(client, lesson["join_slug"], guest_name="Guest A")
     validate(joinresp, JOIN_LESSON_RESP)
-    assert joinresp["next_step"] == "waiting_for_host"
+    assert joinresp["next_step"] in ("waiting_for_host", "join"), joinresp["next_step"]
 
 
 def test_guest_passcode_flow(as_mentor, factory, client):

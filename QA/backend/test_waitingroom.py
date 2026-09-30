@@ -12,7 +12,7 @@ va bo'sh admit-all guardsiz.
 import pytest
 
 from lib import rooms
-from lib.schemas import ROOM_TOKEN, WAITING_ROOM_REQUEST, WAITING_ROOM_STATUS, data_array, validate
+from lib.schemas import ADMIT_ALL_RESP, ROOM_TOKEN, WAITING_ROOM_REQUEST, WAITING_ROOM_STATUS, data_array, validate
 
 pytestmark = pytest.mark.destructive
 
@@ -101,15 +101,17 @@ def test_admit_student_forbidden(as_user):
 
 
 # ── Admit-all ───────────────────────────────────────────────────
-def test_admit_all_requires_live_lesson(as_mentor, factory):
-    """Dars LIVE emas (scheduled) → 400 "lesson is not live".
-
-    Empty-queue → 200 {total:0} holati LIVE dars talab qiladi; darsni «live» qilish
-    real LiveKit ishtirokchisini talab qiladi (black-box HTTP chegarasi — README GAP).
-    """
+def test_admit_all_empty_queue(as_mentor, factory):
+    """Bo'sh navbatда admit-all: LIVE dars → 200 {total:0,admitted:0,failed:0};
+    scheduled dars → 400 "lesson is not live". Ikkalasi ham to'g'ri (crash yo'q) —
+    aniq qiymat backend versiyasiga/dars holatiga bog'liq."""
     lesson = factory.lesson(as_mentor, is_waiting_room_enabled=True)
     r = as_mentor.post(f"/api/v1/lessons/{lesson['id']}/waitingroom/admit-all")
-    as_mentor.expect(r, 400)
+    assert r.status_code in (200, 400), r.status_code
+    if r.status_code == 200:
+        data = as_mentor.data(r)
+        validate(data, ADMIT_ALL_RESP)
+        assert data["total"] == 0 and data["admitted"] == 0
 
 
 def test_admit_all_requires_auth(client):

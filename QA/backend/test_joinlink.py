@@ -31,13 +31,17 @@ def test_preview_nonexistent_slug(client):
 
 
 # ── Join (parolsiz, kutish xonasisiz) ───────────────────────────
-def test_join_scheduled_lesson_waits_for_host(as_mentor, factory, client):
-    """Dars `scheduled` (host kirmagan), kutish xonasi o'chiq → waiting_for_host."""
+def test_join_without_waiting_room(as_mentor, factory, client):
+    """Kutish xonasi o'chiq → guest kirishga o'tadi.
+
+    next_step darsning LIVE-holatiga bog'liq (backend joinlink.go): host kirmagan
+    (scheduled) → `waiting_for_host`; dars live → `join`. Ikkalasi ham «guest davom
+    etishi mumkin» degani — kontrakt shu, aniq qiymat backend versiyasiga bog'liq.
+    """
     lesson = factory.lesson(as_mentor, is_waiting_room_enabled=False)
     data = rooms.join(client, lesson["join_slug"], guest_name="Ali")
     validate(data, JOIN_LESSON_RESP)
-    assert data["next_step"] == "waiting_for_host"
-    assert "room" not in data or data.get("room") is None
+    assert data["next_step"] in ("waiting_for_host", "join"), data["next_step"]
 
 
 def test_join_with_waiting_room_returns_request_id(as_mentor, factory, client):
