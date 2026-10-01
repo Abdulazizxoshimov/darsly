@@ -40,6 +40,15 @@ jobs:
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 5s --health-timeout 3s --health-retries 10
+      # MinIO — audit presign testlari (minio.TestPresignedURL_*) uchun. Rasmiy
+      # minio/minio:latest Docker Hub'dan OLIB TASHLANGAN (pull yiqiladi), shuning
+      # uchun bitnamilegacy/minio (public, avtomatik server). Bucket'ni test yasaydi.
+      minio:
+        image: bitnamilegacy/minio:latest
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin
+        ports: ["9000:9000"]
 
     env:
       # Redis test manzili — apitests/fanout TEST_REDIS_HOST/PORT o'qiydi (default 6399),
@@ -55,6 +64,8 @@ jobs:
       #     qizil bo'ladi, "yashil, lekin hech nima sinalmagan" holat qaytmaydi.
       TEST_DB_PORT: "5432"
       TEST_REQUIRE_INFRA: "1"
+      # MinIO presign testlari uchun (bitnamilegacy/minio xizmati, yuqorida).
+      TEST_MINIO_ENDPOINT: localhost:9000
 
     steps:
       - uses: actions/checkout@v4
@@ -90,7 +101,13 @@ jobs:
           args: --timeout=5m
 
       - name: Test (race + coverage)
-        run: go test -race -coverprofile=coverage.out ./...
+        run: |
+          echo "MinIO tayyor bo'lguncha kutamiz (service container, health-cmd'siz)..."
+          for i in $(seq 1 30); do
+            curl -sf -o /dev/null http://localhost:9000/minio/health/live && { echo "MinIO tayyor ($i)"; break; }
+            sleep 2
+          done
+          go test -race -coverprofile=coverage.out ./...
 
       - name: Coverage summary
         run: go tool cover -func=coverage.out | tail -1

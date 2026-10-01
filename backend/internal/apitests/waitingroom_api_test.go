@@ -109,19 +109,20 @@ func TestWaitingRoom_AdmitTOCTOU(t *testing.T) {
 	cl := &httpClient{t: t, base: srv.URL}
 
 	mentorTok := registerMentor(t, cl, pg, "Mentor T", "wr_toctou@darsly.uz")
-	_, slug := createLesson(t, cl, mentorTok, map[string]any{
+	lessonID, slug := createLesson(t, cl, mentorTok, map[string]any{
 		"title": "Biologiya", "is_waiting_room_enabled": true,
 	})
 	rid := guestJoinWaiting(t, cl, slug, "Dilnoza")
+	// Audit admit'ga live-gate qo'shdi — transition (409 TOCTOU) uchun dars jonli bo'lsin.
+	setLessonLive(t, pg, lessonID)
 
 	code1, body1 := cl.post("/api/v1/waitingroom/"+rid+"/admit", mentorTok, nil)
 	code2, _ := cl.post("/api/v1/waitingroom/"+rid+"/admit", mentorTok, nil)
 
-	// Ikkinchi admit har doim 409 (birinchisi statusni allaqachon 'admitted' qildi).
-	require.Equal(t, http.StatusConflict, code2, "2-admit → 409 (atomik)")
-
 	if liveKitAvailable() {
+		// LiveKit bor: 1-admit token oladi + transition qiladi; 2-admit → 409 (atomik).
 		require.Equal(t, http.StatusOK, code1, "LiveKit bor: 1-admit → 200 token")
+		require.Equal(t, http.StatusConflict, code2, "2-admit → 409 (atomik TransitionFromPending)")
 		require.NotEmpty(t, gjson(body1, "data", "token"), "admit token bo'sh emas")
 		require.Equal(t, "participant", gjson(body1, "data", "role"))
 		// Admit'dan keyin public status → admitted + room token.
@@ -130,10 +131,11 @@ func TestWaitingRoom_AdmitTOCTOU(t *testing.T) {
 		require.Equal(t, "admitted", gjson(body, "data", "status"))
 		require.NotEmpty(t, gjson(body, "data", "room", "token"))
 	} else {
-		// LiveKit yo'q: token bosqichida 500 (video servis o'chirilgan), lekin
-		// transition atomik bajarilgani sabab 2-admit baribir 409.
-		require.Equal(t, http.StatusInternalServerError, code1,
-			"LiveKit yo'q: 1-admit token bosqichida 500 (video disabled)")
+		// LiveKit yo'q: admit token'ni AVVAL yasaydi (audit: waitingroom.go admitOne),
+		// u uzilsa so'rov PENDING qoladi (mentor qayta urinishi mumkin) — transition
+		// umuman bo'lmaydi. Shuning uchun ikkala admit ham token bosqichida 500; 409 YO'Q.
+		require.Equal(t, http.StatusInternalServerError, code1, "LiveKit yo'q: 1-admit token 500")
+		require.Equal(t, http.StatusInternalServerError, code2, "LiveKit yo'q: 2-admit ham token 500 (pending qoldi)")
 	}
 }
 
@@ -163,6 +165,11 @@ func TestWaitingRoom_AdmitAll(t *testing.T) {
 	code, _ = cl.post("/api/v1/lessons/"+lessonID+"/waitingroom/admit-all", otherTok, nil)
 	require.Equal(t, http.StatusForbidden, code, "begona mentor admit-all → 403 (egalik)")
 
+	// Audit admit-all'ga live-gate qo'shdi ("lesson is not live" → 400) — egasi muvaffaqiyatli
+	// admit-all qilishi uchun dars jonli bo'lishi kerak. (Yuqoridagi auth/RBAC tekshiruvlari
+	// jonlilikdan oldin qaytadi, shuning uchun ularga ta'sir qilmaydi.)
+	setLessonLive(t, pg, lessonID)
+
 	// Egasi → butun navbat bitta so'rovda hal bo'ladi.
 	code, body := cl.post("/api/v1/lessons/"+lessonID+"/waitingroom/admit-all", mentorTok, nil)
 	require.Equal(t, http.StatusOK, code, "admit-all: %s", body)
@@ -179,16 +186,30 @@ func TestWaitingRoom_AdmitAll(t *testing.T) {
 		require.Equal(t, 2, jsonInt(body, "data", "failed"))
 	}
 
-	// Qaror IKKALASI uchun ham chiqqan (atomik claim tokendan oldin) — navbat bo'sh.
-	for _, rid := range []string{r1, r2} {
-		code, body = cl.get("/api/v1/waitingroom/"+rid+"/status", "")
+	if liveKitAvailable() {
+		// Token muvaffaqiyatli → transition → ikkalasi ham admitted, navbat bo'sh.
+		for _, rid := range []string{r1, r2} {
+			code, body = cl.get("/api/v1/waitingroom/"+rid+"/status", "")
+			require.Equal(t, http.StatusOK, code)
+			require.Equal(t, "admitted", gjson(body, "data", "status"))
+		}
+		// Qayta bosilsa — 0 (navbat allaqachon bo'sh). Tugma bloklanmasin.
+		code, body = cl.post("/api/v1/lessons/"+lessonID+"/waitingroom/admit-all", mentorTok, nil)
 		require.Equal(t, http.StatusOK, code)
-		require.Equal(t, "admitted", gjson(body, "data", "status"))
+		require.Equal(t, 0, jsonInt(body, "data", "total"))
+		require.Equal(t, 0, jsonInt(body, "data", "admitted"))
+	} else {
+		// LiveKit yo'q: admitOne token'ni AVVAL yasaydi, u uzilsa so'rov PENDING qoladi →
+		// ikkalasi ham hali pending (amal BEKOR BO'LMAYDI, lekin navbat bo'shamaydi).
+		for _, rid := range []string{r1, r2} {
+			code, body = cl.get("/api/v1/waitingroom/"+rid+"/status", "")
+			require.Equal(t, http.StatusOK, code)
+			require.Equal(t, "pending", gjson(body, "data", "status"))
+		}
+		// Qayta bosilsa — baribir 2 ta pending ko'rinadi (token yana uziladi).
+		code, body = cl.post("/api/v1/lessons/"+lessonID+"/waitingroom/admit-all", mentorTok, nil)
+		require.Equal(t, http.StatusOK, code)
+		require.Equal(t, 2, jsonInt(body, "data", "total"))
+		require.Equal(t, 0, jsonInt(body, "data", "admitted"))
 	}
-
-	// Qayta bosilsa — 0. Xato EMAS: tugma bloklanib qolmasin.
-	code, body = cl.post("/api/v1/lessons/"+lessonID+"/waitingroom/admit-all", mentorTok, nil)
-	require.Equal(t, http.StatusOK, code)
-	require.Equal(t, 0, jsonInt(body, "data", "total"))
-	require.Equal(t, 0, jsonInt(body, "data", "admitted"))
 }

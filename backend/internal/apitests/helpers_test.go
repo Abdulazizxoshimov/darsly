@@ -109,6 +109,17 @@ func setLessonLive(t *testing.T, pg *pgpkg.Postgres, lessonID string) {
 	require.NoError(t, err)
 }
 
+// setLessonEnded darsni to'g'ridan-to'g'ri DB orqali 'ended' holatiga o'tkazadi.
+// `status` endi PATCH'dan ATAYLAB chiqarilgan (entity/lesson.go — hayot sikli
+// HostToken/EndLesson bilan boshqariladi), shuning uchun testlar darsni tugatishni
+// DB orqali qiladi (LiveKit'siz yo'l).
+func setLessonEnded(t *testing.T, pg *pgpkg.Postgres, lessonID string) {
+	t.Helper()
+	_, err := pg.DB.Exec(context.Background(),
+		"UPDATE lessons SET status='ended', ended_at=NOW() WHERE id=$1", lessonID)
+	require.NoError(t, err)
+}
+
 // ─── JSON o'qish yordamchilari (gjson faqat string qaytaradi) ─────────────────
 
 // jsonGet umumiy qiymatni (har qanday tip) yo'l bo'yicha qaytaradi.
