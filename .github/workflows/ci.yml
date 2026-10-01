@@ -42,7 +42,11 @@ jobs:
           --health-interval 5s --health-timeout 3s --health-retries 10
 
     env:
+      # Redis test manzili — apitests/fanout TEST_REDIS_HOST/PORT o'qiydi (default 6399),
+      # jwt/rotate testlari esa TEST_REDIS_ADDR. CI redis xizmati 6379'da → uchalasi ham.
       TEST_REDIS_ADDR: localhost:6379
+      TEST_REDIS_HOST: localhost
+      TEST_REDIS_PORT: "6379"
       # ⚠️ F-1 TUZATISHI. Bu ikki qator bo'lmasa CI 50+ integratsiya testini
       # JIMGINA o'tkazib yuboradi va paket baribir `ok` bo'lib ko'rinadi:
       #   · TEST_DB_PORT — `testutil` default'i 5442 (dev compose), CI'da esa 5432;
