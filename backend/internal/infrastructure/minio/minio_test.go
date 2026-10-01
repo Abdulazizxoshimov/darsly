@@ -13,6 +13,7 @@ package minio_test
 
 import (
 	"context"
+	"net"
 	"net/url"
 	"os"
 	"testing"
@@ -30,6 +31,19 @@ func minioEndpoint() string {
 		return v
 	}
 	return "localhost:9020"
+}
+
+// minioPublicEndpoint — ichki endpoint bilan AYNI serverga (bir xil PORT), lekin
+// boshqa host spelling (127.0.0.1) bilan: presign tashqi hostga imzolanishini tekshirish
+// uchun ikkala host satri farqli, lekin ikkalasi ham ishlab turgan MinIO'ga yetadi.
+// Dev: localhost:9020 → 127.0.0.1:9020; CI: localhost:9000 → 127.0.0.1:9000
+// (avval port 9020 hardcode edi → CI minio 9000'da bo'lgani uchun region-lookup uzilardi).
+func minioPublicEndpoint() string {
+	_, port, err := net.SplitHostPort(minioEndpoint())
+	if err != nil {
+		return "127.0.0.1:9020"
+	}
+	return net.JoinHostPort("127.0.0.1", port)
 }
 
 // realClient — dev MinIO'ga ulangan klient. Yetib bo'lmasa test skip/fail.
@@ -57,15 +71,16 @@ func realClient(t *testing.T, publicEndpoint string) minio.Client {
 // ⭐ Presigned GET havola PUBLIC endpoint host'iga imzolanadi (ichki emas).
 // Bug: ichki hostga imzolansa tashqi qurilma yozuvni yuklab ololmaydi.
 func TestPresignedURL_UsesPublicEndpoint(t *testing.T) {
-	// Ichki: localhost:9020, public: 127.0.0.1:9020 — ikkalasi ham dev MinIO'ga
-	// yetadi, lekin host SATRLARI farqli, ya'ni qaysi klient imzolagani ko'rinadi.
-	c := realClient(t, "127.0.0.1:9020")
+	// Ichki va public AYNI MinIO'ga yetadi, lekin host SATRLARI farqli (qaysi klient
+	// imzolagani ko'rinadi). Port minio endpoint'idan olinadi (dev 9020 / CI 9000).
+	pub := minioPublicEndpoint()
+	c := realClient(t, pub)
 
 	raw, err := c.PresignedURL(context.Background(), "recordings/x.mp4", time.Hour)
 	require.NoError(t, err)
 	u, err := url.Parse(raw)
 	require.NoError(t, err)
-	require.Equal(t, "127.0.0.1:9020", u.Host, "havola PUBLIC (tashqi) hostga imzolanishi kerak, ichkiga emas")
+	require.Equal(t, pub, u.Host, "havola PUBLIC (tashqi) hostga imzolanishi kerak, ichkiga emas")
 	require.Contains(t, u.Path, "recordings/x.mp4")
 }
 
@@ -99,10 +114,11 @@ func TestPresignedURL_TTLIsBoundedAndSigned(t *testing.T) {
 
 // PUT (client upload) havola ham public endpointga imzolanadi.
 func TestPresignedPutURL_UsesPublicEndpoint(t *testing.T) {
-	c := realClient(t, "127.0.0.1:9020")
+	pub := minioPublicEndpoint()
+	c := realClient(t, pub)
 	raw, err := c.PresignedPutURL(context.Background(), "uploads/rec.mp4", time.Hour)
 	require.NoError(t, err)
 	u, err := url.Parse(raw)
 	require.NoError(t, err)
-	require.Equal(t, "127.0.0.1:9020", u.Host, "PUT havola ham tashqi hostga imzolanishi kerak")
+	require.Equal(t, pub, u.Host, "PUT havola ham tashqi hostga imzolanishi kerak")
 }
