@@ -70,7 +70,15 @@ jobs:
       # Versiya ANIQ pin qilingan. `latest` bilan konfiguratsiya formati
       # major yangilanishda mos kelmay qolardi va lint bosqichi kod
       # o'zgarmasa ham bir kuni yiqilardi (`.golangci.yml` izohiga qara).
+      #
+      # ⚠️ VAQTINCHA BLOKLAMAYDI (continue-on-error). Sabab: go.mod `go 1.26` juda
+      # yangi va HECH BIR golangci-lint hali go1.26 bilan QURILMAGAN (v2.5.0 ham
+      # go1.25) → lint ishga tushganda go1.26 stdlib'ni parse qilolmay panic/exit 3
+      # beradi (kod muammosi EMAS, toolchain bo'shlig'i). Build+Vet+Test baribir
+      # gate qiladi. golangci-lint go1.26 build chiqargach continue-on-error olib
+      # tashlanadi (va kerak bo'lsa versiya pin yangilanadi).
       - name: golangci-lint
+        continue-on-error: true
         uses: golangci/golangci-lint-action@v7
         with:
           version: v2.1.6
