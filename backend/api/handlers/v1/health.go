@@ -2,6 +2,7 @@ package v1
 
 import (
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -26,9 +27,35 @@ func HealthCheck() gin.HandlerFunc {
 // pgx ulanish xatosi DSN tafsilotlarini (host/user/database) o'z ichiga oladi.
 // To'liq xato faqat log/Sentry'ga; javobda umumiy matn qoladi.
 // `status` maydoni SAQLANADI — monitoring probe'lari shuni parse qiladi.
+//
+// Natija readyCacheTTL (2s) keshlanadi: /ready ochiq, har hit PG+Redis+MinIO'ni
+// ping qilmasin (probe tez-tez uriladi, hujumchi esa DB'ni shu bilan bosishi mumkin).
 func ReadyCheck(check func() error, log logger.Logger) gin.HandlerFunc {
+	return newReadyHandler(check, log, readyCacheTTL, time.Now)
+}
+
+// readyCacheTTL — readiness natijasi qancha vaqt qayta ishlatiladi.
+const readyCacheTTL = 2 * time.Second
+
+func newReadyHandler(check func() error, log logger.Logger, ttl time.Duration, now func() time.Time) gin.HandlerFunc {
+	var (
+		mu      sync.Mutex
+		at      time.Time
+		lastErr error
+		valid   bool
+	)
+	cached := func() error {
+		mu.Lock()
+		defer mu.Unlock()
+		if valid && now().Sub(at) < ttl {
+			return lastErr
+		}
+		lastErr = check()
+		at, valid = now(), true
+		return lastErr
+	}
 	return func(c *gin.Context) {
-		if err := check(); err != nil {
+		if err := cached(); err != nil {
 			log.Error(c.Request.Context(), "readiness check failed", logger.Error(err))
 			c.JSON(http.StatusServiceUnavailable, gin.H{
 				"status": "unavailable",

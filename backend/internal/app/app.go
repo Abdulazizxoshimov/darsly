@@ -24,6 +24,7 @@ import (
 	"github.com/zoom/darsly/internal/infrastructure/rabbitmq"
 	"github.com/zoom/darsly/internal/infrastructure/redis"
 	"github.com/zoom/darsly/internal/infrastructure/repository"
+	pgRepo "github.com/zoom/darsly/internal/infrastructure/repository/postgres"
 	"github.com/zoom/darsly/internal/infrastructure/telegram"
 	"github.com/zoom/darsly/internal/infrastructure/websocket"
 	"github.com/zoom/darsly/internal/pkg/casbin"
@@ -60,6 +61,11 @@ func Run(cfg *config.Config) error {
 	defer func() { _ = logger.Cleanup(log) }()
 
 	ctx := context.Background()
+	// Env parse xatolari (masalan DB_MAX_CONNS=abc) jimgina default bo'lib qolmasin.
+	for _, w := range cfg.Warnings {
+		log.Warn(ctx, "config: noto'g'ri env qiymati", logger.String("detail", w))
+	}
+	isProd := cfg.App.Env == "production"
 	if cfg.Loki.URL != "" {
 		log.Info(ctx, "loki configured", logger.String("url", cfg.Loki.URL))
 	} else {
@@ -93,7 +99,10 @@ func Run(cfg *config.Config) error {
 	}()
 
 	// ── Infrastructure ──────────────────────────────────────────────────────
-	pg, err := postgres.New(ctx, cfg, log)
+	// pgx monitor goroutine'i shu ctx bilan yashaydi — shutdown'da to'xtaydi.
+	pgCtx, pgCancel := context.WithCancel(ctx)
+	defer pgCancel()
+	pg, err := postgres.New(pgCtx, cfg, log)
 	if err != nil {
 		return fmt.Errorf("postgres: %w", err)
 	}
@@ -108,15 +117,23 @@ func Run(cfg *config.Config) error {
 	if err != nil {
 		return fmt.Errorf("redis: %w", err)
 	}
+	defer func() { _ = cache.Close() }()
 
 	minioClient, err := minio.New(cfg.Minio)
 	if err != nil {
+		if isProd {
+			return fmt.Errorf("minio: %w", err) // prod'da fayl saqlash jimgina o'chmasin
+		}
 		log.Warn(ctx, "minio unavailable — file storage disabled", logger.SafeString("err", err.Error()))
 		minioClient = minio.NewNop()
 	} else {
 		// EnsureBucket deadline bilan — MinIO javob bermasa startup osilib qolmasin.
 		bctx, bcancel := context.WithTimeout(ctx, 10*time.Second)
 		if err := minioClient.EnsureBucket(bctx); err != nil {
+			if isProd {
+				bcancel()
+				return fmt.Errorf("minio bucket: %w", err)
+			}
 			log.Warn(ctx, "minio bucket check failed — file storage disabled", logger.SafeString("err", err.Error()))
 			minioClient = minio.NewNop()
 		}
@@ -146,7 +163,7 @@ func Run(cfg *config.Config) error {
 	// Async email SMTP kutishni request oqimidan ajratadi (latency'ni buzmaydi).
 	var emailSender email.Sender = directSender
 	if mq != nil {
-		emailSender = email.NewQueuedSender(mq)
+		emailSender = email.NewQueuedSender(mq, directSender)
 	}
 
 	hub := websocket.NewHub(log)
@@ -234,8 +251,8 @@ func Run(cfg *config.Config) error {
 
 	enforcer, err := casbin.NewEnforcer()
 	if err != nil {
-		log.Warn(ctx, "casbin enforcer not loaded, RBAC disabled")
-		enforcer = nil
+		// Fail-fast: RBAC'siz server "ochiq" yoki 403'li yarim-ishlaydigan holatda turmasin.
+		return fmt.Errorf("casbin: %w", err)
 	}
 
 	// ── Metrics ─────────────────────────────────────────────────────────────
@@ -253,23 +270,25 @@ func Run(cfg *config.Config) error {
 	}
 
 	uc := usecase.New(usecase.Deps{
-		Store:           store,
-		TokenMaker:      tokenMaker,
-		Hasher:          hasher.New(cfg.App.BcryptCost),
-		Minio:           minioClient,
-		Cache:           cache,
-		Log:             log,
-		Hub:             hub,
-		EmailSender:     emailSender,
-		LiveKit:         lkClient,
-		RecordingS3:     recordingS3,
-		RefreshTTL:      cfg.JWT.RefreshTTL,
-		FrontendBaseURL: cfg.App.FrontendBaseURL,
+		Store:            store,
+		TokenMaker:       tokenMaker,
+		Hasher:           hasher.New(cfg.App.BcryptCost),
+		Minio:            minioClient,
+		Cache:            cache,
+		Log:              log,
+		Hub:              hub,
+		EmailSender:      emailSender,
+		LiveKit:          lkClient,
+		RecordingS3:      recordingS3,
+		RefreshTTL:       cfg.JWT.RefreshTTL,
+		PasswordResetTTL: cfg.JWT.PasswordResetTTL,
+		FrontendBaseURL:  cfg.App.FrontendBaseURL,
 		// Yozuvlar ro'yxatida `expires_at` shu muddatdan hisoblanadi (PRODUCT.md №5).
-		RecordingRetention: cfg.Recording.Retention,
-		Telegram:           tgClient,
-		RecordingCacheTTL:  cfg.Recording.CacheTTL,
-		RecordingLocalMode: cfg.LiveKit.RecordingLocalMode,
+		RecordingRetention:  cfg.Recording.Retention,
+		Telegram:            tgClient,
+		RecordingCacheTTL:   cfg.Recording.CacheTTL,
+		RecordingLocalMode:  cfg.LiveKit.RecordingLocalMode,
+		EgressMaxConcurrent: cfg.LiveKit.EgressMaxConcurrent,
 	})
 
 	h := BuildHandler(uc, hub, lkClient, cfg)
@@ -278,103 +297,120 @@ func Run(cfg *config.Config) error {
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	defer workerCancel()
 
-	reminderInterval := time.Minute
-	if v, err := time.ParseDuration(os.Getenv("REMINDER_INTERVAL")); err == nil && v > 0 {
-		reminderInterval = v
-	}
-	reminderLead := 15 * time.Minute
-	if v, err := time.ParseDuration(os.Getenv("REMINDER_LEAD")); err == nil && v > 0 {
-		reminderLead = v
-	}
 	// WaitGroup — shutdown'da worker'lar in-flight ishni tugatishini kutamiz.
+	// (Blok tashqarisida: shutdown ham foydalanadi.)
 	var workersWG sync.WaitGroup
-	reminder := worker.NewReminderWorker(store.Lesson, uc.Notification, log)
-	workersWG.Add(1)
-	go func() { defer workersWG.Done(); reminder.Run(workerCtx, reminderInterval, reminderLead) }()
 
-	// Dars avto-yakuni (PRODUCT.md №2): 4 soatlik texnik limit va bo'shagan
-	// xona grace'i. Qoidalar `room.SweepAutoEnd` da; bu yerda faqat tick.
-	autoEnd := worker.NewAutoEndWorker(uc.Room, log)
-	workersWG.Add(1)
-	go func() {
-		defer workersWG.Done()
-		autoEnd.Run(workerCtx, cfg.Lesson.SweepInterval, cfg.Lesson.MaxDuration, cfg.Lesson.EmptyGrace)
-	}()
-
-	// Yozuvlar retention'i (PRODUCT.md №5): 30 kundan keyin MinIO'dan
-	// o'chirish + o'chishdan 3 kun oldin mentorga ogohlantirish.
-	retentionCfg := worker.RetentionConfig{
-		Retention:  cfg.Recording.Retention,
-		WarnBefore: cfg.Recording.WarnBefore,
-		Interval:   cfg.Recording.SweepInterval,
-		BatchLimit: worker.DefaultRetentionConfig().BatchLimit,
-		// ⭐ Telegram yoqilgan bo'lsa retention MA'NOSI o'zgaradi: fayl
-		// o'chirilmaydi, `archived` bo'ladi va faqat Telegramda tasdiqlangani
-		// o'chadi. O'chiq bo'lsa eski xulq (`expired`) saqlanadi.
-		TelegramArchive: tgClient.Enabled(),
-	}
-	workersWG.Add(1)
-	go func() {
-		defer workersWG.Done()
-		worker.NewRetentionWorker(store.Recording, store.Lesson, minioClient, uc.Notification, retentionCfg, log).Run(workerCtx)
-	}()
-
-	// Async email worker (RabbitMQ navbatidan SMTP orqali yuboradi).
-	if mq != nil {
+	// APP_ROLE=api bo'lsa fon ishchilari BOSHQA jarayonda ishlaydi (audit R5:
+	// ffmpeg/Telegram-upload yukini API host'idan ajratish). Default "all" —
+	// bitta jarayonda hammasi (eski xulq).
+	if cfg.App.RunWorkers() {
+		reminderInterval := time.Minute
+		if v, err := time.ParseDuration(os.Getenv("REMINDER_INTERVAL")); err == nil && v > 0 {
+			reminderInterval = v
+		}
+		reminderLead := 15 * time.Minute
+		if v, err := time.ParseDuration(os.Getenv("REMINDER_LEAD")); err == nil && v > 0 {
+			reminderLead = v
+		}
+		reminder := worker.NewReminderWorker(store.Lesson, uc.Notification, log)
 		workersWG.Add(1)
-		go func() { defer workersWG.Done(); worker.NewEmailWorker(mq, directSender, log).Run(workerCtx) }()
-	}
+		go func() { defer workersWG.Done(); reminder.Run(workerCtx, reminderInterval, reminderLead) }()
 
-	// Yozuvni qayta kodlash (CRF) — hajmni Zoom darajasiga tushiradi.
-	// `RECORDING_TRANSCODE=0` bilan o'chiriladi; ffmpeg yo'q bo'lsa ishchi
-	// o'zi ishga tushmaydi (bir marta ogohlantirib chiqadi).
-	tcCfg := worker.DefaultTranscodeConfig()
-	tcCfg.Enabled = os.Getenv("RECORDING_TRANSCODE") != "0"
-	if v, err := strconv.Atoi(os.Getenv("RECORDING_TRANSCODE_CRF")); err == nil && v >= 0 && v <= 51 {
-		tcCfg.CRF = v
-	}
-	if v := os.Getenv("RECORDING_TRANSCODE_PRESET"); v != "" {
-		tcCfg.Preset = v
-	}
-	workersWG.Add(1)
-	go func() {
-		defer workersWG.Done()
-		worker.NewTranscodeWorker(store.Recording, minioClient, log, tcCfg).Run(workerCtx)
-	}()
+		// Janitor: cheksiz o'suvchi jadvallarni (token, reset, waiting-room, notification) tozalaydi.
+		janitorInterval := 24 * time.Hour
+		if v, err := time.ParseDuration(os.Getenv("JANITOR_INTERVAL")); err == nil && v > 0 {
+			janitorInterval = v
+		}
+		janitor := worker.NewJanitorWorker(store.Auth, pgRepo.NewJanitorRepo(pg), log)
+		workersWG.Add(1)
+		go func() { defer workersWG.Done(); janitor.Run(workerCtx, janitorInterval) }()
 
-	// ── Telegram arxivi ─────────────────────────────────────────────────────
-	//
-	// Uch ishchi, va ular BIR-BIRIGA BOG'LIQ tartibda yasaladi:
-	//   bot   → mentordan «qaysi guruhga?» so'raydi (TelegramPrompter);
-	//   upload→ yozuvni arxiv guruhiga yuboradi va tugagach bot'dan so'rashni
-	//           iltimos qiladi;
-	//   restore→ `restoring` yozuvlarni Telegramdan qaytaradi.
-	//
-	// Klient o'chiq bo'lsa uchalasi ham darhol chiqib ketadi (`Run` ichida
-	// tekshiruv) — shu sababli bu yerda shartli wiring yo'q va kod tarmoqlanmaydi.
-	botWorker := worker.NewTelegramBotWorker(
-		tgClient, uc.Telegram, store.Recording, store.Lesson, cache,
-		worker.NewChatTranscript(store.Chat), log,
-	)
-	workersWG.Add(1)
-	go func() { defer workersWG.Done(); botWorker.Run(workerCtx) }()
-
-	workersWG.Add(1)
-	go func() {
-		defer workersWG.Done()
-		worker.NewTelegramUploadWorker(
-			store.Recording, store.Lesson, store.User, minioClient, tgClient,
-			uc.Notification, botWorker, worker.DefaultTelegramUploadConfig(), log,
-		).Run(workerCtx)
-	}()
-
-	if tgClient.Enabled() {
+		// Dars avto-yakuni (PRODUCT.md №2): 4 soatlik texnik limit va bo'shagan
+		// xona grace'i. Qoidalar `room.SweepAutoEnd` da; bu yerda faqat tick.
+		autoEnd := worker.NewAutoEndWorker(uc.Room, log)
 		workersWG.Add(1)
 		go func() {
 			defer workersWG.Done()
-			worker.NewRestoreWorker(store.Recording, uc.Recording, log).Run(workerCtx)
+			autoEnd.Run(workerCtx, cfg.Lesson.SweepInterval, cfg.Lesson.MaxDuration, cfg.Lesson.EmptyGrace)
 		}()
-	}
+
+		// Yozuvlar retention'i (PRODUCT.md №5): 30 kundan keyin MinIO'dan
+		// o'chirish + o'chishdan 3 kun oldin mentorga ogohlantirish.
+		retentionCfg := worker.RetentionConfig{
+			Retention:  cfg.Recording.Retention,
+			WarnBefore: cfg.Recording.WarnBefore,
+			Interval:   cfg.Recording.SweepInterval,
+			BatchLimit: worker.DefaultRetentionConfig().BatchLimit,
+			// ⭐ Telegram yoqilgan bo'lsa retention MA'NOSI o'zgaradi: fayl
+			// o'chirilmaydi, `archived` bo'ladi va faqat Telegramda tasdiqlangani
+			// o'chadi. O'chiq bo'lsa eski xulq (`expired`) saqlanadi.
+			TelegramArchive: tgClient.Enabled(),
+		}
+		workersWG.Add(1)
+		go func() {
+			defer workersWG.Done()
+			worker.NewRetentionWorker(store.Recording, store.Lesson, minioClient, uc.Notification, retentionCfg, log).Run(workerCtx)
+		}()
+
+		// Async email worker (RabbitMQ navbatidan SMTP orqali yuboradi).
+		if mq != nil {
+			workersWG.Add(1)
+			go func() { defer workersWG.Done(); worker.NewEmailWorker(mq, directSender, log).Run(workerCtx) }()
+		}
+
+		// Yozuvni qayta kodlash (CRF) — hajmni Zoom darajasiga tushiradi.
+		// `RECORDING_TRANSCODE=0` bilan o'chiriladi; ffmpeg yo'q bo'lsa ishchi
+		// o'zi ishga tushmaydi (bir marta ogohlantirib chiqadi).
+		tcCfg := worker.DefaultTranscodeConfig()
+		tcCfg.Enabled = os.Getenv("RECORDING_TRANSCODE") != "0"
+		if v, err := strconv.Atoi(os.Getenv("RECORDING_TRANSCODE_CRF")); err == nil && v >= 0 && v <= 51 {
+			tcCfg.CRF = v
+		}
+		if v := os.Getenv("RECORDING_TRANSCODE_PRESET"); v != "" {
+			tcCfg.Preset = v
+		}
+		workersWG.Add(1)
+		go func() {
+			defer workersWG.Done()
+			worker.NewTranscodeWorker(store.Recording, minioClient, log, tcCfg).Run(workerCtx)
+		}()
+
+		// ── Telegram arxivi ─────────────────────────────────────────────────────
+		//
+		// Uch ishchi, va ular BIR-BIRIGA BOG'LIQ tartibda yasaladi:
+		//   bot   → mentordan «qaysi guruhga?» so'raydi (TelegramPrompter);
+		//   upload→ yozuvni arxiv guruhiga yuboradi va tugagach bot'dan so'rashni
+		//           iltimos qiladi;
+		//   restore→ `restoring` yozuvlarni Telegramdan qaytaradi.
+		//
+		// Klient o'chiq bo'lsa uchalasi ham darhol chiqib ketadi (`Run` ichida
+		// tekshiruv) — shu sababli bu yerda shartli wiring yo'q va kod tarmoqlanmaydi.
+		botWorker := worker.NewTelegramBotWorker(
+			tgClient, uc.Telegram, store.Recording, store.Lesson, cache,
+			worker.NewChatTranscript(store.Chat), log,
+		)
+		workersWG.Add(1)
+		go func() { defer workersWG.Done(); botWorker.Run(workerCtx) }()
+
+		workersWG.Add(1)
+		go func() {
+			defer workersWG.Done()
+			worker.NewTelegramUploadWorker(
+				store.Recording, store.Lesson, store.User, minioClient, tgClient,
+				uc.Notification, botWorker, worker.DefaultTelegramUploadConfig(), log,
+			).Run(workerCtx)
+		}()
+
+		if tgClient.Enabled() {
+			workersWG.Add(1)
+			go func() {
+				defer workersWG.Done()
+				worker.NewRestoreWorker(store.Recording, uc.Recording, log).Run(workerCtx)
+			}()
+		}
+		log.Info(ctx, "fon ishchilari ishga tushdi", logger.String("role", cfg.App.Role))
+	} // RunWorkers
 
 	// ── Server ──────────────────────────────────────────────────────────────
 	readyFn := func() error {
@@ -386,22 +422,30 @@ func Run(cfg *config.Config) error {
 		if err := cache.Ping(ctx); err != nil {
 			return fmt.Errorf("redis: %w", err)
 		}
+		// MinIO (BucketExists — arzon). Natija /ready handlerida 2s keshlanadi.
+		if err := minioClient.Ping(ctx); err != nil {
+			return fmt.Errorf("minio: %w", err)
+		}
 		return nil
 	}
 
-	router := api.NewRouter(h, tokenMaker, enforcer, cache, log, readyFn)
-	srv := api.NewServer(":"+cfg.App.Port, router)
+	// APP_ROLE=worker bo'lsa HTTP server KO'TARILMAYDI (faqat fon ishchilari).
+	var srv *api.Server
+	if cfg.App.RunAPI() {
+		router := api.NewRouter(h, tokenMaker, enforcer, cache, log, readyFn)
+		srv = api.NewServer(":"+cfg.App.Port, router)
+		go func() {
+			if err := srv.Run(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Error(context.Background(), "server error", logger.SafeString("err", err.Error()))
+			}
+		}()
+		log.Info(ctx, fmt.Sprintf("server started on :%s", cfg.App.Port))
+	} else {
+		log.Info(ctx, "worker-only jarayon: HTTP server ko'tarilmadi", logger.String("role", cfg.App.Role))
+	}
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-
-	go func() {
-		if err := srv.Run(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Error(context.Background(), "server error", logger.SafeString("err", err.Error()))
-		}
-	}()
-
-	log.Info(ctx, fmt.Sprintf("server started on :%s", cfg.App.Port))
 
 	<-quit
 
@@ -410,8 +454,10 @@ func Run(cfg *config.Config) error {
 
 	// Avval HTTP serverni drain qilamiz (yangi WS upgrade'lar to'xtaydi),
 	// keyin ochiq WS ulanishlarni yopamiz — teskari tartibdagi race oldini oladi.
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("server shutdown: %w", err)
+	if srv != nil {
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			return fmt.Errorf("server shutdown: %w", err)
+		}
 	}
 	hub.Stop()
 

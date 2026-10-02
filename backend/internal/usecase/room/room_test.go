@@ -17,19 +17,34 @@ import (
 // testLessonID — haqiqiy UUID: usecase ID formatini tekshiradi (shared.ValidateID).
 const testLessonID = "11111111-1111-4111-8111-111111111111"
 
-// fakeRecorder — dars yakunlanganda yozuvni to'xtatish chaqiruvini qayd etadi.
+// fakeRecorder — dars yakunlanganda yozuvni to'xtatish (stopped) va
+// reconciliation'da boshlash (ensured) chaqiruvlarini qayd etadi.
 type fakeRecorder struct {
-	stopped chan string
+	stopped   chan string
+	ensured   chan string
+	recording bool // IsRecording javobi
 }
 
 func newFakeRecorder() *fakeRecorder {
-	return &fakeRecorder{stopped: make(chan string, 4)}
+	return &fakeRecorder{stopped: make(chan string, 4), ensured: make(chan string, 4)}
 }
 
 func (f *fakeRecorder) StopActiveForLesson(_ context.Context, lessonID string) error {
 	f.stopped <- lessonID
 	return nil
 }
+
+func (f *fakeRecorder) EnsureRecording(_ context.Context, lessonID string) error {
+	select {
+	case f.ensured <- lessonID:
+	default:
+	}
+	return nil
+}
+
+func (f *fakeRecorder) ReapStaleRecordings(_ context.Context, _ time.Time) int { return 0 }
+
+func (f *fakeRecorder) IsRecording(_ context.Context, _ string) bool { return f.recording }
 
 func setupWithRecorder(t *testing.T) (room.UseCase, *testutil.FakeLessonRepo, *testutil.FakeLiveKit, *fakeRecorder) {
 	t.Helper()
@@ -43,7 +58,7 @@ func setupWithRecorder(t *testing.T) (room.UseCase, *testutil.FakeLessonRepo, *t
 	// Haqiqiy roomstate ulanadi (nil emas): "ruxsat berilganda qo'l tushadi" va
 	// "dars tugaganda qo'llar tozalanadi" qoidalari aynan shu integratsiyada yashaydi.
 	hands := roomstate.New(lrepo, lk, cache, nil, testutil.NewLogger())
-	return room.New(lrepo, urepo, lk, cache, testutil.NewLogger(), rec, hands, testutil.NewFakeBlocklistRepo()), lrepo, lk, rec
+	return room.New(lrepo, urepo, lk, cache, testutil.NewLogger(), rec, hands, testutil.NewFakeBlocklistRepo(), testutil.NewFakeBanRepo()), lrepo, lk, rec
 }
 
 func setup(t *testing.T) (room.UseCase, *testutil.FakeLessonRepo, *testutil.FakeLiveKit) {
@@ -55,7 +70,7 @@ func setup(t *testing.T) (room.UseCase, *testutil.FakeLessonRepo, *testutil.Fake
 	lk := testutil.NewFakeLiveKit()
 	cache := testutil.NewFakeCache()
 	hands := roomstate.New(lrepo, lk, cache, nil, testutil.NewLogger())
-	uc := room.New(lrepo, urepo, lk, cache, testutil.NewLogger(), nil, hands, testutil.NewFakeBlocklistRepo())
+	uc := room.New(lrepo, urepo, lk, cache, testutil.NewLogger(), nil, hands, testutil.NewFakeBlocklistRepo(), testutil.NewFakeBanRepo())
 	return uc, lrepo, lk
 }
 
@@ -247,7 +262,7 @@ func TestEndLesson_SurvivesCanceledRequest(t *testing.T) {
 	lk := testutil.NewFakeLiveKit()
 	cache := testutil.NewFakeCache()
 	hands := roomstate.New(lrepo, lk, cache, nil, testutil.NewLogger())
-	uc := room.New(lrepo, urepo, lk, cache, testutil.NewLogger(), rec, hands, testutil.NewFakeBlocklistRepo())
+	uc := room.New(lrepo, urepo, lk, cache, testutil.NewLogger(), rec, hands, testutil.NewFakeBlocklistRepo(), testutil.NewFakeBanRepo())
 
 	_, err := uc.HostToken(context.Background(), "mentor1", testLessonID)
 	require.NoError(t, err)
@@ -326,4 +341,29 @@ func TestMuteAll_SkipsHostAndCoversEveryone(t *testing.T) {
 	}
 	require.NoError(t, uc.MuteAll(context.Background(), "mentor1", testLessonID, nil))
 	require.Equal(t, 3, lk.Calls["MuteParticipant"], "host'dan tashqari hamma mute qilinishi kerak")
+}
+
+func TestEndLesson_Idempotent_KeepsEndedAt(t *testing.T) {
+	uc, lrepo, _ := setup(t)
+	_, err := uc.HostToken(context.Background(), "mentor1", testLessonID)
+	require.NoError(t, err)
+	require.NoError(t, uc.EndLesson(context.Background(), "mentor1", testLessonID))
+	first, _ := lrepo.GetByID(context.Background(), testLessonID)
+	require.NotNil(t, first.EndedAt)
+
+	time.Sleep(5 * time.Millisecond)
+	require.NoError(t, uc.EndLesson(context.Background(), "mentor1", testLessonID))
+	second, _ := lrepo.GetByID(context.Background(), testLessonID)
+	require.Equal(t, *first.EndedAt, *second.EndedAt, "ended_at qayta yozilmasligi kerak")
+}
+
+func TestHostToken_EndedLessonNotRevived(t *testing.T) {
+	uc, lrepo, _ := setup(t)
+	_, err := uc.HostToken(context.Background(), "mentor1", testLessonID)
+	require.NoError(t, err)
+	require.NoError(t, uc.EndLesson(context.Background(), "mentor1", testLessonID))
+	_, err = uc.HostToken(context.Background(), "mentor1", testLessonID)
+	require.Error(t, err)
+	l, _ := lrepo.GetByID(context.Background(), testLessonID)
+	require.Equal(t, entity.LessonStatusEnded, l.Status)
 }

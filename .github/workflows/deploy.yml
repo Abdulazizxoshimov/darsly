@@ -1,0 +1,146 @@
+# Deploy — master'ga push → backend image ghcr.io'ga → serverga (image pull + frontend + compose up).
+#
+# GitOps oqimi: feature-branch → PR → CI (ci.yml) yashil → master'ga merge → SHU workflow.
+# Branch protection master'ni himoya qilgani uchun kod bu yerga yetganda CI allaqachon o'tgan.
+#
+# TALAB QILINADIGAN GitHub Secrets (Settings → Secrets and variables → Actions):
+#   SERVER_HOST     — server IP (masalan 169.58.104.245)
+#   SERVER_SSH_KEY  — serverga kirish uchun SSH MAXFIY kaliti (public'i serverda authorized_keys da)
+#   GHCR_TOKEN      — read:packages huquqli PAT (server private image'ni tortishi uchun)
+#                     [image'ni public qilsangiz bu shart emas]
+#
+# Batafsil: docs/CICD.md
+name: Deploy
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/abdulazizxoshimov/darsly-backend
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Image tag (commit SHA)
+        id: meta
+        run: echo "tag=${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: ghcr login
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & push backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          file: backend/deployments/Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ steps.meta.outputs.tag }}
+            ${{ env.IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Frontend statik (SPA) — image emas, artifact sifatida serverning www'siga
+      # jo'natiladi (Caddy /srv dan xizmat qiladi, CSP/kesh qoidalari o'zgarmaydi).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Upload frontend artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+
+  deploy:
+    needs: build-push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download frontend
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend-dist
+
+      - name: SSH sozlash
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+          cat > ~/.ssh/config <<EOF
+          Host prod
+            HostName ${{ secrets.SERVER_HOST }}
+            User root
+            IdentityFile ~/.ssh/id_deploy
+            StrictHostKeyChecking accept-new
+          EOF
+
+      # Frontend dist + deploy konfiguratsiyasi (compose, Caddyfile) serverga.
+      # ⚠️ Sirlar EXCLUDE: .env, livekit.yaml, dl/, observability/metrics_token
+      # serverda GENERATSIYA qilinadi va git'da yo'q — o'chib ketmasligi shart.
+      - name: Frontend + config → server
+        run: |
+          rsync -az --delete -e "ssh -F ~/.ssh/config" frontend-dist/ prod:/opt/darsly/deploy/server/www/
+          rsync -az -e "ssh -F ~/.ssh/config" \
+            --exclude '.env' --exclude 'livekit.yaml' \
+            --exclude 'dl/' --exclude 'observability/metrics_token' \
+            deploy/server/ prod:/opt/darsly/deploy/server/
+
+      - name: Image pull + compose up
+        run: |
+          ssh -F ~/.ssh/config prod bash -s <<EOF
+          set -e
+          cd /opt/darsly/deploy/server
+          # GHCR_TOKEN berilgan bo'lsa login (private image); bo'lmasa — image PUBLIC
+          # deb hisoblanadi (repo public → package'ni public qilsangiz token shart emas).
+          if [ -n "${{ secrets.GHCR_TOKEN }}" ]; then
+            echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          fi
+          export BACKEND_TAG='${{ needs.build-push.outputs.tag }}'
+          docker compose pull backend
+          docker compose up -d
+          docker image prune -f
+          EOF
+
+      - name: Sog'liq tekshiruvi
+        run: |
+          sleep 15
+          for i in $(seq 1 10); do
+            code=$(ssh -F ~/.ssh/config prod 'curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/ready' || echo 000)
+            echo "ready: $code"
+            [ "$code" = "200" ] && exit 0
+            sleep 6
+          done
+          echo "::error::backend /ready 200 bermadi — deploy shubhali"
+          exit 1

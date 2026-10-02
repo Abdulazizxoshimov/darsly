@@ -1,5 +1,5 @@
 import { memo, useMemo, useState } from 'react'
-import { Check, Hand, Mic, MicOff, Search, UserX, X } from 'lucide-react'
+import { Check, Hand, MicOff, Search, UserX, Video, VideoOff, X } from 'lucide-react'
 import { useWaiting, useAdmit, useAdmitAll, useReject } from '../store/data'
 import { allowSpeak, muteAll, muteParticipant, removeParticipant, revokeSpeak } from '../api/room'
 import { errorText } from '../api/api'
@@ -153,19 +153,20 @@ export const ParticipantsPanel = memo(function ParticipantsPanel({
             <div className="col gap-2">
               {handQueue.map(([id, h], i) => {
                 const p = byId.get(id)
-                const canPublish = p?.canPublish ?? false
+                const canPublishCamera = p?.canPublishCamera ?? false
                 return (
                   <div key={id} className="row gap-2" style={{ background: 'var(--elevated)', borderRadius: 12, padding: 8 }}>
                     <span className="rail-num">{i + 1}</span>
                     <span className="grow truncate" style={{ fontSize: 14 }}>{h.name}</span>
-                    {lessonId && !canPublish && (
+                    {/* Ovoz o'quvchida allaqachon ochiq — ustoz VIDEOga ruxsat beradi. */}
+                    {lessonId && !canPublishCamera && (
                       <button
                         className="mini-btn"
                         style={{ background: 'var(--success-soft)', color: 'var(--success)', borderColor: 'transparent' }}
-                        title="So'zga ruxsat berish"
-                        onClick={() => hostAction(() => allowSpeak(lessonId, id), 'Ruxsat berildi')}
+                        title="Videoga ruxsat berish"
+                        onClick={() => hostAction(() => allowSpeak(lessonId, id), 'Video yoqildi')}
                       >
-                        <Mic size={16} />
+                        <Video size={16} />
                       </button>
                     )}
                     <button className="mini-btn" title="Qo'lni tushirish" onClick={() => onLowerHand(id)}>
@@ -213,15 +214,19 @@ export const ParticipantsPanel = memo(function ParticipantsPanel({
                   <div className="p-row__actions">
                     <button
                       className="mini-btn"
-                      title={p.canPublish ? "So'zlashni bekor qilish" : "So'zlashga ruxsat"}
+                      title={p.canPublishCamera ? 'Videoni bekor qilish' : 'Videoga ruxsat'}
                       onClick={() =>
                         hostAction(
-                          () => (p.canPublish ? revokeSpeak(lessonId, p.identity) : allowSpeak(lessonId, p.identity)),
-                          p.canPublish ? 'Ruxsat bekor qilindi' : 'Ruxsat berildi',
+                          () => (p.canPublishCamera ? revokeSpeak(lessonId, p.identity) : allowSpeak(lessonId, p.identity)),
+                          p.canPublishCamera ? 'Video bekor qilindi' : 'Video yoqildi',
                         )
                       }
                     >
-                      <Mic size={16} color={p.canPublish ? 'var(--accent-light)' : undefined} />
+                      {p.canPublishCamera ? (
+                        <Video size={16} color="var(--accent-light)" />
+                      ) : (
+                        <VideoOff size={16} />
+                      )}
                     </button>
                     <button className="mini-btn" title="Mute" onClick={() => hostAction(() => muteParticipant(lessonId, p.identity))}>
                       <MicOff size={16} />

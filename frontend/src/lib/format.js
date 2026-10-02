@@ -32,11 +32,6 @@ export function formatDay(iso) {
   return new Date(iso).toLocaleDateString('uz', { weekday: 'long', day: 'numeric', month: 'long' })
 }
 
-export function formatSize(bytes) {
-  if (!bytes) return '0 MB'
-  return (bytes / 1024 / 1024).toFixed(1) + ' MB'
-}
-
 export function formatDuration(sec) {
   return Math.round((sec || 0) / 60) + ' daq'
 }
@@ -53,8 +48,8 @@ export function formatOffset(sec) {
   return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`
 }
 
-// Chat fayllari uchun — `formatSize` dan farqi: kichik fayl «0.0 MB» emas,
-// «84 KB» bo'lib chiqadi (rasm/hujjatlar odatda megabaytdan kichik).
+// Fayl/yozuv hajmi — YAGONA formatlovchi (chat fayli ham, video yozuv ham).
+// Kichik fayl «0.0 MB» emas, «84 KB» bo'lib chiqadi.
 export function formatBytes(bytes) {
   const b = Number(bytes) || 0
   if (b < 1024) return `${b} B`

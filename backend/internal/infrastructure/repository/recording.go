@@ -13,8 +13,27 @@ type RecordingRepository interface {
 	GetByEgressID(ctx context.Context, egressID string) (*entity.Recording, error)
 	ListByLesson(ctx context.Context, lessonID string) ([]*entity.Recording, error)
 	UpdateStatus(ctx context.Context, id, status string) error
-	MarkReady(ctx context.Context, egressID, objectKey string, durationSec int, sizeBytes int64, endedAt time.Time) error
-	MarkFailed(ctx context.Context, egressID string, endedAt time.Time) error
+	// CountActive — hozir `recording` holatidagi yozuvlar SONI (butun tizim
+	// bo'yicha, dars bo'yicha emas). Global egress concurrency cap uchun
+	// (system-design audit R1): SFU'ni himoya qilish maqsadida bir vaqtda
+	// ochiq egress sonini cheklaydi.
+	CountActive(ctx context.Context) (int, error)
+	// MarkReady — egress muvaffaqiyatli tugadi: `recording|processing → ready`.
+	//
+	// Bool qaytaradi: HAQIQATAN o'tish bo'lganmi. WHERE holatni `recording`
+	// yoki `processing` bilan cheklaydi — shuning uchun kech kelgan yoki
+	// TAKRORLANGAN webhook (`egress_ended` ikki marta, yoki `archived`/`expired`
+	// yozuv ustida) 0 qator o'zgartiradi va false qaytaradi. Chaqiruvchi shunga
+	// qarab transcode/telegram navbatini QAYTA qo'yishдан tiyiladi (aks holda
+	// arxivlangan fayl ustidan qayta ishlov ketardi — audit topilma #5).
+	MarkReady(ctx context.Context, egressID, objectKey string, durationSec int, sizeBytes int64, endedAt time.Time) (bool, error)
+	// MarkFailed — egress yiqildi: `recording|processing → failed`. Bool =
+	// haqiqatan o'tish bo'lganmi (replay/kech hodisa false). MarkReady bilan
+	// bir xil sabab.
+	MarkFailed(ctx context.Context, egressID string, endedAt time.Time) (bool, error)
+	// FailStale — `started_at < olderThan` bo'lgan hamon `recording` yozuvlarni
+	// `failed` qiladi (eskirgan: klient complete qilmadi / webhook yo'qoldi).
+	FailStale(ctx context.Context, olderThan, endedAt time.Time) (int64, error)
 
 	// ── Retention (30 kunlik saqlash) — `worker.RetentionWorker` ishlatadi ──
 

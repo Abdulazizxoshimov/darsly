@@ -16,12 +16,28 @@ import java.util.concurrent.ConcurrentHashMap
  * kanalma-kanal muvozanatsiz bo'lmaydi. Manba 48 kHz deb qabul qilinadi
  * (WebRTC default); kanal ko'p bo'lsa o'rtacha bilan mono'ga tushiriladi.
  */
-class AudioMixer(private val sampleRate: Int, private val channels: Int) {
+class AudioMixer(
+    private val sampleRate: Int,
+    private val channels: Int,
+    private val nowNanos: () -> Long = System::nanoTime,
+) {
 
     private val fifos = ConcurrentHashMap<Any, ByteFifo>()
     @Volatile private var running = false
 
+    // Real-vaqt JIMLIK pacing (Zoom kabi uzluksiz audio trek). Ovoz manbai
+    // umuman bo'lmasa ham (mikrofon o'chiq + ishtirokchi yo'q) jimlik chiqadi →
+    // audio encoder DOIM initsializatsiya bo'ladi → muxer DOIM boshlanadi va
+    // trek VALID qoladi. Aks holda: audio encoder bo'sh qolib `onOutputFormatChanged`
+    // yonmaydi → `audioTrackIndex=-1` → muxer boshlanmaydi (VIDEO ham yo'qoladi),
+    // yoki trek buzuq `[0][0][0][0]` bo'lib pleyerda ochilmaydi.
+    // `emittedSamples` faqat `poll` (bitta encoder oqimi) da o'zgaradi — poyga yo'q.
+    private var startNanos = 0L
+    @Volatile private var emittedSamples = 0L
+
     fun start(@Suppress("UNUSED_PARAMETER") onReady: (Boolean) -> Unit) {
+        startNanos = nowNanos()
+        emittedSamples = 0L
         running = true
     }
 
@@ -56,33 +72,55 @@ class AudioMixer(private val sampleRate: Int, private val channels: Int) {
 
     /**
      * Aralashtirilgan mono 16-bit PCM'ni qaytaradi (eng ko'pi `maxBytes`).
-     * Barcha navbatlar bo'sh bo'lsa `null` (jimlik).
+     *
+     * Real ovoz bo'lsa — treklar SUM qilinib qaytadi. Ovoz bo'lmasa — real-vaqt
+     * bilan pace qilingan JIMLIK qaytadi (audio trek uzluksiz, muxer doim ishlaydi).
+     * Real-vaqtga yetib bo'lgan bo'lsa `null` (chaqiruvchi qisqa kutadi).
      */
     fun poll(maxBytes: Int): ByteArray? {
-        if (!running || fifos.isEmpty()) return null
+        if (!running) return null
         val maxSamples = maxBytes / 2
-        // Nechta sample chiqara olamiz — mavjudlarning eng KO'PIgacha (jim treklar
-        // 0 beradi, ovozli trek to'xtab qolmasin).
+        if (maxSamples <= 0) return null
+
+        // Mavjud real audio — jim treklar 0 beradi, ovozli trek to'xtab qolmasin.
         var avail = 0
         fifos.values.forEach { avail = maxOf(avail, it.available() / 2) }
         val n = minOf(maxSamples, avail)
-        if (n <= 0) return null
-
-        val acc = IntArray(n)
-        fifos.values.forEach { fifo ->
-            val chunk = fifo.read(n * 2) ?: return@forEach
-            val sb = ByteBuffer.wrap(chunk).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
-            var i = 0
-            while (i < n && sb.hasRemaining()) {
-                acc[i] += sb.get().toInt()
-                i++
+        if (n > 0) {
+            val acc = IntArray(n)
+            fifos.values.forEach { fifo ->
+                val chunk = fifo.read(n * 2) ?: return@forEach
+                val sb = ByteBuffer.wrap(chunk).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
+                var i = 0
+                while (i < n && sb.hasRemaining()) {
+                    acc[i] += sb.get().toInt()
+                    i++
+                }
             }
+            val outBuf = ByteBuffer.allocate(n * 2).order(ByteOrder.LITTLE_ENDIAN)
+            for (i in 0 until n) {
+                outBuf.putShort(acc[i].coerceIn(-32768, 32767).toShort())
+            }
+            emittedSamples += n
+            return outBuf.array()
         }
-        val outBuf = ByteBuffer.allocate(n * 2).order(ByteOrder.LITTLE_ENDIAN)
-        for (i in 0 until n) {
-            outBuf.putShort(acc[i].coerceIn(-32768, 32767).toShort())
-        }
-        return outBuf.array()
+
+        // Real ovoz yo'q — audio trekni uzluksiz saqlash uchun real-vaqt bilan
+        // pace qilingan jimlik. `emittedSamples` real-vaqt kvotasidan oshib
+        // ketmasin (aks holda encoder jimlik bilan to'lib PTS oldinга ketardi).
+        return pollSilence(maxSamples)
+    }
+
+    private fun pollSilence(maxSamples: Int): ByteArray? {
+        val elapsedNanos = nowNanos() - startNanos
+        if (elapsedNanos <= 0L) return null
+        val expected = elapsedNanos * sampleRate / 1_000_000_000L
+        val behind = expected - emittedSamples
+        if (behind <= 0L) return null // real-vaqtga yetdik — chaqiruvchi kutsin
+        val n = minOf(maxSamples.toLong(), behind).toInt()
+        if (n <= 0) return null
+        emittedSamples += n
+        return ByteArray(n * 2) // nol baytlar = 16-bit mono jimlik
     }
 
     /**

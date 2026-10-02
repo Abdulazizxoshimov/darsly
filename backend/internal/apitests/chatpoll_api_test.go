@@ -6,6 +6,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -139,6 +140,13 @@ func TestAPI_ChatUploadRejects(t *testing.T) {
 
 	// Faylsiz so'rov → 400 (500 emas).
 	code, body = cl.upload(path, tok, "", nil, map[string]string{"body": "izoh"})
+	require.Equal(t, http.StatusBadRequest, code, string(body))
+
+	// Haddan uzun caption / `to` → 400 (validatsiyasiz 20 MB caption o'tardi).
+	png := append([]byte("\x89PNG\r\n\x1a\n"), make([]byte, 32)...)
+	code, body = cl.upload(path, tok, "a.png", png, map[string]string{"body": strings.Repeat("x", 2001)})
+	require.Equal(t, http.StatusBadRequest, code, string(body))
+	code, body = cl.upload(path, tok, "a.png", png, map[string]string{"to": strings.Repeat("y", 129)})
 	require.Equal(t, http.StatusBadRequest, code, string(body))
 }
 

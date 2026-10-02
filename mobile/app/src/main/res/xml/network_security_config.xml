@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Tarmoq xavfsizligi (S5).
+
+  HOZIR: faqat HTTPS (cleartext YO'Q). Reliz `sslip.io` IP-hostiga qaraydi
+  (`app.169.58.104.245.sslip.io`) va Let's Encrypt sertifikati har 60-90 kunda
+  ROTATSIYA bo'ladi. Shu sababli sertifikat PINNING ATAYLAB O'CHIQ: IP-host +
+  avtomatik rotatsiya sharoitida pin ilovani birinchi yangilanishdayoq
+  "bricklab" qo'yardi (ustoz darsga umuman kira olmasdi).
+
+  YOQISH TARTIBI — faqat `jonly.uz` (egalik qilinadigan domen) jonli bo'lgach:
+    1. Pastdagi <domain-config> izohdan chiqariladi, `<domain>` jonly.uz va
+       subdomenlariga almashtiriladi.
+    2. <pin> ga LEAF EMAS, ORALIQ CA (Let's Encrypt R10/R11 yoki E5/E6) yoki
+       ISRG Root X1 ning SPKI SHA-256 ma'lumoti qo'yiladi — ular yillab
+       o'zgarmaydi; leaf pin har 60 kunda buziladi.
+    3. Kamida IKKITA pin (asosiy + zaxira) va `expiration` sanasi shart —
+       muddat o'tsa Android pin'ni e'tiborsiz qoldiradi (fail-open), ilova
+       o'lmaydi.
+    4. Hisoblash: openssl s_client -connect jonly.uz:443 -showcerts |
+       openssl x509 -pubkey -noout | openssl pkey -pubin -outform der |
+       openssl dgst -sha256 -binary | base64
+  Kod izohi: `util/SafeLinks.kt` va `README.md` §xavfsizlik.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <!-- O'CHIQ — jonly.uz jonli bo'lguncha (yuqoridagi tartib).
+    <domain-config>
+        <domain includeSubdomains="true">jonly.uz</domain>
+        <pin-set expiration="2027-12-31">
+            <pin digest="SHA-256">AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=</pin>
+            <pin digest="SHA-256">BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=</pin>
+        </pin-set>
+    </domain-config>
+    -->
+</network-security-config>

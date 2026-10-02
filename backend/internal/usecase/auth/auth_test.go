@@ -153,7 +153,7 @@ func TestLogout_RevokesToken(t *testing.T) {
 	pair, err := uc.Register(context.Background(), &entity.RegisterReq{FullName: "A", Email: "lo@darsly.uz", Password: "parol12345"}, "", "")
 	require.NoError(t, err)
 
-	require.NoError(t, uc.Logout(context.Background(), &entity.LogoutReq{RefreshToken: pair.RefreshToken}))
+	require.NoError(t, uc.Logout(context.Background(), "", "", &entity.LogoutReq{RefreshToken: pair.RefreshToken}))
 	require.Contains(t, tokens.Revoked, pair.RefreshToken, "logout refresh token'ni Redis'dan bekor qilishi kerak")
 	require.GreaterOrEqual(t, auths.Calls["RevokeRefreshToken"], 1, "DB refresh token ham bekor qilinishi kerak")
 }
@@ -312,4 +312,111 @@ func TestRefresh_GenericInvalidStaysUnauthorized(t *testing.T) {
 	ae := apperr.As(err)
 	require.NotNil(t, ae)
 	require.Equal(t, apperr.CodeUnauthorized, ae.Code)
+}
+
+// ── Audit tuzatishlari ──────────────────────────────────────────────────────
+
+func registerUser(t *testing.T, uc auth.UseCase, email string) *entity.TokenPair {
+	t.Helper()
+	pair, err := uc.Register(context.Background(), &entity.RegisterReq{FullName: "A", Email: email, Password: "parol12345"}, "", "")
+	require.NoError(t, err)
+	return pair
+}
+
+// Logout refresh token'siz ham joriy sessiyani bekor qilishi kerak (avval no-op edi).
+func TestLogout_SessionOnly_RevokesSession(t *testing.T) {
+	users, auths, tokens := testutil.NewFakeUserRepo(), testutil.NewFakeAuthRepo(), testutil.NewFakeTokenMaker()
+	uc := newAuthUC(users, auths, tokens)
+	registerUser(t, uc, "so@darsly.uz")
+	var sid string
+	for k := range tokens.Sessions {
+		sid = k
+	}
+	require.NotEmpty(t, sid)
+
+	require.NoError(t, uc.Logout(context.Background(), "u", sid, &entity.LogoutReq{}))
+	require.False(t, tokens.Sessions[sid], "refresh'siz logout ham sessiyani o'chirishi kerak")
+}
+
+func TestLogout_NothingProvided_BadRequest(t *testing.T) {
+	uc := newAuthUC(testutil.NewFakeUserRepo(), testutil.NewFakeAuthRepo(), testutil.NewFakeTokenMaker())
+	err := uc.Logout(context.Background(), "u", "", &entity.LogoutReq{})
+	require.Error(t, err)
+	require.True(t, apperr.IsBadRequest(err))
+}
+
+// Boshqa sessiyaning refresh token'i bilan logout qilib, o'sha sessiyani o'chirib bo'lmaydi.
+func TestLogout_ForeignRefreshIgnored(t *testing.T) {
+	users, auths, tokens := testutil.NewFakeUserRepo(), testutil.NewFakeAuthRepo(), testutil.NewFakeTokenMaker()
+	uc := newAuthUC(users, auths, tokens)
+	victim := registerUser(t, uc, "victim@darsly.uz")
+	registerUser(t, uc, "attacker@darsly.uz")
+	// Chaqiruvchining o'z sessiyasi — "attacker-sid"; token esa qurbonniki.
+	require.NoError(t, uc.Logout(context.Background(), "attacker", "attacker-sid", &entity.LogoutReq{RefreshToken: victim.RefreshToken}))
+	require.NotContains(t, tokens.Revoked, victim.RefreshToken, "begona refresh token bekor qilinmasligi kerak")
+}
+
+// Lockout (email+IP) juftligi bo'yicha: hujumchi IP'sidan qurbonni qulflay olmaydi.
+func TestLogin_LockoutIsPerIP_NoVictimDoS(t *testing.T) {
+	users, auths, tokens := testutil.NewFakeUserRepo(), testutil.NewFakeAuthRepo(), testutil.NewFakeTokenMaker()
+	uc := newAuthUC(users, auths, tokens)
+	registerUser(t, uc, "victim2@darsly.uz")
+	ctx := context.Background()
+
+	for range 6 {
+		_, err := uc.Login(ctx, &entity.LoginReq{Email: "victim2@darsly.uz", Password: "bad"}, "6.6.6.6", "")
+		require.Error(t, err)
+	}
+	// Hujumchining o'zi endi to'g'ri parolda ham bloklangan.
+	_, err := uc.Login(ctx, &entity.LoginReq{Email: "victim2@darsly.uz", Password: "parol12345"}, "6.6.6.6", "")
+	require.Error(t, err)
+	// Qurbon o'z IP'sidan kira oladi.
+	_, err = uc.Login(ctx, &entity.LoginReq{Email: "victim2@darsly.uz", Password: "parol12345"}, "7.7.7.7", "")
+	require.NoError(t, err)
+}
+
+// Deaktiv akkaunt: noto'g'ri parol generic 401 (holat oshkor bo'lmaydi), to'g'ri parol 403.
+func TestLogin_Deactivated_WrongPasswordIsGeneric401(t *testing.T) {
+	users, auths, tokens := testutil.NewFakeUserRepo(), testutil.NewFakeAuthRepo(), testutil.NewFakeTokenMaker()
+	uc := newAuthUC(users, auths, tokens)
+	registerUser(t, uc, "deact@darsly.uz")
+	u, _ := users.GetByEmail(context.Background(), "deact@darsly.uz")
+	u.IsActive = false
+	require.NoError(t, users.Update(context.Background(), u))
+
+	_, err := uc.Login(context.Background(), &entity.LoginReq{Email: "deact@darsly.uz", Password: "wrong"}, "", "")
+	require.True(t, errors.Is(err, apperr.Unauthorized("")), "noto'g'ri parol 401 bo'lishi kerak")
+	require.False(t, apperr.IsForbidden(err))
+}
+
+func TestLogin_UpdatesLastLogin(t *testing.T) {
+	users, auths, tokens := testutil.NewFakeUserRepo(), testutil.NewFakeAuthRepo(), testutil.NewFakeTokenMaker()
+	uc := newAuthUC(users, auths, tokens)
+	registerUser(t, uc, "ll@darsly.uz")
+	_, err := uc.Login(context.Background(), &entity.LoginReq{Email: "ll@darsly.uz", Password: "parol12345"}, "", "")
+	require.NoError(t, err)
+	require.Equal(t, 1, users.Calls["UpdateLastLogin"])
+}
+
+// Har ForgotPassword oldingi reset tokenlarni bekor qiladi; per-email throttle (3/15daq)
+// oshgach jimgina nil qaytaradi (yangi token yaratmaydi).
+func TestForgotPassword_InvalidatesOldAndThrottles(t *testing.T) {
+	users, auths, tokens := testutil.NewFakeUserRepo(), testutil.NewFakeAuthRepo(), testutil.NewFakeTokenMaker()
+	uc := newAuthUC(users, auths, tokens)
+	registerUser(t, uc, "fp@darsly.uz")
+	ctx := context.Background()
+
+	auths2 := testutil.NewFakeAuthRepo()
+	uc2 := newAuthUC(users, auths2, tokens)
+	for range 5 {
+		require.NoError(t, uc2.ForgotPassword(ctx, &entity.ForgotPasswordReq{Email: "fp@darsly.uz"}))
+	}
+	require.Equal(t, 3, auths2.Calls["InvalidateUserPasswordResets"], "3 urinishdan keyin throttle ishlashi kerak")
+
+	// Bir vaqtda faqat bitta yaroqli token.
+	auths3 := testutil.NewFakeAuthRepo()
+	uc3 := newAuthUC(users, auths3, tokens)
+	require.NoError(t, uc3.ForgotPassword(ctx, &entity.ForgotPasswordReq{Email: "fp@darsly.uz"}))
+	require.NoError(t, uc3.ForgotPassword(ctx, &entity.ForgotPasswordReq{Email: "fp@darsly.uz"}))
+	require.Equal(t, 2, auths3.Calls["InvalidateUserPasswordResets"])
 }

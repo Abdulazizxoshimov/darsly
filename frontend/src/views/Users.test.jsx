@@ -122,4 +122,22 @@ describe('UsersView (admin)', () => {
     await screen.findByText('(siz)')
     expect(screen.getByRole('button', { name: /admin akani o'chirish/i })).toBeDisabled()
   })
+
+  // Bug: yuklanish holati ko'rsatilmasa admin bo'sh jadval ko'rib "hech kim yo'q"
+  // deb o'ylaydi (aslida ro'yxat hali kelmagan).
+  it('yuklanayotganda spinner ko‘rsatiladi', async () => {
+    listUsers.mockReturnValue(new Promise(() => {})) // hech qachon hal bo'lmaydi
+    setup()
+    expect(await screen.findByText('Foydalanuvchilar yuklanmoqda…')).toBeInTheDocument()
+  })
+
+  // Bug: so'rov yiqilsa (server/tarmoq) jimgina bo'sh jadval ko'rsatilsa — admin
+  // "hamma o'chib ketdi" deb vahima qiladi. Aniq xato + qayta urinish kerak.
+  it('so‘rov yiqilsa xato holati ko‘rsatiladi', async () => {
+    listUsers.mockRejectedValue(new Error('down'))
+    setup()
+    expect(await screen.findByText(/Foydalanuvchilarni yuklab bo'lmadi/i)).toBeInTheDocument()
+    // Bo'sh holat ("Hali foydalanuvchi yo'q") EMAS, xato holati.
+    expect(screen.queryByText(/Hali foydalanuvchi yo'q/i)).not.toBeInTheDocument()
+  })
 })

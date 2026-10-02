@@ -52,18 +52,20 @@ type UseCases struct {
 
 // Deps — UseCases uchun tashqi bog'liqliklar.
 type Deps struct {
-	Store           *storage.Storage
-	TokenMaker      token.Maker
-	Hasher          hasher.Hasher
-	Minio           minio.Client
-	Cache           redis.Cache
-	Log             logger.Logger
-	Hub             *ws.Hub
-	EmailSender     emailpkg.Sender
-	LiveKit         *livekit.Client
-	RecordingS3     livekit.S3Config
-	RefreshTTL      time.Duration
-	FrontendBaseURL string
+	Store       *storage.Storage
+	TokenMaker  token.Maker
+	Hasher      hasher.Hasher
+	Minio       minio.Client
+	Cache       redis.Cache
+	Log         logger.Logger
+	Hub         *ws.Hub
+	EmailSender emailpkg.Sender
+	LiveKit     *livekit.Client
+	RecordingS3 livekit.S3Config
+	RefreshTTL  time.Duration
+	// PasswordResetTTL — parol tiklash havolasi muddati (PASSWORD_RESET_TTL). 0 → 1 soat.
+	PasswordResetTTL time.Duration
+	FrontendBaseURL  string
 	// RecordingRetention — yozuv saqlash muddati (`expires_at` hisoblash uchun).
 	// 0 → cheksiz saqlash (klientga `expires_at` qaytmaydi).
 	RecordingRetention time.Duration
@@ -77,9 +79,16 @@ type Deps struct {
 	// RecordingLocalMode — client-side (telefon) yozuv rejimi (RECORDING_MODE=local).
 	// true bo'lsa server egress AVTOMATIK boshlanmaydi.
 	RecordingLocalMode bool
+	// EgressMaxConcurrent — bir vaqtda ochiq server egress soni chegarasi
+	// (EGRESS_MAX_CONCURRENT). 0 → cheksiz. SFU'ni himoya qiladi (audit R1).
+	EgressMaxConcurrent int
 }
 
 func New(d Deps) *UseCases {
+	resetTTL := d.PasswordResetTTL
+	if resetTTL <= 0 {
+		resetTTL = time.Hour
+	}
 	// Tartib muhim: `recording` `room`ga bog'liq emas, `room` esa majburiy
 	// yozib olish uchun unga bog'liq (room.Recorder). Shuning uchun avval
 	// recording yasaladi va room'ga uzatiladi.
@@ -89,15 +98,15 @@ func New(d Deps) *UseCases {
 	if tgClient == nil {
 		tgClient = tgc.NewNop()
 	}
-	recordingUC := recording.New(d.Store.Recording, d.Store.Lesson, d.LiveKit, d.Minio, d.RecordingS3, d.Cache, d.RecordingRetention, tgClient, d.RecordingCacheTTL, d.RecordingLocalMode, d.Log)
+	recordingUC := recording.New(d.Store.Recording, d.Store.Lesson, d.LiveKit, d.Minio, d.RecordingS3, d.Cache, d.RecordingRetention, tgClient, d.RecordingCacheTTL, d.RecordingLocalMode, d.EgressMaxConcurrent, d.Log)
 	// roomstate `room`dan OLDIN yasaladi: `room` unga bog'liq (ruxsat berilganda
 	// qo'lni tushirish, dars tugaganda tozalash), teskarisi esa yo'q.
 	roomStateUC := roomstate.New(d.Store.Lesson, d.LiveKit, d.Cache, recordingUC, d.Log)
-	roomUC := room.New(d.Store.Lesson, d.Store.User, d.LiveKit, d.Cache, d.Log, recordingUC, roomStateUC, d.Store.Blocklist)
+	roomUC := room.New(d.Store.Lesson, d.Store.User, d.LiveKit, d.Cache, d.Log, recordingUC, roomStateUC, d.Store.Blocklist, d.Store.Ban)
 	waitingUC := waitingroom.New(d.Store.WaitingRoom, d.Store.Lesson, roomUC, d.Hub, d.Cache, d.Log)
 	return &UseCases{
-		Auth:         auth.New(d.Store.User, d.Store.Auth, d.TokenMaker, d.Hasher, d.Cache, 24*time.Hour, d.RefreshTTL, d.EmailSender, d.FrontendBaseURL, d.Store, d.Log),
-		User:         user.New(d.Store.User, d.Hasher, d.TokenMaker, d.Log),
+		Auth:         auth.New(d.Store.User, d.Store.Auth, d.TokenMaker, d.Hasher, d.Cache, resetTTL, d.RefreshTTL, d.EmailSender, d.FrontendBaseURL, d.Store, d.Log),
+		User:         user.New(d.Store.User, d.Hasher, d.TokenMaker, d.Store.Lesson, d.Log),
 		Lesson:       lesson.New(d.Store.Lesson, d.Hasher, d.Log),
 		Room:         roomUC,
 		RoomState:    roomStateUC,

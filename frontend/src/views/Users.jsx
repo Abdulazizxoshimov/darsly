@@ -15,12 +15,8 @@ import { Field } from '../components/Field'
 import { Modal } from '../components/Modal'
 import { Avatar } from '../components/Avatar'
 import { PageLoader } from '../components/Spinner'
+import { roleLabel } from '../lib/format'
 import { toast } from '../lib/toast'
-
-const ROLE_LABELS = { admin: 'Administrator', mentor: 'Ustoz', student: "O'quvchi", guest: 'Mehmon' }
-function roleLabel(role) {
-  return ROLE_LABELS[role] || role
-}
 
 // Foydalanuvchilarni boshqarish — FAQAT admin (backend RBAC ham shuni talab
 // qiladi). Ro'yxat `AdminUserRow` qaytaradi: rol, faollik va "o'chirish

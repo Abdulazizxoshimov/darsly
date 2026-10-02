@@ -21,7 +21,8 @@ type RefreshReq struct {
 }
 
 type LogoutReq struct {
-	RefreshToken string `json:"refresh_token" validate:"required"`
+	// Ixtiyoriy: bo'sh bo'lsa faqat joriy (access token) sessiya bekor qilinadi.
+	RefreshToken string `json:"refresh_token" validate:"omitempty"`
 }
 
 type ForgotPasswordReq struct {

@@ -3,6 +3,7 @@ package lesson_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -157,4 +158,42 @@ func TestCreate_RecordingCanBeDisabledExplicitly(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.False(t, l.IsRecordingEnabled)
+}
+
+// PATCH qisman: parallel HostToken o'rnatgan status/started_at bosib ketilmaydi.
+func TestUpdate_PartialDoesNotClobberLifecycle(t *testing.T) {
+	repo := testutil.NewFakeLessonRepo()
+	uc := newLessonUC(repo)
+	l, _ := uc.Create(context.Background(), "owner", &entity.CreateLessonReq{Title: "X"})
+	ok, err := repo.ClaimStart(context.Background(), l.ID, time.Now())
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	upd, err := uc.Update(context.Background(), "owner", l.ID, &entity.UpdateLessonReq{Title: ptr("Yangi")})
+	require.NoError(t, err)
+	require.Equal(t, "Yangi", upd.Title)
+	require.Equal(t, entity.LessonStatusLive, upd.Status, "PATCH status'ni qaytarib yubormasligi kerak")
+	require.NotNil(t, upd.StartedAt)
+}
+
+func TestDelete_LiveLessonConflict(t *testing.T) {
+	repo := testutil.NewFakeLessonRepo()
+	uc := newLessonUC(repo)
+	l, _ := uc.Create(context.Background(), "owner", &entity.CreateLessonReq{Title: "X"})
+	_, _ = repo.ClaimStart(context.Background(), l.ID, time.Now())
+
+	err := uc.Delete(context.Background(), "owner", "mentor", l.ID)
+	require.True(t, apperr.IsConflict(err), "jonli dars o'chirilmaydi")
+	_, getErr := repo.GetByID(context.Background(), l.ID)
+	require.NoError(t, getErr)
+}
+
+func TestClaimStart_NotAfterEnd(t *testing.T) {
+	repo := testutil.NewFakeLessonRepo()
+	uc := newLessonUC(repo)
+	l, _ := uc.Create(context.Background(), "owner", &entity.CreateLessonReq{Title: "X"})
+	_, _ = repo.ClaimStart(context.Background(), l.ID, time.Now())
+	_, _ = repo.ClaimEnd(context.Background(), l.ID, time.Now())
+	ok, _ := repo.ClaimStart(context.Background(), l.ID, time.Now())
+	require.False(t, ok, "tugagan dars qayta jonlanmaydi")
 }

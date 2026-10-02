@@ -29,7 +29,9 @@ func Auth(maker token.Maker) gin.HandlerFunc {
 				return
 			}
 			tokenStr = s
-		} else if q := c.Query("token"); q != "" {
+		} else if q := c.Query("token"); q != "" && isWebSocketRequest(c) {
+			// ?token= FAQAT WS uchun: URL'lar access log/proxy/Referer'ga tushadi,
+			// shuning uchun oddiy route'larda token query'da qabul qilinmaydi.
 			tokenStr = q
 		} else {
 			hs.AbortError(c, http.StatusUnauthorized, "UNAUTHORIZED", "missing authorization header")
@@ -61,4 +63,16 @@ func Auth(maker token.Maker) gin.HandlerFunc {
 		c.Request = c.Request.WithContext(logger.WithUser(c.Request.Context(), claims.Sub))
 		c.Next()
 	}
+}
+
+// isWebSocketRequest — so'rov WS yo'li (`/api/v1/ws...`) yoki Upgrade: websocket ekanini aniqlaydi.
+func isWebSocketRequest(c *gin.Context) bool {
+	if strings.EqualFold(c.GetHeader("Upgrade"), "websocket") {
+		return true
+	}
+	p := c.FullPath()
+	if p == "" {
+		p = c.Request.URL.Path
+	}
+	return p == "/api/v1/ws" || strings.HasPrefix(p, "/api/v1/ws/")
 }

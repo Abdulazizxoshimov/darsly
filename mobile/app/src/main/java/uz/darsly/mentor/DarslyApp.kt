@@ -29,6 +29,7 @@ class DarslyApp : Application() {
     @Inject lateinit var badge: NotificationsBadge
     @Inject lateinit var notifications: NotificationsRepository
     @Inject lateinit var lessonsCache: LessonsCache
+    @Inject lateinit var uploadResumer: uz.darsly.mentor.data.repo.PendingUploadResumer
 
     /** Ilova umri davomida yashaydigan qamrov — faqat sessiya tozalash uchun. */
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -101,7 +102,17 @@ class DarslyApp : Application() {
     private fun observeRealtime() {
         appScope.launch {
             session.loggedIn.collect { loggedIn ->
-                if (loggedIn) realtime.start(appScope) else realtime.stop()
+                if (loggedIn) {
+                    realtime.start(appScope)
+                    // Yuklanmay qolgan lokal yozuvlarni AVTOMATIK qayta yuklaymiz
+                    // (ilova o'rtada o'lgan bo'lsa ham — tugma kerak emas).
+                    uploadResumer.resume(appScope)
+                } else {
+                    realtime.stop()
+                    // S4: chiqilgach o'quvchilar yozuvi telefonda qolmasin —
+                    // keyingi kirgan ustoz oldingisining darsini ko'rmaydi.
+                    uploadResumer.clearAll(appScope)
+                }
             }
         }
     }

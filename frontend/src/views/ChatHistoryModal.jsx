@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { MessageSquare, Trash2 } from 'lucide-react'
 import { chatHistory } from '../api/chat'
-import { useDeleteChatMessage } from '../store/data'
+import { qk, useDeleteChatMessage } from '../store/data'
 import { errorText } from '../api/api'
 import { Modal } from '../components/Modal'
 import { Spinner } from '../components/Spinner'
@@ -19,7 +19,7 @@ import { toast } from '../lib/toast'
 // tugagandan keyin ko'zga tashlanadi, xonaga esa qaytib bo'lmaydi.
 export function ChatHistoryModal({ lesson, onClose }) {
   const { data, isLoading, isError } = useQuery({
-    queryKey: ['chat-history', lesson.id],
+    queryKey: qk.chatHistory(lesson.id),
     queryFn: () => chatHistory(lesson.id),
   })
   const del = useDeleteChatMessage()

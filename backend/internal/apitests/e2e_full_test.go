@@ -19,6 +19,8 @@ func TestE2E_WaitingRoomAdmitChain(t *testing.T) {
 	})
 
 	rid := guestJoinWaiting(t, cl, slug, "Guest 1")
+	// Audit admit'ga live-gate qo'shdi — admit (token/500) bosqichiga yetish uchun jonli.
+	setLessonLive(t, pg, lessonID)
 
 	// Mentor kutayotganlar ro'yxatida ko'radi.
 	code, body := cl.get("/api/v1/lessons/"+lessonID+"/waitingroom", mentorTok)
@@ -36,10 +38,14 @@ func TestE2E_WaitingRoomAdmitChain(t *testing.T) {
 			"LiveKit yo'q: admit token bosqichida 500 (video disabled)")
 	}
 
-	// Admit'dan keyin ro'yxat bo'sh (endi pending emas).
+	// Admit'dan keyin pending ro'yxat holati LiveKit'ga bog'liq (admitOne token-avval):
 	code, body = cl.get("/api/v1/lessons/"+lessonID+"/waitingroom", mentorTok)
 	require.Equal(t, http.StatusOK, code)
-	require.Equal(t, 0, jsonLen(body, "data"), "admit'dan keyin pending ro'yxat bo'sh")
+	if liveKitAvailable() {
+		require.Equal(t, 0, jsonLen(body, "data"), "LiveKit bor: admit'dan keyin pending bo'sh")
+	} else {
+		require.Equal(t, 1, jsonLen(body, "data"), "LiveKit yo'q: token uzildi → so'rov pending qoladi")
+	}
 
 	_ = pg
 }
@@ -81,9 +87,12 @@ func TestE2E_DirectJoinNoWaitingRoom(t *testing.T) {
 	cl := &httpClient{t: t, base: srv.URL}
 
 	mentorTok := registerMentor(t, cl, pg, "E2E Direct", "e2e_direct_mentor@darsly.uz")
-	_, slug := createLesson(t, cl, mentorTok, map[string]any{
+	lessonID, slug := createLesson(t, cl, mentorTok, map[string]any{
 		"title": "To'g'ridan-to'g'ri dars", "is_waiting_room_enabled": false,
 	})
+	// Audit `waiting_for_host` gate'i: scheduled join token bosqichiga yetmaydi (200 waiting_for_host).
+	// Jonli qilsak join token bosqichiga o'tadi → LiveKit yo'q bo'lsa 500 (else shox to'g'ri bo'ladi).
+	setLessonLive(t, pg, lessonID)
 
 	code, body := cl.post("/api/v1/joinlink/"+slug, "", map[string]string{"guest_name": "Direct Guest"})
 	if liveKitAvailable() {

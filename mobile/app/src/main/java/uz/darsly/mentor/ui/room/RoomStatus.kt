@@ -72,13 +72,12 @@ object RoomStatus {
      *
      * Avval SDK enum nomi (`room.state.name.lowercase()`) to'g'ridan-to'g'ri chiqarilardi —
      * ustoz ekranda inglizcha "disconnected" ni ko'rardi (2026-07-28, qurilmada 🟡A sinovida).
-     * Noma'lum qiymat ham inglizcha oqib chiqmasligi uchun oxirgi shox umumiy matn beradi.
      */
-    fun connLabel(connState: String): String = when (connState) {
-        "connected" -> "ulandi"
-        "reconnecting" -> "qayta ulanmoqda…"
-        "connecting" -> "ulanmoqda…"
-        else -> "ulanmagan"
+    fun connLabel(connState: ConnState): String = when (connState) {
+        ConnState.CONNECTED -> "ulandi"
+        ConnState.RECONNECTING -> "qayta ulanmoqda…"
+        ConnState.CONNECTING -> "ulanmoqda…"
+        ConnState.DISCONNECTED -> "ulanmagan"
     }
 
     fun endReasonOf(sdkName: String?): EndReason = when (sdkName) {

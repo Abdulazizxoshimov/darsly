@@ -3,6 +3,7 @@ package uz.darsly.mentor.data.livekit
 import io.livekit.android.room.participant.AudioTrackPublishDefaults
 import io.livekit.android.room.participant.VideoTrackPublishDefaults
 import io.livekit.android.room.track.CustomVideoPreset
+import io.livekit.android.room.track.LocalAudioTrackOptions
 import io.livekit.android.room.track.ScreenSharePresets
 import io.livekit.android.room.track.VideoCaptureParameter
 import io.livekit.android.room.track.VideoEncoding
@@ -173,5 +174,33 @@ object MediaTuning {
     fun audioPublish(): AudioTrackPublishDefaults = AudioTrackPublishDefaults(
         dtx = true,
         red = true,
+    )
+
+    /**
+     * Audio CAPTURE sozlamalari — Zoom "Original Sound for Musicians" ekvivalenti (A1).
+     *
+     * ## Muammo
+     * Standart WebRTC audio-ishlovi (noise suppression + AGC) NUTQ uchun sozlangan:
+     * ekran (YouTube/kino) ovozini "shovqin" deб bostiradi va darajasini tushiradi →
+     * media JUDA PAST eshitiladi (o'lchangan). Media mikrofon trekiga mikslangani uchun
+     * bu ishlov media ovozига ham tegadi.
+     *
+     * ## Yechim
+     * - `noiseSuppression = false` — media "shovqin" deб bostirilmasin (ASOSIY sabab).
+     * - `autoGainControl = false` — media darajasi sun'iy tushirilmasin/normallanmasin.
+     * - `highPassFilter = false` — past chastotalar (bas/musiqa) kesilmasin — media to'liq.
+     * - `typingNoiseDetection = false` — yozayotganда media kesib qo'yilmasin.
+     * - `echoCancellation = true` — QOLADI: ustoz karnaydan foydalansa aks-sadoни oldini
+     *   oladi (uni o'chirish real echo xavfi — ataylab yoqiq).
+     *
+     * Salbiy taraf: mikrofon endi fon shovqinini ko'proq o'tkazadi (odatiy dars xonasida
+     * jarayonга sezilarli emas). Foyda: media ovozi tabiiy va baland.
+     */
+    fun audioCapture(): LocalAudioTrackOptions = LocalAudioTrackOptions(
+        noiseSuppression = false,
+        echoCancellation = true,
+        autoGainControl = false,
+        highPassFilter = false,
+        typingNoiseDetection = false,
     )
 }

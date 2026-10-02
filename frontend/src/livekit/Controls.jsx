@@ -69,6 +69,9 @@ export const Controls = memo(function Controls({
   const [tipMute, setTipMute] = useState(false)
   const lp = room.localParticipant
   const canPublish = local?.canPublish ?? isHost
+  // Kamera ALOHIDA ruxsat: o'quvchi mikrofonni o'zi yoqadi (canPublish), lekin
+  // kamerani faqat ustoz "Videoga ruxsat" bergach (canPublishCamera).
+  const canPublishCamera = local?.canPublishCamera ?? isHost
   const micOn = !!local?.micOn
   const camOn = !!local?.camOn
   const screenOn = !!local?.screenOn
@@ -93,8 +96,8 @@ export const Controls = memo(function Controls({
         : 'Mikrofon'
   const camTitle = !mediaOk
     ? 'HTTPS kerak — kamera faqat xavfsiz (https) ulanishda ishlaydi'
-    : !canPublish
-      ? 'Ustoz kamera uchun ruxsat bermagan'
+    : !canPublishCamera
+      ? 'Ustoz kamera uchun ruxsat bermagan — qo‘l ko‘taring'
       : 'Kamera'
 
   async function toggleMic() {
@@ -109,7 +112,7 @@ export const Controls = memo(function Controls({
     }
   }
   async function toggleCam() {
-    if (!canPublish) return toast.info('Ustoz kamera uchun ruxsat bermagan')
+    if (!canPublishCamera) return toast.info('Ustoz kamera uchun ruxsat bermagan — qo‘l ko‘taring')
     try {
       // CAMERA_PUBLISH: kamerada `balanced` degradatsiya (mobil bilan bir xil).
       // Busiz xona darajasidagi `maintain-resolution` kameraga ham tushib,
@@ -168,7 +171,7 @@ export const Controls = memo(function Controls({
       <Ctrl label={micTitle} onClick={toggleMic} disabled={!canPublish || !mediaOk || micLocked} danger={!micOn}>
         {micOn ? <Mic size={20} /> : <MicOff size={20} />}
       </Ctrl>
-      <Ctrl label={camTitle} onClick={toggleCam} disabled={!canPublish || !mediaOk} danger={!camOn}>
+      <Ctrl label={camTitle} onClick={toggleCam} disabled={!canPublishCamera || !mediaOk} danger={!camOn}>
         {camOn ? <Video size={20} /> : <VideoOff size={20} />}
       </Ctrl>
       {/* Ekran ulashish FAQAT ustozda — o'quvchi tokeniga bu manba imzolanmagan

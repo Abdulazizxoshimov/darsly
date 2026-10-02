@@ -109,6 +109,11 @@ func (uc *useCase) SweepAutoEnd(ctx context.Context, maxDuration, emptyGrace tim
 		return 0
 	}
 	now := time.Now().UTC()
+	// Eskirgan `recording` yozuvlar (telefon complete qilmagan / webhook yo'qolgan):
+	// dars max davomiyligidan + 10 daqiqa o'tgach failed.
+	if maxDuration > 0 && uc.recorder != nil {
+		uc.recorder.ReapStaleRecordings(ctx, now.Add(-(maxDuration + 10*time.Minute)))
+	}
 	ended := 0
 	for _, l := range lessons {
 		reason, ok := uc.autoEndReason(ctx, l, now, maxDuration, emptyGrace)
@@ -165,6 +170,15 @@ func (uc *useCase) autoEndReason(
 		if uc.cache != nil {
 			_ = uc.cache.Del(ctx, roomEmptyKey(l.ID))
 		}
+		// ⭐ YOZUV RECONCILIATION (system-design audit R3).
+		//
+		// Odatda yozuv `track_published` webhook'idan boshlanadi. Agar o'sha
+		// webhook yo'qolsa (deploy paytida, LiveKit 429/retry tugashi) dars
+		// JIMGINA yozilmay qolardi va buni hech kim sezmasdi. Sweep har tick'da
+		// jonli darsni ko'radi: yozuv yoqilgan, xonada HAQIQIY media bor
+		// (unmuted trek), lekin yozuv ketmayapti bo'lsa — o'zi boshlaydi.
+		// `EnsureRecording` idempotent va cap/lock/local-mode'ni o'zi tekshiradi.
+		uc.reconcileRecording(ctx, l, parts)
 		return "", false
 	}
 	since, ok := uc.markEmptySince(ctx, l.ID, now)
@@ -175,6 +189,41 @@ func (uc *useCase) autoEndReason(
 		return "empty_room", true
 	}
 	return "", false
+}
+
+// reconcileRecording — yo'qolgan `track_published` webhook'i o'rnini bosadi:
+// jonli dars, yozuv yoqilgan, xonada HAQIQIY media (unmuted trek) bor, lekin
+// yozuv ketmayapti bo'lsa — yozuvni boshlaydi (audit R3).
+//
+// Faqat UNMUTED trek borligini talab qiladi: `EnsureRecording` egressni media
+// paydo bo'lganda ishga tushiradi ("5 daqiqalik tuzoq" — recording usecase
+// izohi), muted-only xonada egress bo'sh Chrome aylantirib bekor bo'lardi.
+// `EnsureRecording` idempotent: cap/lock/local-mode/yozuv yoqilganini o'zi
+// tekshiradi, shuning uchun bu yerda faqat arzon oldingi tekshiruvlar.
+func (uc *useCase) reconcileRecording(ctx context.Context, l *entity.Lesson, parts []entity.RoomParticipant) {
+	if uc.recorder == nil || !l.IsRecordingEnabled {
+		return
+	}
+	if uc.recorder.IsRecording(ctx, l.ID) {
+		return
+	}
+	hasMedia := false
+	for _, p := range parts {
+		if !p.AudioMuted || !p.VideoMuted {
+			hasMedia = true
+			break
+		}
+	}
+	if !hasMedia {
+		return
+	}
+	if err := uc.recorder.EnsureRecording(ctx, l.ID); err != nil {
+		uc.log.Warn(ctx, "room.reconcileRecording: yozuvni boshlab bo'lmadi",
+			logger.String("lesson_id", l.ID), logger.SafeString("err", err.Error()))
+		return
+	}
+	uc.log.Info(ctx, "room.reconcileRecording: yo'qolgan webhook o'rniga yozuv boshlandi",
+		logger.String("lesson_id", l.ID))
 }
 
 // autoEnd — darsni atomik yakunlaydi va tozalashni bajaradi.

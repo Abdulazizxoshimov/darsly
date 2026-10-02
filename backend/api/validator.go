@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"reflect"
 	"sync"
 
@@ -25,7 +26,25 @@ type structValidator struct {
 }
 
 func (s *structValidator) lazy() {
-	s.once.Do(func() { s.v = vpkg.Engine() })
+	s.once.Do(func() {
+		s.v = vpkg.Engine()
+		registerCustomValidations(s.v)
+	})
+}
+
+// registerCustomValidations — loyihaning maxsus `validate` teglari.
+//
+// httpurl: faqat http/https sxemali, hostli URL. go-playground `url` tegi HAR
+// QANDAY sxemani (javascript:, data:, file:) qabul qiladi — avatar_url kabi
+// maydonlar frontend'da <img src>/<a href> ga tushsa stored-XSS vektori bo'ladi.
+func registerCustomValidations(v *validator.Validate) {
+	_ = v.RegisterValidation("httpurl", func(fl validator.FieldLevel) bool {
+		u, err := url.Parse(fl.Field().String())
+		if err != nil || u.Host == "" {
+			return false
+		}
+		return u.Scheme == "http" || u.Scheme == "https"
+	})
 }
 
 func (s *structValidator) ValidateStruct(obj any) error {

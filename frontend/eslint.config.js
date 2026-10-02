@@ -115,4 +115,19 @@ export default [
       globals: { ...globals.node, ...globals.browser },
     },
   },
+
+  // Jonli E2E (real backend, e2e-live/) — Playwright fixture'lari ikkinchi
+  // argument sifatida `use` callback oladi; bu React hook EMAS, shuning uchun
+  // rules-of-hooks bu yerda yolg'on xato beradi. Bo'sh `{}` pattern ham
+  // Playwright'ning fixture imzosi ({}, use) — ataylab.
+  {
+    files: ['e2e-live/**/*.js'],
+    languageOptions: {
+      globals: { ...globals.node, ...globals.browser },
+    },
+    rules: {
+      'react-hooks/rules-of-hooks': 'off',
+      'no-empty-pattern': 'off',
+    },
+  },
 ]

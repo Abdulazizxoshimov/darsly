@@ -30,7 +30,7 @@ func autoEndSetup(t *testing.T, startedAgo time.Duration) (room.UseCase, *testut
 		UpdatedAt: started,
 	}))
 	hands := roomstate.New(lrepo, lk, cache, nil, testutil.NewLogger())
-	uc := room.New(lrepo, urepo, lk, cache, testutil.NewLogger(), nil, hands, testutil.NewFakeBlocklistRepo())
+	uc := room.New(lrepo, urepo, lk, cache, testutil.NewLogger(), nil, hands, testutil.NewFakeBlocklistRepo(), testutil.NewFakeBanRepo())
 	return uc, lrepo, lk, cache
 }
 
@@ -131,7 +131,7 @@ func TestSweepAutoEnd_StopsRecording(t *testing.T) {
 		StartedAt: &started, UpdatedAt: started,
 	}))
 	hands := roomstate.New(lrepo, lk, cache, nil, testutil.NewLogger())
-	uc := room.New(lrepo, urepo, lk, cache, testutil.NewLogger(), rec, hands, testutil.NewFakeBlocklistRepo())
+	uc := room.New(lrepo, urepo, lk, cache, testutil.NewLogger(), rec, hands, testutil.NewFakeBlocklistRepo(), testutil.NewFakeBanRepo())
 
 	require.Equal(t, 1, uc.SweepAutoEnd(ctx, 4*time.Hour, 20*time.Minute))
 	select {
@@ -139,6 +139,64 @@ func TestSweepAutoEnd_StopsRecording(t *testing.T) {
 		require.Equal(t, testLessonID, id)
 	case <-time.After(time.Second):
 		t.Fatal("avto-yakunda yozuv to'xtatilmadi")
+	}
+}
+
+// RECONCILIATION (audit R3): yozuv yoqilgan jonli darsda media bor, lekin
+// yozuv ketmayapti bo'lsa (yo'qolgan `track_published` webhook) sweep uni
+// o'zi boshlaydi.
+func TestSweepAutoEnd_ReconcilesRecording(t *testing.T) {
+	ctx := context.Background()
+	rec := newFakeRecorder() // IsRecording=false (default)
+	lrepo := testutil.NewFakeLessonRepo()
+	urepo := testutil.NewFakeUserRepo()
+	lk := testutil.NewFakeLiveKit()
+	cache := testutil.NewFakeCache()
+	started := time.Now().UTC().Add(-30 * time.Minute) // limit ichida
+	require.NoError(t, lrepo.Create(ctx, &entity.Lesson{
+		ID: testLessonID, MentorID: "mentor1", Status: entity.LessonStatusLive,
+		IsRecordingEnabled: true, StartedAt: &started, UpdatedAt: started,
+	}))
+	// Xonada UNMUTED mikrofonli ishtirokchi — media haqiqatan chiqarilyapti.
+	lk.Participants = []entity.RoomParticipant{{Identity: "student1", Active: true, AudioMuted: false, VideoMuted: true}}
+	hands := roomstate.New(lrepo, lk, cache, nil, testutil.NewLogger())
+	uc := room.New(lrepo, urepo, lk, cache, testutil.NewLogger(), rec, hands, testutil.NewFakeBlocklistRepo(), testutil.NewFakeBanRepo())
+
+	// Dars yakunlanmaydi (limit ichida, xonada odam bor), lekin yozuv boshlanadi.
+	require.Equal(t, 0, uc.SweepAutoEnd(ctx, 4*time.Hour, 20*time.Minute))
+	require.Equal(t, entity.LessonStatusLive, lessonStatus(t, lrepo))
+	select {
+	case id := <-rec.ensured:
+		require.Equal(t, testLessonID, id)
+	case <-time.After(time.Second):
+		t.Fatal("yo'qolgan webhook uchun yozuv reconciliation ishlamadi")
+	}
+}
+
+// Reconciliation FAQAT haqiqiy media bo'lsa: hammasi muted bo'lsa egressni
+// bo'sh ishga tushirmaymiz ("5 daqiqalik tuzoq").
+func TestSweepAutoEnd_NoReconcileWhenAllMuted(t *testing.T) {
+	ctx := context.Background()
+	rec := newFakeRecorder()
+	lrepo := testutil.NewFakeLessonRepo()
+	urepo := testutil.NewFakeUserRepo()
+	lk := testutil.NewFakeLiveKit()
+	cache := testutil.NewFakeCache()
+	started := time.Now().UTC().Add(-30 * time.Minute)
+	require.NoError(t, lrepo.Create(ctx, &entity.Lesson{
+		ID: testLessonID, MentorID: "mentor1", Status: entity.LessonStatusLive,
+		IsRecordingEnabled: true, StartedAt: &started, UpdatedAt: started,
+	}))
+	lk.Participants = []entity.RoomParticipant{{Identity: "student1", Active: true, AudioMuted: true, VideoMuted: true}}
+	hands := roomstate.New(lrepo, lk, cache, nil, testutil.NewLogger())
+	uc := room.New(lrepo, urepo, lk, cache, testutil.NewLogger(), rec, hands, testutil.NewFakeBlocklistRepo(), testutil.NewFakeBanRepo())
+
+	require.Equal(t, 0, uc.SweepAutoEnd(ctx, 4*time.Hour, 20*time.Minute))
+	select {
+	case <-rec.ensured:
+		t.Fatal("hamma muted bo'lsa yozuv boshlanmasligi kerak")
+	case <-time.After(100 * time.Millisecond):
+		// kutilgan: reconciliation ishlamadi
 	}
 }
 

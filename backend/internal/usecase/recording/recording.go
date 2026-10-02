@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -44,6 +45,11 @@ type useCase struct {
 	// true bo'lsa server egress AVTOMATIK boshlanmaydi — telefon o'zi yozib
 	// yuklaydi. Qo'lda `StartRecording` (egress) baribir ishlaydi (fallback).
 	localMode bool
+	// egressMax — bir vaqtda ochiq bo'lishi mumkin bo'lgan server egress soni
+	// (EGRESS_MAX_CONCURRENT). 0 → cheksiz. SFU'ni CPU och qolishdan himoya
+	// qiladi (system-design audit R1). Cheklovga yetilganda AVTOMATIK yozuv
+	// jimgina boshlanmaydi (dars davom etadi), qo'lda esa 409 qaytadi.
+	egressMax int
 	log       logger.Logger
 }
 
@@ -58,6 +64,7 @@ func New(
 	tgc Telegram,
 	cacheTTL time.Duration,
 	localMode bool,
+	egressMax int,
 	log logger.Logger,
 ) UseCase {
 	if cacheTTL <= 0 {
@@ -66,8 +73,25 @@ func New(
 	return &useCase{
 		repo: repo, lessonRepo: lessonRepo, livekit: lk, minio: mc, s3: s3,
 		cache: cache, retention: retention, telegram: tgc, cacheTTL: cacheTTL,
-		localMode: localMode, log: log,
+		localMode: localMode, egressMax: egressMax, log: log,
 	}
+}
+
+// egressCapReached — global egress cheklovi to'lganmi.
+//
+// Xato holida BLOKLAMAYMIZ (false qaytadi): yozuvning umuman yo'qligi
+// (ma'lumot yo'qotish) cheklovni bir zumga oshib ketishdan (SFU biroz
+// og'irlashadi) yomonroq. Cheklov 0 bo'lsa — cheksiz (eski xulq).
+func (uc *useCase) egressCapReached(ctx context.Context) bool {
+	if uc.egressMax <= 0 {
+		return false
+	}
+	n, err := uc.repo.CountActive(ctx)
+	if err != nil {
+		uc.log.Warn(ctx, "recording.egressCap: CountActive failed — cheklovsiz davom", logger.SafeString("err", err.Error()))
+		return false
+	}
+	return n >= uc.egressMax
 }
 
 // telegramEnabled — arxiv integratsiyasi ishlaydimi.
@@ -153,6 +177,22 @@ func (uc *useCase) EnsureRecording(ctx context.Context, lessonID string) error {
 		return nil
 	}
 
+	// ⭐ GLOBAL EGRESS CAP (system-design audit R1).
+	//
+	// SFU AYNI 4 yadroli serverda ishlaydi. Har egress alohida Chrome+ffmpeg
+	// bo'lib 1-2 yadro yeydi. Bir vaqtda juda ko'p yozuvli dars ochilsa SFU
+	// och qolib BARCHA xonalarda uzilish boshlanadi. Cheklovga yetilganda
+	// AVTOMATIK yozuvni jimgina o'tkazib yuboramiz — dars o'zi davom etadi,
+	// faqat bu dars yozilmaydi. Bu ataylab "jim": mentor darsini to'xtatishdan
+	// ko'ra yozuvsiz qolishi afzal, va cap odatda faqat bir nechta dars bir
+	// vaqtda ketganda uriladi.
+	if uc.egressCapReached(ctx) {
+		metrics.EgressResults.WithLabelValues("cap_reached").Inc()
+		uc.log.Warn(ctx, "recording.Ensure: global egress cap to'ldi — avtomatik yozuv o'tkazib yuborildi",
+			logger.String("lesson_id", lessonID), logger.String("egress_max", fmt.Sprint(uc.egressMax)))
+		return nil
+	}
+
 	// ⭐ DUBLIKAT EGRESS QULFI (TOCTOU).
 	//
 	// Yuqoridagi `activeFor` tekshiruvi va quyidagi `startEgress` orasida oyna
@@ -224,6 +264,10 @@ func (uc *useCase) StopActiveForLesson(ctx context.Context, lessonID string) err
 		if r.Status != entity.RecordingStatusRecording {
 			continue
 		}
+		// Lokal yozuvda egress YO'Q: telefon o'zi yuklab `complete` qiladi.
+		if isLocalRecording(r) {
+			continue
+		}
 		if err := uc.livekit.StopRecording(ctx, r.EgressID); err != nil {
 			// To'xtatib bo'lmadi — lekin xona baribir o'chiriladi va egress
 			// o'zi tugaydi; webhook yakuniy holatni qo'yadi. Shuning uchun
@@ -240,6 +284,22 @@ func (uc *useCase) StopActiveForLesson(ctx context.Context, lessonID string) err
 	return nil
 }
 
+// ReapStaleRecordings — `olderThan` dan eski hamon `recording` holatidagi
+// yozuvlarni `failed` qiladi (telefon hech qachon complete qilmagan lokal yozuv
+// yoki webhook yo'qolgan egress). Nechta yozuv yopilganini qaytaradi.
+// Chaqiruvchi: room.SweepAutoEnd (LESSON_MAX_DURATION'dan keyin).
+func (uc *useCase) ReapStaleRecordings(ctx context.Context, olderThan time.Time) int {
+	n, err := uc.repo.FailStale(ctx, olderThan, time.Now().UTC())
+	if err != nil {
+		uc.log.Warn(ctx, "recording.ReapStale: failed", logger.SafeString("err", err.Error()))
+		return 0
+	}
+	if n > 0 {
+		uc.log.Info(ctx, "recording.ReapStale: eskirgan yozuvlar failed qilindi", logger.String("count", fmt.Sprint(n)))
+	}
+	return int(n)
+}
+
 func (uc *useCase) StartRecording(ctx context.Context, mentorID, lessonID string) (*entity.Recording, error) {
 	// Avval egalik tekshiriladi — video servis o'chirilgan bo'lsa ham begona dars
 	// yozuvi 403 bo'lib qolsin (500 bilan niqoblanmasin).
@@ -254,8 +314,36 @@ func (uc *useCase) StartRecording(ctx context.Context, mentorID, lessonID string
 		return nil, apperr.BadRequest("lesson is not live")
 	}
 
+	// ⭐ DUBLIKAT-START HIMOYASI (audit topilma #4).
+	//
+	// Avval bu yo'l `activeFor` va SetNX qulfini TEKSHIRMASDAN to'g'ridan-to'g'ri
+	// `startEgress` chaqirardi (faqat avtomatik yo'l — `EnsureRecording` —
+	// himoyalangan edi). Mentor tugmani ikki marta bossa yoki qayta urinsa ikki
+	// parallel egress ochilardi (4 yadroli hostda 2× CPU, ikkita fayl). Endi
+	// avtomatik yo'l bilan bir xil guard: faol yozuv bo'lsa 409, aks holda
+	// atomik SetNX qulfi.
+	if active := uc.activeFor(ctx, lessonID); active != nil {
+		return nil, apperr.Conflict("recording is already active for this lesson")
+	}
+	if uc.egressCapReached(ctx) {
+		metrics.EgressResults.WithLabelValues("cap_reached").Inc()
+		return nil, apperr.Conflict("server recording capacity is full — try again shortly")
+	}
+	if uc.cache != nil {
+		ok, lockErr := uc.cache.SetNX(ctx, startLockKey(lessonID), "1", startLockTTL)
+		if lockErr != nil {
+			uc.log.Warn(ctx, "recording.Start: qulfni olib bo'lmadi — qulfsiz davom",
+				logger.String("lesson_id", lessonID), logger.SafeString("err", lockErr.Error()))
+		} else if !ok {
+			return nil, apperr.Conflict("recording is already starting for this lesson")
+		}
+	}
+
 	rec, err := uc.startEgress(ctx, lessonID)
 	if err != nil {
+		if uc.cache != nil {
+			_ = uc.cache.Del(ctx, startLockKey(lessonID))
+		}
 		return nil, err
 	}
 	audit.Record(ctx, uc.log, "recording.start", mentorID,
@@ -277,7 +365,7 @@ func (uc *useCase) StartRecording(ctx context.Context, mentorID, lessonID string
 func (uc *useCase) startEgress(ctx context.Context, lessonID string) (*entity.Recording, error) {
 	recID := uuid.NewString()
 	objectKey := fmt.Sprintf("recordings/%s/%s.mp4", lessonID, recID)
-	roomName := "lesson_" + lessonID
+	roomName := shared.RoomName(lessonID)
 
 	// Egress chaqiruvi klient so'rovi hayotidan ajratilgan va cheklangan (WriteTimeout=30s'dan past),
 	// shunda mentor uzilib qolsa ham yozib olish boshlanishi buzilmaydi.
@@ -316,6 +404,21 @@ func (uc *useCase) startEgress(ctx context.Context, lessonID string) (*entity.Re
 
 // ─── Client-side (lokal) yozuv ─────────────────────────────────────────────
 
+// localEgressPrefix — lokal (client-side) yozuvlarning sintetik egress_id prefiksi.
+const localEgressPrefix = "local:"
+
+// Lokal yozuv chegaralari.
+const (
+	// maxLocalRecordingBytes — lokal yuklangan fayl uchun yuqori chegara (8 GiB).
+	maxLocalRecordingBytes int64 = 8 << 30
+	// endedAtSkew — klient soatining ruxsat etilgan "kelajak"ga og'ishi.
+	endedAtSkew = 5 * time.Minute
+)
+
+func isLocalRecording(r *entity.Recording) bool {
+	return strings.HasPrefix(r.EgressID, localEgressPrefix)
+}
+
 // LocalStart — telefon lokal yozuvni boshlaganda yozuv qatorini yaratadi.
 func (uc *useCase) LocalStart(ctx context.Context, mentorID, lessonID string) (*entity.Recording, error) {
 	l, err := shared.OwnedLesson(ctx, uc.lessonRepo, mentorID, lessonID)
@@ -327,8 +430,23 @@ func (uc *useCase) LocalStart(ctx context.Context, mentorID, lessonID string) (*
 	}
 	// Idempotent: shu dars uchun allaqachon faol yozuv bo'lsa o'shani qaytar
 	// (telefon qayta ulanib LocalStart'ni takror chaqirsa dublikat bo'lmasin).
-	if active := uc.activeFor(ctx, lessonID); active != nil {
-		return active, nil
+	// activeFor'ning sentinel'i (DB xatosida ID'siz yozuv) bu yerda YARAMAYDI:
+	// uni 201 bilan qaytarish telefonga yo'q yozuv ID'sini berardi. Shuning uchun
+	// ro'yxatni o'zimiz o'qiymiz va xatoni aniq qaytaramiz.
+	recs, err := uc.repo.ListByLesson(ctx, lessonID)
+	if err != nil {
+		uc.log.Error(ctx, "recording.LocalStart: list failed", logger.String("lesson_id", lessonID), logger.SafeString("err", err.Error()))
+		return nil, apperr.Internal(fmt.Errorf("could not check active recordings: %w", err))
+	}
+	for _, r := range recs {
+		if r.Status != entity.RecordingStatusRecording {
+			continue
+		}
+		if isLocalRecording(r) {
+			return r, nil
+		}
+		// Haqiqiy (server) egress faol — uning ustiga lokal yozuv ochmaymiz.
+		return nil, apperr.Conflict("server recording is already active for this lesson")
 	}
 	recID := uuid.NewString()
 	now := time.Now().UTC()
@@ -339,7 +457,7 @@ func (uc *useCase) LocalStart(ctx context.Context, mentorID, lessonID string) (*
 		// egress-kalitли metodlar (MarkReady/EnqueueTranscode/EnqueueTelegram)
 		// migratsiyasiz qayta ishlatiladi. `local:` prefiksi haqiqiy egress
 		// ID'laridan (`EG_...`) ajratib turadi.
-		EgressID:  "local:" + recID,
+		EgressID:  localEgressPrefix + recID,
 		ObjectKey: fmt.Sprintf("recordings/%s/%s.mp4", lessonID, recID),
 		Status:    entity.RecordingStatusRecording,
 		StartedAt: now,
@@ -361,6 +479,11 @@ func (uc *useCase) LocalUploadURL(ctx context.Context, mentorID, recordingID str
 	if err != nil {
 		return "", err
 	}
+	// Faqat faol lokal yozuvga: tayyor/arxivlangan yoki server-egress yozuvi
+	// ustiga qayta yozishga ruxsat yo'q.
+	if rec.Status != entity.RecordingStatusRecording || !isLocalRecording(rec) {
+		return "", apperr.BadRequest("recording is not an active local recording")
+	}
 	u, err := uc.minio.PresignedPutURL(ctx, rec.ObjectKey, downloadTTL)
 	if err != nil {
 		uc.log.Error(ctx, "recording.LocalUploadURL: presign put failed",
@@ -376,6 +499,13 @@ func (uc *useCase) LocalComplete(ctx context.Context, mentorID, recordingID stri
 	if err != nil {
 		return err
 	}
+	if rec.Status != entity.RecordingStatusRecording || !isLocalRecording(rec) {
+		// Takroriy complete (allaqachon tayyor) — idempotent muvaffaqiyat.
+		if isLocalRecording(rec) && rec.Status != entity.RecordingStatusFailed {
+			return nil
+		}
+		return apperr.BadRequest("recording is not an active local recording")
+	}
 	// ⭐ TASDIQLASH: fayl haqiqatan MinIO'da bormi va o'lchamи. Telefon
 	// "yukladim" desa ham, ishonch server tekshiruvidan keladi — aks holda
 	// bo'sh/yo'q faylni "tayyor" deb belgilab, retention server nusxasini
@@ -386,13 +516,36 @@ func (uc *useCase) LocalComplete(ctx context.Context, mentorID, recordingID stri
 			logger.String("recording_id", recordingID), logger.SafeString("err", err.Error()))
 		return apperr.BadRequest("yozuv fayli topilmadi — qayta yuklang")
 	}
-	if endedAt.IsZero() {
-		endedAt = time.Now().UTC()
+	if size <= 0 || size > maxLocalRecordingBytes {
+		uc.log.Warn(ctx, "recording.LocalComplete: fayl hajmi yaroqsiz",
+			logger.String("recording_id", recordingID), logger.String("size_bytes", fmt.Sprint(size)))
+		return apperr.BadRequest("yozuv fayli hajmi yaroqsiz")
+	}
+	// Klient qiymatlarini qisamiz: davomiylik manfiy bo'lmasin, tugash vaqti
+	// [started_at, now+5m] oralig'ida bo'lsin.
+	if durationSec < 0 {
+		durationSec = 0
+	}
+	now := time.Now().UTC()
+	if endedAt.IsZero() || endedAt.After(now.Add(endedAtSkew)) {
+		endedAt = now
+	}
+	if endedAt.Before(rec.StartedAt) {
+		endedAt = rec.StartedAt
 	}
 	// Egress `completed` shoxi bilan AYNAN bir xil (sintetik egress_id bilan).
-	if err := uc.repo.MarkReady(ctx, rec.EgressID, rec.ObjectKey, durationSec, size, endedAt); err != nil {
+	// Status-guard tufayli faqat `recording|processing` yozuv o'tadi — telefon
+	// `complete` ni ikki marta yuborsa (qayta urinish) ikkinchisi 0 qator
+	// o'zgartiradi va qayta navbatga qo'yilmaydi.
+	changed, err := uc.repo.MarkReady(ctx, rec.EgressID, rec.ObjectKey, durationSec, size, endedAt)
+	if err != nil {
 		uc.log.Error(ctx, "recording.LocalComplete: mark ready failed", logger.SafeString("err", err.Error()))
 		return err
+	}
+	if !changed {
+		// Allaqachon tayyor (takroriy `complete`) — idempotent muvaffaqiyat.
+		uc.log.Info(ctx, "recording.LocalComplete: allaqachon tayyor — takroriy chaqiruv", logger.String("recording_id", rec.ID))
+		return nil
 	}
 	if err := uc.repo.EnqueueTranscode(ctx, rec.EgressID); err != nil {
 		uc.log.Warn(ctx, "recording.LocalComplete: enqueue transcode failed",
@@ -423,6 +576,9 @@ func (uc *useCase) StopRecording(ctx context.Context, mentorID, recordingID stri
 	}
 	if rec.Status != entity.RecordingStatusRecording {
 		return apperr.BadRequest("recording is not active")
+	}
+	if isLocalRecording(rec) {
+		return apperr.BadRequest("local recording has no server egress: finish it via /complete")
 	}
 
 	if err := uc.livekit.StopRecording(ctx, rec.EgressID); err != nil {
@@ -660,11 +816,26 @@ func (uc *useCase) HandleEgress(ctx context.Context, egressID string, completed 
 	}
 	now := time.Now().UTC()
 	if !completed {
-		if err := uc.repo.MarkFailed(ctx, egressID, now); err != nil {
+		changed, err := uc.repo.MarkFailed(ctx, egressID, now)
+		if err != nil {
 			uc.log.Error(ctx, "recording.HandleEgress: mark failed error", logger.SafeString("err", err.Error()))
 			return err // tranzient DB xatosi — LiveKit qayta yuborsin
 		}
+		if !changed {
+			// Kech/takror hodisa (yozuv allaqachon terminal holatda) — e'tiborsiz,
+			// 200 qaytadi (audit topilma #5: replay holatni buzmasin).
+			uc.log.Info(ctx, "recording.HandleEgress: kech/takror FAILED — e'tiborsiz", logger.String("egress_id", egressID))
+			return nil
+		}
 		metrics.EgressResults.WithLabelValues("failed").Inc()
+		// Best-effort: muvaffaqiyatsiz egress qisman obyekt qoldirishi mumkin.
+		// (LIMIT_REACHED kabi yaroqli fayl `completed` shoxiga tushadi.)
+		if rec.ObjectKey != "" {
+			if delErr := uc.minio.Delete(ctx, rec.ObjectKey); delErr != nil {
+				uc.log.Info(ctx, "recording.HandleEgress: qisman obyektni o'chirib bo'lmadi",
+					logger.String("object_key", rec.ObjectKey), logger.SafeString("err", delErr.Error()))
+			}
+		}
 		uc.log.Warn(ctx, "recording failed", logger.String("recording_id", rec.ID), logger.String("egress_id", egressID))
 		return nil
 	}
@@ -672,11 +843,20 @@ func (uc *useCase) HandleEgress(ctx context.Context, egressID string, completed 
 	if key == "" {
 		key = rec.ObjectKey // fallback: so'ralgan yo'l
 	}
-	if err := uc.repo.MarkReady(ctx, egressID, key, durationSec, sizeBytes, now); err != nil {
+	changed, err := uc.repo.MarkReady(ctx, egressID, key, durationSec, sizeBytes, now)
+	if err != nil {
 		// DB tranzient bo'lishi mumkin — non-200 qaytaramiz, LiveKit hodisani qayta yuboradi
 		// (aks holda tayyor yozuv abadiy "processing"da qolardi).
 		uc.log.Error(ctx, "recording.HandleEgress: mark ready failed", logger.SafeString("err", err.Error()))
 		return err
+	}
+	if !changed {
+		// Kech/takror `egress_ended` (yozuv allaqachon ready/archived/expired) —
+		// hech narsa qilmaymiz, aks holda arxivlangan/o'chirilgan fayl ustidan
+		// transcode/telegram navbati qayta ishlab, `content_offset_sec` ikki
+		// marta jamlanardi (audit topilma #5).
+		uc.log.Info(ctx, "recording.HandleEgress: kech/takror COMPLETE — e'tiborsiz", logger.String("egress_id", egressID))
+		return nil
 	}
 	metrics.EgressResults.WithLabelValues("ready").Inc()
 	uc.log.Info(ctx, "recording ready", logger.String("recording_id", rec.ID), logger.String("object_key", key))

@@ -28,6 +28,8 @@ type Client interface {
 	// va o'lchamini tekshiradi). Obyekt yo'q → xato.
 	Stat(ctx context.Context, objectName string) (int64, error)
 	Delete(ctx context.Context, objectName string) error
+	// Ping — readiness uchun arzon tekshiruv (BucketExists): MinIO javob beryaptimi va bucket bormi.
+	Ping(ctx context.Context) error
 	EnsureBucket(ctx context.Context) error
 }
 
@@ -60,6 +62,8 @@ func (nopClient) Delete(_ context.Context, _ string) error {
 	return fmt.Errorf("minio: not configured")
 }
 
+func (nopClient) Ping(_ context.Context) error { return nil }
+
 func NewNop() Client { return nopClient{} }
 
 func New(cfg config.MinioConfig) (Client, error) {
@@ -85,6 +89,17 @@ func New(cfg config.MinioConfig) (Client, error) {
 		c.presign = pc
 	}
 	return c, nil
+}
+
+func (c *minioClient) Ping(ctx context.Context) error {
+	ok, err := c.mc.BucketExists(ctx, c.bucket)
+	if err != nil {
+		return fmt.Errorf("minio: ping: %w", err)
+	}
+	if !ok {
+		return fmt.Errorf("minio: bucket %q missing", c.bucket)
+	}
+	return nil
 }
 
 func (c *minioClient) EnsureBucket(ctx context.Context) error {

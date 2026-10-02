@@ -67,11 +67,9 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.ui.text.style.TextOverflow
 import kotlinx.coroutines.delay
 import uz.darsly.mentor.BuildConfig
-import uz.darsly.mentor.data.livekit.LessonSessionHolder
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.hilt.navigation.compose.hiltViewModel
-import uz.darsly.mentor.data.store.PrefsUiPrefs
 import uz.darsly.mentor.service.ShareFrameOverlay
 import uz.darsly.mentor.ui.theme.neonGlow
 import uz.darsly.mentor.util.findActivity
@@ -102,6 +100,8 @@ fun RoomScreen(
 ) {
     val ctx = LocalContext.current
     val state by vm.state.collectAsStateWithLifecycle()
+    // M2: sessiya global `object` dan emas, egasi (`LessonSessionStore`) oqimidan.
+    val session by vm.session.collectAsStateWithLifecycle()
     val waiting by waitingVm.state.collectAsStateWithLifecycle()
     val waitingSnackbar = remember { SnackbarHostState() }
 
@@ -191,7 +191,7 @@ fun RoomScreen(
     // 🟢L: TIZIM "ORQAGA" TUGMASI.
     //
     // Avval "Orqaga" shunchaki navigatsiya stekini qaytarardi: ekran yopilardi, lekin
-    // `LessonSessionHolder` (LiveKit `Room`) va `LessonService` (foreground servis)
+    // `LessonSessionStore` (LiveKit `Room`) va `LessonService` (foreground servis)
     // TIRIK qolardi — ustoz "chiqdim" deb o'ylardi, aslida xonada turardi va
     // MediaProjection ekranni yozishda davom etardi (maxfiylik).
     //
@@ -210,13 +210,10 @@ fun RoomScreen(
     var showPoll by remember { mutableStateOf(false) }
 
     // B-1: tizim dialogidan OLDIN ko'rsatiladigan tushuntirish holati.
-    val uiPrefs = remember { PrefsUiPrefs.create(ctx) }
+    // Sozlamalar ViewModel orqali (M9): avval bu yerda `PrefsUiPrefs.create(ctx)`
+    // Hilt'ni chetlab o'tib ikkinchi nusxa yasardi.
     var shareTipOpen by rememberSaveable { mutableStateOf(false) }
     var tipMuted by rememberSaveable { mutableStateOf(false) }
-    // №25: "ulashishda ilova fonga o'tsin" sozlamasi — «Ko'proq» panelida
-    // o'zgartiriladi. Compose uchun nusxa kerak (SharedPreferences oqim emas),
-    // haqiqiy manba baribir `uiPrefs` — ViewModel ham o'shandan o'qiydi.
-    var autoBackground by remember { mutableStateOf(uiPrefs.autoBackgroundOnShare) }
 
     /**
      * ⭐ ULASHISH BOSHLANDI → ILOVA FONGA (№25, Zoom naqshi).
@@ -236,7 +233,7 @@ fun RoomScreen(
             // Qisqa pauza — Toast chizilishga ulgursin va o'tish keskin
             // bo'lmasin (ekran shu zahoti g'oyib bo'lsa ustoz "ilova yiqildi"
             // deb o'ylaydi). Fon rejimida ham dars uzilmaydi: LiveKit sessiyasi
-            // `LessonSessionHolder` + foreground servisda yashaydi.
+            // `LessonSessionStore` + foreground servisda yashaydi.
             delay(SHARE_BACKGROUND_DELAY_MS)
             activity?.moveTaskToBack(true)
         }
@@ -257,7 +254,7 @@ fun RoomScreen(
             frameAskOpen = true
             return
         }
-        if (uiPrefs.screenShareTipEnabled && !skipTip) {
+        if (vm.shareTipEnabled && !skipTip) {
             shareTipOpen = true
         } else {
             val mgr = ctx.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
@@ -331,7 +328,7 @@ fun RoomScreen(
                     // ilovaning o'zini fonga olishi "ilova yopilib ketdi" deb
                     // tushunilardi va u darhol qaytib kelib, o'quvchilarga
                     // yana Jonly interfeysini ko'rsatardi.
-                    if (autoBackground) {
+                    if (state.autoBackgroundOnShare) {
                         Spacer(Modifier.height(12.dp))
                         Text(
                             "Ulashish boshlangach Jonly o'zi fonga o'tadi — siz darhol " +
@@ -350,7 +347,7 @@ fun RoomScreen(
             },
             confirmButton = {
                 TextButton(onClick = {
-                    if (tipMuted) uiPrefs.screenShareTipEnabled = false
+                    if (tipMuted) vm.muteShareTip()
                     shareTipOpen = false
                     val mgr = ctx.getSystemService(Context.MEDIA_PROJECTION_SERVICE)
                         as MediaProjectionManager
@@ -428,7 +425,7 @@ fun RoomScreen(
                 micOn = state.micOn,
                 camOn = state.camOn,
                 screenOn = state.screenOn,
-                enabled = state.connState == "connected",
+                enabled = state.connState == ConnState.CONNECTED,
                 onToggleMic = { vm.toggleMic() },
                 onToggleCam = { vm.toggleCam() },
                 onFlipCamera = { vm.flipCamera() },
@@ -562,7 +559,7 @@ fun RoomScreen(
 
             // ⭐ Asosiy sahna — o'quvchilar videosi yoki ulashish holati.
             RoomStage(
-                room = LessonSessionHolder.session?.room,
+                room = session?.room,
                 state = state,
                 modifier = Modifier.weight(1f),
             )
@@ -605,11 +602,8 @@ fun RoomScreen(
                 recording = state.isRecording,
                 canRecord = state.screenOn,
                 onToggleRecording = { vm.toggleRecording() },
-                autoBackground = autoBackground,
-                onAutoBackgroundChange = {
-                    autoBackground = it
-                    uiPrefs.autoBackgroundOnShare = it
-                },
+                autoBackground = state.autoBackgroundOnShare,
+                onAutoBackgroundChange = { vm.setAutoBackgroundOnShare(it) },
             )
         }
 
@@ -619,7 +613,7 @@ fun RoomScreen(
                 // Natijani o'qish room-token talab qiladi (JWT emas) — u
                 // faqat jonli sessiyada bo'ladi. Token yo'q bo'lsa panel
                 // baribir ochiladi: so'rovnoma yaratish JWT bilan ishlaydi.
-                roomToken = LessonSessionHolder.session?.roomToken?.token,
+                roomToken = session?.roomToken?.token,
                 revision = state.pollRevision,
                 onDismiss = { showPoll = false },
             )
@@ -652,7 +646,7 @@ private fun RoomTopBar(state: RoomUiState, onToggleRecording: () -> Unit, onLeav
                 Text(
                     when {
                         state.connecting -> "ulanmoqda…"
-                        state.connState == "connected" -> "${state.participantCount} ishtirokchi"
+                        state.connState == ConnState.CONNECTED -> "${state.participantCount} ishtirokchi"
                         else -> RoomStatus.connLabel(state.connState)
                     },
                     style = MaterialTheme.typography.labelSmall,
@@ -664,7 +658,7 @@ private fun RoomTopBar(state: RoomUiState, onToggleRecording: () -> Unit, onLeav
             // Yozuv indikatori — HAQIQIY holatdan (`isRecording`), sozlamadan emas.
             // Ustoz Record bilan yozuvni boshqaradi; indikator yolg'on gapirmasligi
             // shart (maxfiylik). Bosilsa — yozuvni to'xtatadi (tez kirish).
-            if (state.connState == "connected" && state.isRecording) {
+            if (state.connState == ConnState.CONNECTED && state.isRecording) {
                 Surface(
                     onClick = onToggleRecording,
                     color = MaterialTheme.colorScheme.error,

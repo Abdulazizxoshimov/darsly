@@ -2,7 +2,6 @@ package v1
 
 import (
 	"context"
-	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -20,14 +19,12 @@ import (
 func WSConnect(h *handlers.Handler) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userID := c.GetString(middleware.CtxUserID)
-		// Reconnect: ulanish ro'yxatga olingach kutayotgan so'rovlar snapshot'ini yetkazamiz
-		// (uzilish paytida yo'qolgan real-time push'larni qoplaydi). context.Background —
-		// WS upgrade (hijack) request kontekstini bekor qilishi mumkin.
-		go func() {
-			time.Sleep(300 * time.Millisecond)
+		// Reconnect: ulanish ro'yxatga olingach (onRegistered) kutayotgan so'rovlar
+		// snapshot'ini yetkazamiz. context.Background — WS upgrade (hijack) request
+		// kontekstini bekor qilishi mumkin.
+		h.Hub.ServeWS(c.Request.Context(), c.Writer, c.Request, userID, func() {
 			h.WaitingRoom.DeliverPendingSnapshot(context.Background(), userID)
-		}()
-		h.Hub.ServeWS(c.Request.Context(), c.Writer, c.Request, userID)
+		})
 	}
 }
 
@@ -50,14 +47,10 @@ func WSGuestWaitingRoom(h *handlers.Handler) gin.HandlerFunc {
 			return
 		}
 
-		// Ulanish ro'yxatga olingach, agar qaror allaqachon chiqqan bo'lsa darhol yetkazish (race).
-		// context.Background — WS upgrade (hijack) request kontekstini bekor qilishi mumkin.
-		go func() {
-			time.Sleep(300 * time.Millisecond)
-			h.WaitingRoom.DeliverCurrentStatus(context.Background(), requestID)
-		}()
-
 		// Guestning WS identifikatori = requestID (unguessable UUID — bearer capability).
-		h.Hub.ServeWS(c.Request.Context(), c.Writer, c.Request, requestID)
+		// Ulanish ro'yxatga olingach, agar qaror allaqachon chiqqan bo'lsa darhol yetkazish (race).
+		h.Hub.ServeWS(c.Request.Context(), c.Writer, c.Request, requestID, func() {
+			h.WaitingRoom.DeliverCurrentStatus(context.Background(), requestID)
+		})
 	}
 }

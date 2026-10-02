@@ -95,9 +95,18 @@ func LiveKitWebhook(h *handlers.Handler) gin.HandlerFunc {
 			switch ei.Status {
 			case livekit.EgressStatus_EGRESS_COMPLETE:
 				herr = h.Recording.HandleEgress(c.Request.Context(), ei.EgressId, true, objectKey, durationSec, sizeBytes)
+			case livekit.EgressStatus_EGRESS_LIMIT_REACHED:
+				// LIMIT_REACHED = vaqt/hajm chegarasiga yetildi, LEKIN fayl YOZILDI
+				// (audit topilma #5). Yaroqli fayl bo'lsa uni `completed` deb qabul
+				// qilamiz — aks holda haqiqiy MP4 "failed" bo'lib MinIO'da yetim
+				// qolib ketardi (retention faqat `ready` yozuvni tozalaydi).
+				if sizeBytes > 0 && objectKey != "" {
+					herr = h.Recording.HandleEgress(c.Request.Context(), ei.EgressId, true, objectKey, durationSec, sizeBytes)
+				} else {
+					herr = h.Recording.HandleEgress(c.Request.Context(), ei.EgressId, false, "", 0, 0)
+				}
 			case livekit.EgressStatus_EGRESS_FAILED,
-				livekit.EgressStatus_EGRESS_ABORTED,
-				livekit.EgressStatus_EGRESS_LIMIT_REACHED:
+				livekit.EgressStatus_EGRESS_ABORTED:
 				herr = h.Recording.HandleEgress(c.Request.Context(), ei.EgressId, false, "", 0, 0)
 			default:
 				// ACTIVE / STARTING / ENDING — oraliq holatlar, e'tiborsiz.

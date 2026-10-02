@@ -6,9 +6,9 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.asRequestBody
 import uz.darsly.mentor.data.api.CompleteRecordingReq
 import uz.darsly.mentor.data.api.DarslyApi
+import uz.darsly.mentor.di.Upload
 import java.io.File
 import java.io.IOException
-import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 
 /**
@@ -17,17 +17,16 @@ import javax.inject.Inject
  * Telefon darsni O'ZI yozadi (`LocalRecorder`), bu repo esa faylni serverga
  * yetkazadi: `local-start` (yozuv qatori) → `upload-url` (presigned PUT) →
  * to'g'ridan MinIO'ga PUT → `complete` (server faylni tekshirib `ready` qiladi).
+ *
+ * [putClient] — auth-header'siz ALOHIDA klient (`@Upload`, `LessonModule`):
+ * presigned PUT MinIO imzosiga tayanadi, ilovaning `Authorization`
+ * interceptori imzoni buzmasligi kerak. Avval bu yerda to'rtinchi
+ * `OkHttpClient` yasalardi (M9) — endi Hilt beradi, havza umumiy.
  */
-class LocalRecordingRepository @Inject constructor(private val api: DarslyApi) {
-
-    // Auth-header'siz ALOHIDA client: presigned PUT MinIO imzosiga tayanadi,
-    // ilovaning Authorization interceptori imzoni buzmasligi kerak.
-    private val putClient by lazy {
-        OkHttpClient.Builder()
-            .connectTimeout(30, TimeUnit.SECONDS)
-            .writeTimeout(60, TimeUnit.MINUTES) // katta fayl (~1 GB) sekin tarmoqda
-            .build()
-    }
+class LocalRecordingRepository @Inject constructor(
+    private val api: DarslyApi,
+    @Upload private val putClient: OkHttpClient,
+) {
 
     /** Yozuv qatorini yaratadi, `recording_id` qaytaradi. */
     suspend fun localStart(lessonId: String): Result<String> = runCatching {

@@ -1,0 +1,10 @@
+# Darsly QA — Python test resurslari (arzon, yengil).
+# Bu fayl TEST yozish uchun kerakli asboblar; testlarning o'zi keyin yoziladi.
+pytest>=8,<9
+httpx>=0.27,<0.29
+websockets>=12,<14
+python-dotenv>=1,<2
+jsonschema>=4,<5          # lib/schemas.py — javob shakli (kontrakt) validatsiyasi
+pytest-html>=4,<5         # HTML hisobot (CI artefakt)
+pytest-xdist>=3,<4        # parallel ishga tushirish (-n auto)
+pytest-rerunfailures>=14  # flaky retry (synthetic monitoring uchun)

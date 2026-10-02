@@ -78,10 +78,10 @@ func NewRouter(h *handlers.Handler, tokenMaker token.Maker, enforcer *casbin.Enf
 
 	r.Use(
 		otelgin.Middleware("darsly-backend"), // OpenTelemetry span (OTEL endpoint bo'lmasa no-op)
+		middleware.RequestID(),               // Sentry'dan OLDIN: event'larda request_id tegi bo'lishi uchun
 		middleware.Sentry(),
-		middleware.RequestID(),
 		middleware.RequestHost(), // livekit "auto" client-URL uchun (usecase kontekstiga)
-		middleware.Logger(log), // har so'rovni strukturaviy (request_id bilan) yozadi
+		middleware.Logger(log),   // har so'rovni strukturaviy (request_id bilan) yozadi
 		middleware.Recover(log),
 		middleware.CORS(allowedOrigins...),
 		middleware.SecurityHeaders(),

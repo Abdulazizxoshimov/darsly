@@ -10,6 +10,14 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 
 /**
+ * Transport oqimining manbai — `ReconnectController` uchun almashtiriladigan nuqta.
+ * Amalda [NetworkMonitor.transports], testda qo'lda boshqariladigan oqim.
+ */
+fun interface TransportSource {
+    fun transports(): Flow<Transport>
+}
+
+/**
  * Qurilmaning joriy transportini (Wi-Fi / uyali) kuzatadi.
  *
  * Faqat "qaysi turdagi tarmoq" savoliga javob beradi — qaror

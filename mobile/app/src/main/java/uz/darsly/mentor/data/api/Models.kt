@@ -70,10 +70,17 @@ data class RefreshReq(
     @Json(name = "refresh_token") val refreshToken: String,
 )
 
-/** `POST /auth/logout` so'rovi (M3) — sessiyani serverda ham yopadi. */
+/**
+ * `POST /auth/logout` so'rovi (M3) — sessiyani serverda ham yopadi.
+ *
+ * [refreshToken] IXTIYORIY (backend 2026-09-30 kontrakti): server joriy
+ * sessiyani `Authorization` header'idagi access token bo'yicha HAR DOIM bekor
+ * qiladi; refresh berilsa uning JTI'si ham o'chadi. `null` — Moshi maydonni
+ * yozmaydi, tana `{}` ketadi (server `omitempty`).
+ */
 @JsonClass(generateAdapter = true)
 data class LogoutReq(
-    @Json(name = "refresh_token") val refreshToken: String,
+    @Json(name = "refresh_token") val refreshToken: String? = null,
 )
 
 /**

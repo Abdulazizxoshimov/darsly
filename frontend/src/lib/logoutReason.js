@@ -9,7 +9,7 @@
 // mahsulot qoidasi). Foydalanuvchiga «sessiya tugadi» deyish ADASHTIRADI —
 // u parolni yoki internetni ayblab, akkaunti ulashilganini bilmay qoladi.
 
-const KEY = 'darsly.logout_reason'
+const KEY = 'jonly.logout_reason'
 
 const TEXT = {
   session_revoked:

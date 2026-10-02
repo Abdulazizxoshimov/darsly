@@ -39,4 +39,15 @@ class BackoffTest {
         // Manfiy kechikish cheksiz siklga olib kelardi (Long to'lib ketishi).
         (0..64).forEach { assertTrue("urinish=$it", Backoff.delayMs(it) > 0) }
     }
+
+    @Test
+    fun `jitter kechikishni faqat yuqoriga va chegarali suradi`() {
+        // M1: deploy'dan keyin barcha mentorlar bir vaqtda qaytib urmasin.
+        assertEquals(Backoff.delayMs(3), Backoff.jitteredMs(3, unit = 0.0))
+        assertEquals((Backoff.delayMs(3) * (1 + Backoff.JITTER)).toLong(), Backoff.jitteredMs(3, unit = 1.0))
+        assertTrue(Backoff.jitteredMs(3, 0.5) in Backoff.delayMs(3)..Backoff.jitteredMs(3, 1.0))
+        // Oraliqdan tashqari `unit` ham xavfsiz.
+        assertEquals(Backoff.delayMs(0), Backoff.jitteredMs(0, unit = -3.0))
+        assertEquals(Backoff.jitteredMs(40, 1.0), Backoff.jitteredMs(40, unit = 9.0))
+    }
 }

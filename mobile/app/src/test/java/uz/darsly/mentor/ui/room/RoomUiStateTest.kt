@@ -20,7 +20,7 @@ class RoomUiStateTest {
 
     @Test
     fun `ulangan darsda tasdiq soraladi`() {
-        assertTrue(RoomUiState(connState = "connected").lessonActive)
+        assertTrue(RoomUiState(connState = ConnState.CONNECTED).lessonActive)
     }
 
     @Test
@@ -32,14 +32,14 @@ class RoomUiStateTest {
     @Test
     fun `qayta ulanishda tasdiq soraladi`() {
         // Internet vaqtincha uzilgan — dars TUGAMAGAN.
-        assertTrue(RoomUiState(connState = "reconnecting").lessonActive)
+        assertTrue(RoomUiState(connState = ConnState.RECONNECTING).lessonActive)
     }
 
     @Test
     fun `ekran ulashilayotgan bolsa albatta tasdiq soraladi`() {
         // Eng qimmat holat: ekran yozilyapti (maxfiylik) — hatto holat matni
         // kutilmagan qiymatda bo'lsa ham so'raymiz.
-        assertTrue(RoomUiState(connState = "disconnected", screenOn = true).lessonActive)
+        assertTrue(RoomUiState(connState = ConnState.DISCONNECTED, screenOn = true).lessonActive)
     }
 
     // ── B-4: "Ekran audiosi" qatori rost gapirishi ────────────────────────────
@@ -49,7 +49,7 @@ class RoomUiStateTest {
         // Mustaqil trek: ustoz mute bosdi, video ovozi esa o'tishda davom etadi —
         // UI "mikrofon o'chirilgan" deb YOLG'ON to'siq ko'rsatmasligi kerak.
         val state = RoomUiState(
-            connState = "connected",
+            connState = ConnState.CONNECTED,
             screenOn = true,
             micOn = false,
             screenAudioOn = true,
@@ -61,7 +61,7 @@ class RoomUiStateTest {
     @Test
     fun `mikrofon va ulashish yoniq bolganda yoniq deb korsatiladi`() {
         val state = RoomUiState(
-            connState = "connected",
+            connState = ConnState.CONNECTED,
             screenOn = true,
             micOn = true,
             screenAudioOn = true,
@@ -71,16 +71,16 @@ class RoomUiStateTest {
 
     @Test
     fun `ulashish boshlanmaganda qoshimcha sabab yozilmaydi`() {
-        val state = RoomUiState(connState = "connected", micOn = true).withAudioReason(sdkInt = API_35)
+        val state = RoomUiState(connState = ConnState.CONNECTED, micOn = true).withAudioReason(sdkInt = API_35)
         assertEquals("o'chiq", state.screenAudioLabel)
     }
 
     @Test
     fun `xonaga ulanmagan holda tasdiq soralmaydi`() {
         assertFalse(RoomUiState().lessonActive)
-        assertFalse(RoomUiState(connState = "disconnected").lessonActive)
+        assertFalse(RoomUiState(connState = ConnState.DISCONNECTED).lessonActive)
         // Ulanish xatosidan keyin ham: ustoz shunchaki orqaga qaytadi.
-        assertFalse(RoomUiState(connState = "disconnected", error = "Ulanmadi").lessonActive)
+        assertFalse(RoomUiState(connState = ConnState.DISCONNECTED, error = "Ulanmadi").lessonActive)
         assertFalse(RoomUiState(micDenied = true).lessonActive)
     }
 }

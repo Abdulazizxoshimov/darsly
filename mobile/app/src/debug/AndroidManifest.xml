@@ -1,9 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  DEBUG-ONLY manifest qatlami. Lokal backend (http://localhost:8087, `adb reverse`
-  orqali) bilan sinash uchun cleartext HTTP ruxsati. Reliz varianti bu faylni
-  KO'RMAYDI — u yerda faqat https ishlaydi.
+  DEBUG-ONLY manifest qatlami. Cleartext HTTP ruxsati endi
+  `res/xml/network_security_config.xml` (debug source set) da — manifest'dagi
+  `usesCleartextTraffic` NSC mavjud bo'lganda e'tiborsiz qoladi (S5).
 -->
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <application android:usesCleartextTraffic="true" />
-</manifest>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" />

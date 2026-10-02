@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	apperr "github.com/zoom/darsly/internal/pkg/errors"
 )
@@ -109,7 +110,9 @@ func validateFile(name string, size int64, r io.Reader) (*validatedFile, error) 
 		return nil, apperr.BadRequest("file name is required")
 	}
 	if len(name) > 200 {
-		name = name[len(name)-200:]
+		// Rune chegarasida kesamiz: bayt bo'yicha kesish ko'p-baytli belgini bo'lib,
+		// yaroqsiz UTF-8 hosil qilardi (Postgres TEXT yozuvi 500 berardi).
+		name = tailValidUTF8(name, 200)
 	}
 
 	if size <= 0 {
@@ -160,4 +163,17 @@ func sniffMatches(detected string, want []string) bool {
 		}
 	}
 	return false
+}
+
+// tailValidUTF8 — s'ning oxirgi <=max baytini qaytaradi, rune chegarasidan boshlab
+// (boshidagi to'liq bo'lmagan davomiy baytlar tashlanadi). Kengaytma saqlanadi.
+func tailValidUTF8(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	t := s[len(s)-max:]
+	for len(t) > 0 && !utf8.RuneStart(t[0]) {
+		t = t[1:]
+	}
+	return strings.ToValidUTF8(t, "")
 }

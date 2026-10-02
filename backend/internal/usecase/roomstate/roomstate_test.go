@@ -47,7 +47,7 @@ func TestSetHand_SaqlaydiVaTarqatadi(t *testing.T) {
 
 	require.NoError(t, uc.SetHand(ctx, lessonID, "u1", "Ali", true))
 
-	st, err := uc.State(ctx, lessonID)
+	st, err := uc.State(ctx, lessonID, "viewer")
 	require.NoError(t, err)
 	require.Len(t, st.Hands, 1)
 	require.Equal(t, "u1", st.Hands[0].Identity)
@@ -66,7 +66,7 @@ func TestSetHand_TushirishOchiradi(t *testing.T) {
 	require.NoError(t, uc.SetHand(ctx, lessonID, "u1", "Ali", true))
 	require.NoError(t, uc.SetHand(ctx, lessonID, "u1", "Ali", false))
 
-	st, err := uc.State(ctx, lessonID)
+	st, err := uc.State(ctx, lessonID, "viewer")
 	require.NoError(t, err)
 	require.Empty(t, st.Hands)
 }
@@ -80,7 +80,7 @@ func TestState_NavbatTartibiKotarilganVaqtBoyicha(t *testing.T) {
 	require.NoError(t, uc.SetHand(ctx, lessonID, "u2", "Vali", true))
 	require.NoError(t, uc.SetHand(ctx, lessonID, "u3", "Guli", true))
 
-	st, err := uc.State(ctx, lessonID)
+	st, err := uc.State(ctx, lessonID, "viewer")
 	require.NoError(t, err)
 	require.Len(t, st.Hands, 3)
 	require.Equal(t, []string{"u1", "u2", "u3"},
@@ -93,14 +93,14 @@ func TestSetHand_TakroriyKotarishOrinniBuzmaydi(t *testing.T) {
 	uc, _, _ := setup(t)
 	ctx := context.Background()
 	require.NoError(t, uc.SetHand(ctx, lessonID, "u1", "Ali", true))
-	first, err := uc.State(ctx, lessonID)
+	first, err := uc.State(ctx, lessonID, "viewer")
 	require.NoError(t, err)
 	firstAt := first.Hands[0].RaisedAt
 
 	require.NoError(t, uc.SetHand(ctx, lessonID, "u2", "Vali", true))
 	require.NoError(t, uc.SetHand(ctx, lessonID, "u1", "Ali", true)) // takroriy
 
-	st, err := uc.State(ctx, lessonID)
+	st, err := uc.State(ctx, lessonID, "viewer")
 	require.NoError(t, err)
 	require.Equal(t, []string{"u1", "u2"}, []string{st.Hands[0].Identity, st.Hands[1].Identity})
 	require.True(t, st.Hands[0].RaisedAt.Equal(firstAt), "ko'tarilgan vaqt saqlanishi kerak")
@@ -109,7 +109,7 @@ func TestSetHand_TakroriyKotarishOrinniBuzmaydi(t *testing.T) {
 func TestState_BoshXonaXatoEmas(t *testing.T) {
 	uc, _, _ := setup(t)
 	// Hech kim qo'l ko'tarmagan — bu XATO emas, bo'sh ro'yxat.
-	st, err := uc.State(context.Background(), lessonID)
+	st, err := uc.State(context.Background(), lessonID, "viewer")
 	require.NoError(t, err)
 	require.NotNil(t, st.Hands)
 	require.Empty(t, st.Hands)
@@ -118,7 +118,7 @@ func TestState_BoshXonaXatoEmas(t *testing.T) {
 func TestState_YaroqsizIDValidatsiyadanOtmaydi(t *testing.T) {
 	uc, _, _ := setup(t)
 	// UUID bo'lmagan ID Postgres/Redis'ga yetmasligi kerak (500 generatori bo'lmasin).
-	_, err := uc.State(context.Background(), "abc")
+	_, err := uc.State(context.Background(), "abc", "viewer")
 	require.Error(t, err)
 }
 
@@ -129,12 +129,12 @@ func TestLowerHand_FaqatEga(t *testing.T) {
 
 	require.Error(t, uc.LowerHand(ctx, "boshqa-mentor", lessonID, "u1"), "begona mentor tushira olmasligi kerak")
 
-	st, err := uc.State(ctx, lessonID)
+	st, err := uc.State(ctx, lessonID, "viewer")
 	require.NoError(t, err)
 	require.Len(t, st.Hands, 1, "begona urinish holatni o'zgartirmasligi kerak")
 
 	require.NoError(t, uc.LowerHand(ctx, mentorID, lessonID, "u1"))
-	st, err = uc.State(ctx, lessonID)
+	st, err = uc.State(ctx, lessonID, "viewer")
 	require.NoError(t, err)
 	require.Empty(t, st.Hands)
 }
@@ -148,7 +148,7 @@ func TestLowerAll_HammasiniTozalaydi(t *testing.T) {
 	require.Error(t, uc.LowerAll(ctx, "boshqa-mentor", lessonID))
 	require.NoError(t, uc.LowerAll(ctx, mentorID, lessonID))
 
-	st, err := uc.State(ctx, lessonID)
+	st, err := uc.State(ctx, lessonID, "viewer")
 	require.NoError(t, err)
 	require.Empty(t, st.Hands)
 
@@ -218,7 +218,7 @@ func TestClear_HolatniOchiradi(t *testing.T) {
 	require.NoError(t, uc.SetHand(ctx, lessonID, "u1", "Ali", true))
 	require.NoError(t, uc.Clear(ctx, lessonID))
 
-	st, err := uc.State(ctx, lessonID)
+	st, err := uc.State(ctx, lessonID, "viewer")
 	require.NoError(t, err)
 	require.Empty(t, st.Hands)
 }
@@ -231,7 +231,7 @@ func TestSetHand_LiveKitOchiqBolsaHamSaqlanadi(t *testing.T) {
 	ctx := context.Background()
 
 	require.NoError(t, uc.SetHand(ctx, lessonID, "u1", "Ali", true))
-	st, err := uc.State(ctx, lessonID)
+	st, err := uc.State(ctx, lessonID, "viewer")
 	require.NoError(t, err)
 	require.Len(t, st.Hands, 1)
 	require.Empty(t, lk.Sent)
@@ -252,7 +252,7 @@ func TestState_ReturnsAudioPolicy(t *testing.T) {
 	}))
 	uc := roomstate.New(lrepo, testutil.NewFakeLiveKit(), testutil.NewFakeCache(), nil, testutil.NewLogger())
 
-	st, err := uc.State(ctx, lessonID)
+	st, err := uc.State(ctx, lessonID, "viewer")
 	require.NoError(t, err)
 	require.True(t, st.MuteOnEntry)
 	require.False(t, st.AllowSelfUnmute, "unmute taqiqi holatda ko'rinishi kerak")
@@ -264,7 +264,7 @@ func TestState_ReturnsAudioPolicy(t *testing.T) {
 	l.AllowSelfUnmute = true
 	require.NoError(t, lrepo.Update(ctx, l))
 
-	st, err = uc.State(ctx, lessonID)
+	st, err = uc.State(ctx, lessonID, "viewer")
 	require.NoError(t, err)
 	require.True(t, st.AllowSelfUnmute, "o'zgargan siyosat holatda aks etishi kerak")
 }
@@ -274,8 +274,21 @@ func TestState_ReturnsAudioPolicy(t *testing.T) {
 // — bu real cheklovsiz real zarar.
 func TestState_UnknownLesson_PermissivePolicy(t *testing.T) {
 	uc, _, _ := setup(t)
-	st, err := uc.State(context.Background(), "22222222-2222-2222-2222-222222222222")
+	st, err := uc.State(context.Background(), "22222222-2222-2222-2222-222222222222", "viewer")
 	require.NoError(t, err)
 	require.True(t, st.AllowSelfUnmute, "dars topilmasa mikrofon tugmasi o'chib qolmasin")
 	require.False(t, st.MuteOnEntry)
+}
+
+// Chiqarilgan (ban) ishtirokchi holatni (qo'llar/yozuv) o'qiy olmaydi; boshqasi oladi.
+func TestState_BannedIdentity_Forbidden(t *testing.T) {
+	uc, _, cache := setup(t)
+	ctx := context.Background()
+	require.NoError(t, shared.Ban(ctx, cache, lessonID, "kicked"))
+
+	_, err := uc.State(ctx, lessonID, "kicked")
+	require.True(t, apperr.IsForbidden(err), "banlangan State o'qiy olmasligi kerak: %v", err)
+
+	_, err = uc.State(ctx, lessonID, "other")
+	require.NoError(t, err)
 }

@@ -104,11 +104,11 @@ class RoomStatusTest {
     fun `holat yozuvi hech qachon SDK nomini oqizmaydi`() {
         // Qurilmada sarlavha ostida inglizcha "disconnected" ko'rindi — SDK enum nomi
         // to'g'ridan-to'g'ri chiqarilgani uchun. Har qanday qiymat o'zbekcha bo'lsin.
-        assertEquals("ulanmagan", RoomStatus.connLabel("disconnected"))
-        assertEquals("qayta ulanmoqda…", RoomStatus.connLabel("reconnecting"))
-        assertEquals("ulanmoqda…", RoomStatus.connLabel("connecting"))
-        listOf("disconnected", "reconnecting", "connecting", "connected", "", "kicked").forEach {
-            assertTrue("'$it' uchun yozuv lotincha SDK nomi", RoomStatus.connLabel(it) != it)
+        assertEquals("ulanmagan", RoomStatus.connLabel(ConnState.DISCONNECTED))
+        assertEquals("qayta ulanmoqda…", RoomStatus.connLabel(ConnState.RECONNECTING))
+        assertEquals("ulanmoqda…", RoomStatus.connLabel(ConnState.CONNECTING))
+        ConnState.entries.forEach {
+            assertTrue("'$it' uchun yozuv lotincha SDK nomi", !RoomStatus.connLabel(it).equals(it.name, ignoreCase = true))
         }
     }
 

@@ -1,6 +1,8 @@
 package v1
 
 import (
+	"net/http"
+
 	"github.com/gin-gonic/gin"
 
 	"github.com/zoom/darsly/api/handlers"
@@ -109,9 +111,14 @@ func VotePoll(h *handlers.Handler) gin.HandlerFunc {
 			hs.BadRequest(c, err.Error())
 			return
 		}
+		// Token yo'q → 401 (Hand/Reaction bilan izchil; `required` tegi 400 berardi).
+		if req.Token == "" {
+			hs.Unauthorized(c, "room token is required")
+			return
+		}
 		// Guest'ni LiveKit room-token orqali autentifikatsiya qilamiz.
 		if h.LiveKit == nil || !h.LiveKit.Enabled() {
-			hs.Error(c, nil)
+			hs.AbortError(c, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "video service is not available")
 			return
 		}
 		identity, _, room, err := h.LiveKit.VerifyToken(req.Token)
@@ -146,7 +153,7 @@ func PollResults(h *handlers.Handler) gin.HandlerFunc {
 			return
 		}
 		if h.LiveKit == nil || !h.LiveKit.Enabled() {
-			hs.Error(c, nil)
+			hs.AbortError(c, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE", "video service is not available")
 			return
 		}
 		identity, _, room, err := h.LiveKit.VerifyToken(token)

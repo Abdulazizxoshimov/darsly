@@ -51,6 +51,17 @@ type TranscodeConfig struct {
 	TrimLead bool
 	// TempDir — vaqtinchalik fayllar. Bo'sh bo'lsa OS temp'i.
 	TempDir string
+	// Threads — ffmpeg necha yadro ishlatsin (0 = cheksiz, hammasini oladi).
+	//
+	// 4-yadroli VPS'da 2 → jonli LiveKit SFU va API uchun kamida 2 yadro DOIM
+	// bo'sh qoladi. Shu bilan 100+ ishtirokchili dars transkod ketayotganda ham
+	// sekinlashmaydi (transkod jonli sig'imni tushirmaydi — foydalanuvchi talabi).
+	Threads int
+	// NiceLevel — ffmpeg jarayoni ustuvorligi (0..19). 19 = eng past: Linux
+	// rejalashtiruvchisi jonli trafikka (LiveKit/API) ustunlik beradi, ffmpeg
+	// faqat BO'SH CPU'ni oladi. Server band bo'lsa transkod sekinlashadi, lekin
+	// darsni sekinlashtirmaydi. `nice`/`ionice` bo'lmasa e'tiborsiz qolinadi.
+	NiceLevel int
 	// Interval — navbatni tekshirish davri.
 	Interval time.Duration
 	// StaleAfter — `running` da qotib qolgan ish shu muddatdan keyin navbatga qaytadi.
@@ -77,8 +88,12 @@ func DefaultTranscodeConfig() TranscodeConfig {
 		AudioChannels: 2,
 		CropBars:      true,
 		TrimLead:      true,
-		Interval:      30 * time.Second,
-		StaleAfter:    3 * time.Hour,
+		// Jonli sig'imni himoya qilish: transkod eng ko'pi 2 yadro + eng past
+		// ustuvorlik — 100+ ishtirokchi transkod paytida ham sekinlashmaydi.
+		Threads:    2,
+		NiceLevel:  19,
+		Interval:   30 * time.Second,
+		StaleAfter: 3 * time.Hour,
 	}
 }
 
@@ -318,6 +333,10 @@ func (w *TranscodeWorker) runFFmpeg(ctx context.Context, src, dst string, plan e
 	}
 	vf += fmt.Sprintf("fps=%d", plan.outFPS(w.cfg.FPS))
 
+	if w.cfg.Threads > 0 {
+		// Yadro chegarasi: jonli LiveKit/API uchun yadro doim bo'sh qolsin.
+		args = append(args, "-threads", strconv.Itoa(w.cfg.Threads))
+	}
 	args = append(args,
 		"-c:v", "libx264",
 		"-crf", fmt.Sprint(w.cfg.CRF),
@@ -331,12 +350,33 @@ func (w *TranscodeWorker) runFFmpeg(ctx context.Context, src, dst string, plan e
 		"-movflags", "+faststart", // brauzerda darhol o'ynasin (moov boshda)
 		dst,
 	)
-	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
+	cmd := w.lowPriorityFFmpeg(ctx, args)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("ffmpeg: %w: %s", err, tail(string(out), 500))
 	}
 	return nil
+}
+
+// lowPriorityFFmpeg ffmpeg'ni PAST ustuvorlikda ishga tushiradi: `nice` (CPU) +
+// `ionice -c 3` (disk I/O idle). Shunda jonli dars trafigi (LiveKit SFU, API)
+// har doim ustun bo'ladi va transkod faqat bo'sh resursni oladi — 100+ jonli
+// ishtirokchi transkod paytida ham sekinlashmaydi.
+//
+// `nice`/`ionice` bo'lmasa (masalan lokal dev/macOS) e'tiborsiz — oddiy ffmpeg.
+// Har biri o'zini keyingi buyruq bilan almashtiradi (exec), ya'ni PID bir xil
+// qoladi va `CommandContext` bekor qilinsa ffmpeg ham to'xtaydi.
+func (w *TranscodeWorker) lowPriorityFFmpeg(ctx context.Context, ffArgs []string) *exec.Cmd {
+	full := append([]string{"ffmpeg"}, ffArgs...)
+	if w.cfg.NiceLevel > 0 {
+		if _, err := exec.LookPath("ionice"); err == nil {
+			full = append([]string{"ionice", "-c", "3"}, full...)
+		}
+		if _, err := exec.LookPath("nice"); err == nil {
+			full = append([]string{"nice", "-n", strconv.Itoa(w.cfg.NiceLevel)}, full...)
+		}
+	}
+	return exec.CommandContext(ctx, full[0], full[1:]...)
 }
 
 // audioRate / audioChannels — nolinchi konfiguratsiyada ham yaroqli qiymat

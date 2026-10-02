@@ -3,10 +3,13 @@ package email
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"html/template"
+	"net"
 	"net/smtp"
 	"strings"
+	"time"
 
 	"github.com/zoom/darsly/internal/pkg/config"
 	"github.com/zoom/darsly/internal/pkg/logger"
@@ -36,7 +39,6 @@ type emailSender struct {
 	cfg config.EmailConfig
 	log logger.Logger
 }
-
 
 type nopSender struct{}
 
@@ -89,7 +91,7 @@ func (s *emailSender) SendRaw(ctx context.Context, to []string, subject, body st
 			body,
 	)
 
-	if err := smtp.SendMail(addr, auth, s.cfg.From, to, msg); err != nil {
+	if err := sendMailTimeout(ctx, addr, s.cfg.Host, auth, s.cfg.From, to, msg); err != nil {
 		s.log.Error(ctx, "email send failed",
 			logger.String("to", strings.Join(to, ",")),
 			logger.Error(err),
@@ -135,4 +137,65 @@ func loadTemplates() (*template.Template, error) {
 		}
 	}
 	return tmpl, nil
+}
+
+// SMTP vaqt chegaralari (var — testda qisqartiriladi).
+var (
+	smtpDialTimeout = 10 * time.Second // TCP ulanish
+	smtpTotalBudget = 30 * time.Second // butun sessiya (handshake + DATA)
+)
+
+// sendMailTimeout — smtp.SendMail bilan bir xil oqim (STARTTLS, AUTH, MAIL/RCPT/DATA),
+// lekin ulanish va butun sessiya vaqt bilan chegaralangan. smtp.SendMail timeout'siz:
+// javob bermayotgan SMTP server email worker'ini abadiy osib qo'yardi.
+func sendMailTimeout(ctx context.Context, addr, host string, auth smtp.Auth, from string, to []string, msg []byte) error {
+	d := net.Dialer{Timeout: smtpDialTimeout}
+	conn, err := d.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return err
+	}
+	deadline := time.Now().Add(smtpTotalBudget)
+	if dl, ok := ctx.Deadline(); ok && dl.Before(deadline) {
+		deadline = dl
+	}
+	_ = conn.SetDeadline(deadline)
+
+	c, err := smtp.NewClient(conn, host)
+	if err != nil {
+		conn.Close()
+		return err
+	}
+	defer c.Close()
+
+	if ok, _ := c.Extension("STARTTLS"); ok {
+		if err := c.StartTLS(&tls.Config{ServerName: host}); err != nil {
+			return err
+		}
+	}
+	if auth != nil {
+		if ok, _ := c.Extension("AUTH"); ok {
+			if err := c.Auth(auth); err != nil {
+				return err
+			}
+		}
+	}
+	if err := c.Mail(from); err != nil {
+		return err
+	}
+	for _, rcpt := range to {
+		if err := c.Rcpt(rcpt); err != nil {
+			return err
+		}
+	}
+	w, err := c.Data()
+	if err != nil {
+		return err
+	}
+	if _, err := w.Write(msg); err != nil {
+		return err
+	}
+	if err := w.Close(); err != nil {
+		return err
+	}
+	return c.Quit()
 }

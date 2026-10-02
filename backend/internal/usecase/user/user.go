@@ -19,11 +19,32 @@ type useCase struct {
 	repo   repository.UserRepository
 	hasher hasher.Hasher
 	tokens token.Maker
-	log    logger.Logger
+	// lessons — user o'chirilganda mentorning darslarini bekor qilish uchun (nil bo'lsa o'tkazib yuboriladi).
+	lessons repository.LessonRepository
+	log     logger.Logger
 }
 
-func New(repo repository.UserRepository, h hasher.Hasher, tokens token.Maker, log logger.Logger) UseCase {
-	return &useCase{repo: repo, hasher: h, tokens: tokens, log: log}
+func New(repo repository.UserRepository, h hasher.Hasher, tokens token.Maker, lessons repository.LessonRepository, log logger.Logger) UseCase {
+	return &useCase{repo: repo, hasher: h, tokens: tokens, lessons: lessons, log: log}
+}
+
+// errLastAdmin — oxirgi faol adminni o'chirish/deaktiv/rolini o'zgartirish taqiqlanadi
+// (aks holda user-management butunlay qulflanib qoladi).
+func errLastAdmin() error { return apperr.BadRequest("cannot remove the last active admin") }
+
+// guardLastAdmin — target faol admin bo'lsa va u oxirgisi bo'lsa xato qaytaradi.
+func (uc *useCase) guardLastAdmin(ctx context.Context, target *entity.User) error {
+	if target.Role != "admin" || !target.IsActive {
+		return nil
+	}
+	n, err := uc.repo.CountActiveAdmins(ctx)
+	if err != nil {
+		return err
+	}
+	if n <= 1 {
+		return errLastAdmin()
+	}
+	return nil
 }
 
 // allowedRoles — ruxsat etilgan rollar allow-list'i. Noto'g'ri rol casbin policy'da
@@ -125,6 +146,12 @@ func (uc *useCase) Update(ctx context.Context, id string, req *entity.UpdateUser
 			return nil, apperr.BadRequest("invalid role")
 		}
 		roleChanged = u.Role != *req.Role
+		// admin → boshqa rol: oxirgi faol admin bo'lsa taqiqlanadi.
+		if roleChanged && u.Role == "admin" {
+			if err := uc.guardLastAdmin(ctx, u); err != nil {
+				return nil, err
+			}
+		}
 		u.Role = *req.Role
 	}
 	if err := uc.repo.Update(ctx, u); err != nil {
@@ -248,6 +275,9 @@ func (uc *useCase) Deactivate(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
+	if err := uc.guardLastAdmin(ctx, u); err != nil {
+		return err
+	}
 	u.IsActive = false
 	if err := uc.repo.Update(ctx, u); err != nil {
 		uc.log.Error(ctx, "user.Deactivate: db error", logger.String("id", id), logger.SafeString("err", err.Error()))
@@ -292,9 +322,25 @@ func (uc *useCase) Delete(ctx context.Context, id string) error {
 	if err := shared.ValidateID(id, "user"); err != nil {
 		return err
 	}
+	target, err := uc.repo.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := uc.guardLastAdmin(ctx, target); err != nil {
+		return err
+	}
 	if err := uc.repo.SoftDelete(ctx, id); err != nil {
 		uc.log.Error(ctx, "user.Delete: db error", logger.String("id", id), logger.SafeString("err", err.Error()))
 		return err
+	}
+	// O'chirilgan mentorning darslari ham bekor qilinadi: aks holda uning
+	// join-linklari (preview/join) ishlayverardi. Best-effort — user allaqachon
+	// o'chirilgan, shuning uchun xato amalni bekor qilmaydi, faqat log.
+	if uc.lessons != nil {
+		if err := uc.lessons.CancelByMentor(ctx, id); err != nil {
+			uc.log.Error(ctx, "user.Delete: mentor darslarini bekor qilib bo'lmadi",
+				logger.String("id", id), logger.SafeString("err", err.Error()))
+		}
 	}
 	// O'chirilgan foydalanuvchining tokeni ishlashda davom etmasin: `ValidateAccess`
 	// faqat Redis sessiyasini tekshiradi, DB'dagi `deleted_at` ni emas. Bu

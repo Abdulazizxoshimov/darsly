@@ -39,11 +39,15 @@ class AuthRepository @Inject constructor(
      * Server xato bersa yoki internet bo'lmasa ham foydalanuvchi chiqishi kerak:
      * aks holda "Chiqish" tugmasi ishlamaydigan tugmaga aylanadi. Serverdagi
      * sessiya baribir refresh TTL bilan o'ladi.
+     *
+     * So'rov ACCESS token bor ekan HAR DOIM yuboriladi (refresh bo'lmasa ham):
+     * server sessiyani `Authorization` bo'yicha bekor qiladi (2026-09-30
+     * kontrakti). Avval refresh'siz so'rov umuman ketmas va sessiya serverda
+     * tirik qolardi.
      */
     suspend fun logout() {
-        val refresh = session.refreshToken
-        if (!refresh.isNullOrBlank()) {
-            runCatching { api.logout(LogoutReq(refresh)) }
+        if (!session.accessToken.isNullOrBlank()) {
+            runCatching { api.logout(LogoutReq(session.refreshToken?.takeIf { it.isNotBlank() })) }
                 .onFailure { LKLog.w(it) { "logout serverda bajarilmadi — lokal tozalanadi" } }
         }
         session.forceLogout()

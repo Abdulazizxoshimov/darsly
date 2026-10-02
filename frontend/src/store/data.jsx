@@ -12,10 +12,44 @@ import * as userApi from '../api/user'
 import * as appApi from '../api/app'
 import * as blocklistApi from '../api/blocklist'
 
+/* -------- Query kalitlari (yagona manba) --------
+ *
+ * Kalitlar satr ko'rinishida to'rt-besh faylga tarqalgan edi va bekor qilish
+ * (invalidate) shu sababli yarim ishlardi: xonada dars `live` bo'lganda yoki
+ * yozuv boshlanganda Dashboard/Jadval/Yozuvlar 30 soniyagacha eski holatni
+ * ko'rsatardi (`queryClient.staleTime`). Prefiks kalit (`qk.lessons`) butun
+ * oilani bekor qiladi, aniq kalit (`qk.lesson(id)`) — bittasini.
+ */
+export const qk = {
+  appConfig: ['app-config'],
+  lessons: ['lessons'],
+  lessonList: (params) => ['lessons', params || {}],
+  lesson: (id) => ['lesson', id],
+  joinPreview: (slug) => ['join-preview', slug],
+  waitingStatus: (requestId) => ['waiting-status', requestId],
+  waiting: ['waiting'],
+  waitingOf: (lessonId) => ['waiting', lessonId],
+  recordings: ['recordings'],
+  recordingsOf: (lessonId) => ['recordings', lessonId],
+  recording: (id) => ['recording', id],
+  lessonArchive: (id) => ['lesson-archive', id],
+  chatHistory: (lessonId) => ['chat-history', lessonId],
+  telegramStatus: ['telegram-status'],
+  notifications: ['notifications'],
+  notificationList: (unread) => ['notifications', unread],
+  unreadCount: ['unread-count'],
+  polls: ['polls'],
+  pollsOf: (lessonId) => ['polls', lessonId],
+  pollResults: (pollId) => ['poll-results', pollId],
+  blocklist: ['blocklist'],
+  users: ['users'],
+  userList: (params) => ['users', params || {}],
+}
+
 /* -------- App config (ochiq) -------- */
 export function useAppConfig() {
   return useQuery({
-    queryKey: ['app-config'],
+    queryKey: qk.appConfig,
     queryFn: appApi.getAppConfig,
     staleTime: 5 * 60_000,
     retry: 1,
@@ -25,39 +59,93 @@ export function useAppConfig() {
 /* -------- Lessons -------- */
 export function useLessons(params) {
   return useQuery({
-    queryKey: ['lessons', params || {}],
+    queryKey: qk.lessonList(params),
     queryFn: () => lessonsApi.listLessons(params),
   })
 }
 export function useLesson(id) {
-  return useQuery({ queryKey: ['lesson', id], queryFn: () => lessonsApi.getLesson(id), enabled: !!id })
+  return useQuery({ queryKey: qk.lesson(id), queryFn: () => lessonsApi.getLesson(id), enabled: !!id })
 }
 export function useCreateLesson() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: lessonsApi.createLesson,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['lessons'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.lessons }),
   })
 }
 export function useUpdateLesson() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ id, body }) => lessonsApi.updateLesson(id, body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['lessons'] }),
+    onSuccess: (_d, v) => {
+      qc.invalidateQueries({ queryKey: qk.lessons })
+      qc.invalidateQueries({ queryKey: qk.lesson(v.id) })
+    },
   })
 }
 export function useDeleteLesson() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: lessonsApi.deleteLesson,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['lessons'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.lessons }),
+  })
+}
+
+/* -------- Jonli xona (host) -------- */
+
+// Host tokeni darsni SERVERDA `live` ga o'tkazadi — ro'yxat va dars keshi
+// eskiradi. Bekor qilinmasa Dashboard ustoz xonadan qaytganda 30 soniyagacha
+// «Rejalashtirilgan» deb turardi.
+export function useOpenRoom() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: lessonsApi.getHostToken,
+    onSuccess: (_d, lessonId) => {
+      qc.invalidateQueries({ queryKey: qk.lessons })
+      qc.invalidateQueries({ queryKey: qk.lesson(lessonId) })
+    },
+  })
+}
+
+// Yakunlash: dars `ended`, yozuv to'xtaydi (yozuvlar ro'yxati va arxiv ham
+// o'zgaradi).
+export function useEndLesson() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: lessonsApi.endLesson,
+    onSuccess: (_d, lessonId) => {
+      qc.invalidateQueries({ queryKey: qk.lessons })
+      qc.invalidateQueries({ queryKey: qk.lesson(lessonId) })
+      qc.invalidateQueries({ queryKey: qk.recordings })
+      qc.invalidateQueries({ queryKey: qk.lessonArchive(lessonId) })
+    },
+  })
+}
+
+export function useStartRecording() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: recordingsApi.startRecording,
+    onSuccess: (_d, lessonId) => qc.invalidateQueries({ queryKey: qk.recordingsOf(lessonId) }),
+  })
+}
+
+// `lessonId` — bekor qilish uchun (endpoint yozuv ID'si bilan ishlaydi).
+export function useStopRecording() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ recordingId }) => recordingsApi.stopRecording(recordingId),
+    onSuccess: (_d, v) => {
+      qc.invalidateQueries({ queryKey: qk.recordingsOf(v.lessonId) })
+      qc.invalidateQueries({ queryKey: qk.recording(v.recordingId) })
+    },
   })
 }
 
 /* -------- Join / waiting -------- */
 export function useJoinPreview(slug, opts = {}) {
   return useQuery({
-    queryKey: ['join-preview', slug],
+    queryKey: qk.joinPreview(slug),
     queryFn: () => joinApi.previewJoinLink(slug),
     enabled: !!slug,
     retry: false,
@@ -66,17 +154,28 @@ export function useJoinPreview(slug, opts = {}) {
     refetchInterval: opts.refetchInterval,
   })
 }
+
+export const WAITING_POLL_MS = 2000
+// Endpoint IP bo'yicha 20 so'rov/s bilan cheklangan (`router.go`); bitta NAT
+// ortidagi katta sinf 2 soniyalik poll bilan unga yetib boradi. 429 da poll
+// SEKINLASHADI (to'xtamaydi — WS uzilgan bo'lsa admit'ni shu yerdan bilamiz).
+export function waitingPollInterval(query) {
+  return query.state.error?.status === 429 ? WAITING_POLL_MS * 3 : WAITING_POLL_MS
+}
 export function useWaitingStatus(requestId, enabled = true) {
   return useQuery({
-    queryKey: ['waiting-status', requestId],
+    queryKey: qk.waitingStatus(requestId),
     queryFn: () => waitingApi.getWaitingStatus(requestId),
     enabled: !!requestId && enabled,
-    refetchInterval: 2000,
+    refetchInterval: waitingPollInterval,
+    // 404 — so'rov haqiqatan yo'q (dars yakunlandi/bekor qilindi): qayta
+    // urinish ma'nosiz. Qolgan xatolar (429, tarmoq) intervalda o'zi qaytadi.
+    retry: (count, err) => err?.status !== 404 && count < 1,
   })
 }
 export function useWaiting(lessonId, enabled) {
   return useQuery({
-    queryKey: ['waiting', lessonId],
+    queryKey: qk.waitingOf(lessonId),
     queryFn: () => waitingApi.listWaiting(lessonId),
     enabled: !!lessonId && enabled,
     refetchInterval: 4000,
@@ -86,14 +185,14 @@ export function useAdmit() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: waitingApi.admitWaiting,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['waiting'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.waiting }),
   })
 }
 export function useReject() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: waitingApi.rejectWaiting,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['waiting'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.waiting }),
   })
 }
 // Butun navbatni bir so'rovda kiritish. Natija sonlari (`total/admitted/failed`)
@@ -102,14 +201,14 @@ export function useAdmitAll() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: waitingApi.admitAllWaiting,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['waiting'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.waiting }),
   })
 }
 
 /* -------- Recordings -------- */
 export function useRecordings(lessonId) {
   return useQuery({
-    queryKey: ['recordings', lessonId],
+    queryKey: qk.recordingsOf(lessonId),
     queryFn: () => recordingsApi.listRecordings(lessonId),
     enabled: !!lessonId,
   })
@@ -123,7 +222,7 @@ export function useRecordings(lessonId) {
 // buzuq havolani ko'rardi.
 export function useLessonArchive(lessonId) {
   return useQuery({
-    queryKey: ['lesson-archive', lessonId],
+    queryKey: qk.lessonArchive(lessonId),
     queryFn: () => archiveApi.getLessonArchive(lessonId),
     enabled: !!lessonId,
     staleTime: 60_000,
@@ -136,7 +235,7 @@ export function useLessonArchive(lessonId) {
 // `intervalMs` ni SERVER dikta qiladi (`poll_after_s`), klient o'zicha emas.
 export function useRecordingStatus(recordingId, { enabled = false, intervalMs = 5000 } = {}) {
   return useQuery({
-    queryKey: ['recording', recordingId],
+    queryKey: qk.recording(recordingId),
     queryFn: () => recordingsApi.getRecording(recordingId),
     enabled: !!recordingId && enabled,
     // Poll O'ZI TO'XTAYDI: yakuniy holatga (`ready`/`archived`/`failed`/…)
@@ -166,7 +265,7 @@ export function useRestoreRecording() {
     onSuccess: (res, recordingId) => {
       // Holatni DARHOL yangilaymiz — birinchi poll javobigacha tugma
       // «Tiklash» bo'lib turmasin (ikkinchi bosish yana so'rov yuborardi).
-      qc.setQueryData(['recording', recordingId], (old) => ({
+      qc.setQueryData(qk.recording(recordingId), (old) => ({
         ...(old || {}),
         id: recordingId,
         status: res.status,
@@ -179,7 +278,7 @@ export function useRestoreRecording() {
 
 export function useTelegramStatus({ refetchInterval } = {}) {
   return useQuery({
-    queryKey: ['telegram-status'],
+    queryKey: qk.telegramStatus,
     queryFn: telegramApi.getTelegramStatus,
     // Integratsiya o'chiq bo'lsa javob o'zgarmaydi — bekorga so'ramaymiz.
     staleTime: 60_000,
@@ -194,20 +293,20 @@ export function useTelegramUnlink() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: telegramApi.unlinkTelegram,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['telegram-status'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.telegramStatus }),
   })
 }
 
 /* -------- Notifications -------- */
 export function useNotifications(unread = false) {
   return useQuery({
-    queryKey: ['notifications', unread],
+    queryKey: qk.notificationList(unread),
     queryFn: () => notificationsApi.listNotifications(unread),
   })
 }
 export function useUnreadCount() {
   return useQuery({
-    queryKey: ['unread-count'],
+    queryKey: qk.unreadCount,
     queryFn: notificationsApi.unreadCount,
     refetchInterval: 30000,
   })
@@ -217,8 +316,8 @@ export function useMarkRead() {
   return useMutation({
     mutationFn: notificationsApi.markRead,
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['notifications'] })
-      qc.invalidateQueries({ queryKey: ['unread-count'] })
+      qc.invalidateQueries({ queryKey: qk.notifications })
+      qc.invalidateQueries({ queryKey: qk.unreadCount })
     },
   })
 }
@@ -227,19 +326,19 @@ export function useMarkAllRead() {
   return useMutation({
     mutationFn: notificationsApi.markAllRead,
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['notifications'] })
-      qc.invalidateQueries({ queryKey: ['unread-count'] })
+      qc.invalidateQueries({ queryKey: qk.notifications })
+      qc.invalidateQueries({ queryKey: qk.unreadCount })
     },
   })
 }
 
 /* -------- Polls (host) -------- */
 export function usePolls(lessonId) {
-  return useQuery({ queryKey: ['polls', lessonId], queryFn: () => pollsApi.listPolls(lessonId), enabled: !!lessonId })
+  return useQuery({ queryKey: qk.pollsOf(lessonId), queryFn: () => pollsApi.listPolls(lessonId), enabled: !!lessonId })
 }
 export function usePollResults(pollId, token, opts = {}) {
   return useQuery({
-    queryKey: ['poll-results', pollId],
+    queryKey: qk.pollResults(pollId),
     queryFn: () => pollsApi.pollResults(pollId, token),
     enabled: !!pollId && !!token && (opts.enabled ?? true),
     refetchInterval: opts.refetchInterval,
@@ -253,14 +352,14 @@ export function useCreatePoll() {
   return useMutation({
     mutationFn: ({ lessonId, question, options, resultsVisibility }) =>
       pollsApi.createPoll(lessonId, question, options, resultsVisibility),
-    onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: ['polls', v.lessonId] }),
+    onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: qk.pollsOf(v.lessonId) }),
   })
 }
 export function useClosePoll() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: pollsApi.closePoll,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['polls'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.polls }),
   })
 }
 // Natijani e'lon qilish — poll ro'yxati (`results_published_at`) VA natija
@@ -270,8 +369,8 @@ export function usePublishPoll() {
   return useMutation({
     mutationFn: ({ lessonId, pollId }) => pollsApi.publishPoll(lessonId, pollId),
     onSuccess: (res, v) => {
-      qc.invalidateQueries({ queryKey: ['polls', v.lessonId] })
-      if (res) qc.setQueryData(['poll-results', v.pollId], res)
+      qc.invalidateQueries({ queryKey: qk.pollsOf(v.lessonId) })
+      if (res) qc.setQueryData(qk.pollResults(v.pollId), res)
     },
   })
 }
@@ -284,14 +383,14 @@ export function useDeleteChatMessage() {
   return useMutation({
     mutationFn: ({ lessonId, messageId }) => chatApi.deleteChatMessage(lessonId, messageId),
     onSuccess: (_d, v) => {
-      qc.setQueryData(['chat-history', v.lessonId], (old) =>
+      qc.setQueryData(qk.chatHistory(v.lessonId), (old) =>
         Array.isArray(old) ? old.filter((m) => m.id !== v.messageId) : old,
       )
       // Arxiv sahifasi ham SHU xabarni ko'rsatadi. Kesh yangilanmasa
       // o'chirilgan xabar arxivda qolib ketardi (moderatsiya yarim ish
       // bo'lardi) — va qayta yuklash 1 soatlik havolalarni bekorga qayta
       // imzolashga majbur qilardi.
-      qc.setQueryData(['lesson-archive', v.lessonId], (old) =>
+      qc.setQueryData(qk.lessonArchive(v.lessonId), (old) =>
         old && Array.isArray(old.chat)
           ? { ...old, chat: old.chat.filter((m) => m.id !== v.messageId) }
           : old,
@@ -314,7 +413,7 @@ export function useRequestAccountDeletion() {
 /* -------- Blocklist (mentor) -------- */
 export function useBlocklist() {
   return useQuery({
-    queryKey: ['blocklist'],
+    queryKey: qk.blocklist,
     queryFn: blocklistApi.listBlocklist,
   })
 }
@@ -322,14 +421,14 @@ export function useUnblock() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: blocklistApi.unblock,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['blocklist'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.blocklist }),
   })
 }
 
 /* -------- Users (admin) -------- */
 export function useUsers(params, opts = {}) {
   return useQuery({
-    queryKey: ['users', params || {}],
+    queryKey: qk.userList(params),
     queryFn: () => userApi.listUsers(params),
     // Admin bo'lmaganda so'rov umuman ketmaydi (403 shovqini bo'lmasin).
     enabled: opts.enabled ?? true,
@@ -339,21 +438,21 @@ export function useCreateUser() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: userApi.createUser,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.users }),
   })
 }
 export function useDeleteUser() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: userApi.deleteUser,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.users }),
   })
 }
 export function useUpdateUser() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ id, body }) => userApi.updateUser(id, body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.users }),
   })
 }
 export function useSetUserActive() {
@@ -361,6 +460,6 @@ export function useSetUserActive() {
   return useMutation({
     mutationFn: ({ id, active }) =>
       active ? userApi.activateUser(id) : userApi.deactivateUser(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.users }),
   })
 }

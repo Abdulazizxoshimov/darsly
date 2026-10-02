@@ -90,6 +90,23 @@ func (r *waitingRoomRepo) ListPending(ctx context.Context, lessonID string) ([]*
 	return out, rows.Err()
 }
 
+func (r *waitingRoomRepo) CountPendingByLesson(ctx context.Context, lessonID string) (int, error) {
+	sql, args, err := r.builder.
+		Select("COUNT(*)").From("waiting_room_requests").
+		Where(sq.And{sq.Eq{"lesson_id": lessonID}, sq.Eq{"status": entity.WaitingStatusPending}}).ToSql()
+	if err != nil {
+		return 0, fmt.Errorf("waitingRoomRepo.CountPendingByLesson: %w", err)
+	}
+	var n int
+	if err := r.db.QueryRow(ctx, sql, args...).Scan(&n); err != nil {
+		return 0, fmt.Errorf("waitingRoomRepo.CountPendingByLesson: %w", err)
+	}
+	return n, nil
+}
+
+// maxPendingSnapshot — mentor WS reconnect'ida bir martada yetkaziladigan pending'lar chegarasi.
+const maxPendingSnapshot = 200
+
 func (r *waitingRoomRepo) ListPendingByMentor(ctx context.Context, mentorID string) ([]*entity.WaitingRoomRequest, error) {
 	sql, args, err := r.builder.
 		Select("w.id, w.lesson_id, w.requester_name, w.guest_identity, w.status, w.created_at, w.decided_at").
@@ -99,8 +116,11 @@ func (r *waitingRoomRepo) ListPendingByMentor(ctx context.Context, mentorID stri
 			sq.Eq{"l.mentor_id": mentorID},
 			sq.Eq{"w.status": entity.WaitingStatusPending},
 			sq.Eq{"l.deleted_at": nil},
+			// Faqat hozirgi/kelgusi darslar: tugagan (ended) darslardan "ghost" push bo'lmasin.
+			sq.Eq{"l.status": []string{entity.LessonStatusScheduled, entity.LessonStatusLive}},
 		}).
-		OrderBy("w.created_at ASC").ToSql()
+		OrderBy("w.created_at ASC").
+		Limit(maxPendingSnapshot).ToSql()
 	if err != nil {
 		return nil, fmt.Errorf("waitingRoomRepo.ListPendingByMentor: %w", err)
 	}

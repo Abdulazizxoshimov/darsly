@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -26,6 +27,8 @@ type Config struct {
 	// Telegram — dars arxivi (PRODUCT.md, 2026-08-01). Sozlanmagan bo'lsa
 	// integratsiya BUTUNLAY o'chiq va yozib olish avvalgidek ishlaydi.
 	Telegram TelegramConfig `json:"telegram"`
+	// Warnings — Load() paytida topilgan env parse xatolari (noto'g'ri int/duration/bool/float).
+	Warnings []string `json:"-"`
 }
 
 // TelegramConfig — Telegram arxivi.
@@ -102,7 +105,7 @@ type MobileConfig struct {
 
 // LiveKitConfig — SFU media server (video-dars) sozlamalari.
 type LiveKitConfig struct {
-	Host          string        `json:"host"`            // masalan: ws://localhost:7880
+	Host string `json:"host"` // masalan: ws://localhost:7880
 	// ClientURL — KLIENTLARGA qaytariladigan signaling manzili (Host'dan alohida!).
 	// Host — backend↔LiveKit API yo'li (ichki bo'lishi mumkin), ClientURL esa
 	// telefon/brauzer ulanadigan OCHIQ manzil. Qiymatlar:
@@ -111,11 +114,11 @@ type LiveKitConfig struct {
 	//   "auto" — dev: klient API'ga qaysi host orqali kelgan bo'lsa, LiveKit ham
 	//            o'sha hostda (sxema+port Host'dan olinadi). Tarmoq IP o'zgarsa
 	//            ham sozlamani qo'lda o'zgartirish kerak emas.
-	ClientURL string `json:"client_url"`
-	APIKey        string        `json:"api_key"`         // LiveKit API key
-	APISecret     string        `json:"api_secret"`      // LiveKit API secret
-	WebhookAPIKey string        `json:"webhook_api_key"` // Egress webhook imzosini tekshirish uchun
-	TokenTTL      time.Duration `json:"token_ttl"`       // kirish tokeni muddati (0 → 6h default)
+	ClientURL     string        `json:"client_url"`
+	APIKey        string        `json:"-"`         // LiveKit API key
+	APISecret     string        `json:"-"`         // LiveKit API secret
+	WebhookAPIKey string        `json:"-"`         // Egress webhook imzosini tekshirish uchun
+	TokenTTL      time.Duration `json:"token_ttl"` // kirish tokeni muddati (0 → 6h default)
 	// EgressLayout — yozib olish kompozitsiya shabloni (LiveKit default template).
 	// Yaroqli qiymatlar: speaker | single-speaker | grid (+ ixtiyoriy "-light" qo'shimchasi).
 	// Default "speaker": dars yozuvida ustoz/ekran asosiy oynada bo'lsin (grid'da
@@ -138,17 +141,29 @@ type LiveKitConfig struct {
 	// bo'lsa true: server egress AVTOMATIK boshlanmaydi, telefon o'zi yozib
 	// yuklaydi (Zoom «local recording»). Default (bo'sh/egress) — hozirgi xulq.
 	RecordingLocalMode bool `json:"recording_local_mode"`
+	// EgressMaxConcurrent — bir vaqtda ochiq bo'lishi mumkin bo'lgan server
+	// egress'lari SONI (EGRESS_MAX_CONCURRENT). 0 → cheksiz (eski xulq).
+	//
+	// Nega kerak: har egress alohida headless-Chrome + ffmpeg protsessi bo'lib,
+	// 1-2 yadro yeydi. SFU esa AYNI serverda ishlaydi. Bir vaqtda 2-3 yozuvli
+	// dars ochilsa SFU och qolib BARCHA xonalarda jitter/uzilish boshlanadi
+	// (system-design audit R1). Bu cheklov global qulf sifatida ishlaydi:
+	// limitga yetilganda yangi AVTOMATIK yozuv boshlanmaydi (dars o'zi davom
+	// etadi, faqat yozilmaydi) — SFU sifati himoyalanadi. `local` rejimda
+	// (telefon yozadi) egress umuman ochilmaydi, shuning uchun bu daxlsiz.
+	// 4 yadroli hostda tavsiya: 2-3.
+	EgressMaxConcurrent int `json:"egress_max_concurrent"`
 }
 
 type SentryConfig struct {
-	DSN              string  `json:"dsn"`
+	DSN              string  `json:"-"`
 	TracesSampleRate float64 `json:"traces_sample_rate"`
 }
 
 type LokiConfig struct {
 	URL      string `json:"url"`
-	User     string `json:"user"`
-	Password string `json:"password"`
+	User     string `json:"-"`
+	Password string `json:"-"`
 }
 
 type AppConfig struct {
@@ -165,14 +180,30 @@ type AppConfig struct {
 	// admin'ga cheklangani uchun (H-2) hech bo'lmasa bitta admin kerak.
 	SeedAdminEmail    string `json:"-"`
 	SeedAdminPassword string `json:"-"`
+	// Role — jarayonning ROLI (APP_ROLE): gorizontal scale uchun (audit R5).
+	//   "all"    → HTTP server + fon ishchilari (default, bitta jarayon — eski xulq);
+	//   "api"    → FAQAT HTTP server (ishchilar boshqa jarayonda);
+	//   "worker" → FAQAT fon ishchilari (ffmpeg transkod, Telegram upload, reminder,
+	//              auto-end, retention) — API host'idan ajratish uchun.
+	// WS fan-out (Redis ws:fanout) tufayli worker-only jarayon ham bildirishnoma
+	// push qila oladi: hub.Send Redis'ga publish qiladi, api jarayoni yetkazadi.
+	// Ishchilar allaqachon claim-based (multi-instance-safe), shuning uchun bir
+	// necha "all"/"worker" jarayoni ham dublikatsiz ishlaydi.
+	Role string `json:"role"`
 }
+
+// RunAPI — bu jarayon HTTP serverni ko'tarishi kerakmi.
+func (a AppConfig) RunAPI() bool { return a.Role != "worker" }
+
+// RunWorkers — bu jarayon fon ishchilarini ishga tushirishi kerakmi.
+func (a AppConfig) RunWorkers() bool { return a.Role != "api" }
 
 type PostgresConfig struct {
 	Host              string        `json:"host"`
 	Port              string        `json:"port"`
 	Database          string        `json:"database"`
 	Username          string        `json:"username"`
-	Password          string        `json:"password"`
+	Password          string        `json:"-"`
 	MaxConns          int32         `json:"max_conns"`
 	MinConns          int32         `json:"min_conns"`
 	MaxConnIdleTime   time.Duration `json:"max_conn_idle_time"`
@@ -219,6 +250,11 @@ func (c *Config) Validate() error {
 		if c.App.FrontendBaseURL == "" {
 			return fmt.Errorf("FRONTEND_BASE_URL must be set in production (required for WebSocket Origin check)")
 		}
+		// LiveKit kalitlarisiz prod jimgina "video o'chiq" bo'lib ishga tushardi
+		// (health yashil, lekin hech kim darsga kira olmaydi) — fail-fast.
+		if c.LiveKit.APIKey == "" || c.LiveKit.APISecret == "" {
+			return fmt.Errorf("LIVEKIT_API_KEY and LIVEKIT_API_SECRET must be set in production")
+		}
 		if c.LiveKit.APISecret != "" {
 			ls := strings.ToLower(c.LiveKit.APISecret)
 			if strings.Contains(ls, "secret_at_least") || strings.Contains(ls, "change") {
@@ -238,10 +274,17 @@ func (c *Config) Validate() error {
 type RedisConfig struct {
 	Host         string `json:"host"`
 	Port         string `json:"port"`
-	Password     string `json:"password"`
+	Password     string `json:"-"`
 	DB           int    `json:"db"`
 	PoolSize     int    `json:"pool_size"`      // 0 → go-redis default (10×GOMAXPROCS)
 	MinIdleConns int    `json:"min_idle_conns"` // issiq ulanishlar (latency spike'ni kamaytiradi)
+	// SentinelAddrs — Redis Sentinel manzillari (HA, audit R2 P2). Bo'sh →
+	// oddiy bitta-tugun rejim (default, hozirgi xulq). To'ldirilsa (2+ host
+	// bo'lганда) go-redis failover-klienti ishlatiladi va Redis o'chsa
+	// avtomatik yangi master'ga o'tadi. Format: "host1:26379,host2:26379".
+	SentinelAddrs []string `json:"sentinel_addrs"`
+	// SentinelMaster — Sentinel'dagi master nomi (default "mymaster").
+	SentinelMaster string `json:"sentinel_master"`
 }
 
 // Addr returns "host:port" for redis.NewClient.
@@ -251,8 +294,8 @@ func (r RedisConfig) Addr() string {
 
 type MinioConfig struct {
 	Endpoint  string `json:"endpoint"`
-	AccessKey string `json:"access_key"`
-	SecretKey string `json:"secret_key"`
+	AccessKey string `json:"-"`
+	SecretKey string `json:"-"`
 	Bucket    string `json:"bucket"`
 	UseSSL    bool   `json:"use_ssl"`
 	// PublicEndpoint — presigned URL'lar shu manzilga imzolanadi (tashqi klient
@@ -262,11 +305,11 @@ type MinioConfig struct {
 }
 
 type RabbitMQConfig struct {
-	URL string `json:"url"`
+	URL string `json:"-"` // amqp://user:pass@host — parol ichida
 }
 
 type JWTConfig struct {
-	Secret     string        `json:"secret"`
+	Secret     string        `json:"-"`
 	AccessTTL  time.Duration `json:"access_ttl"`
 	RefreshTTL time.Duration `json:"refresh_ttl"`
 	// RefreshGrace — refresh rotatsiyasining idempotentlik oynasi. Mobil tarmoqda
@@ -275,6 +318,8 @@ type JWTConfig struct {
 	// o'ldirmaydi). Oyna tashqarisida reuse haliyam o'g'irlik deb qaraladi.
 	// 0 → grace o'chirilgan (eski xatti-harakat).
 	RefreshGrace time.Duration `json:"refresh_grace"`
+	// PasswordResetTTL — parol tiklash havolasining amal qilish muddati (PASSWORD_RESET_TTL, default 1h).
+	PasswordResetTTL time.Duration `json:"password_reset_ttl"`
 }
 
 type EmailConfig struct {
@@ -283,13 +328,31 @@ type EmailConfig struct {
 	Port     int    `json:"port"`
 	From     string `json:"from"`
 	Username string `json:"username"`
-	Password string `json:"password"`
+	Password string `json:"-"`
+}
+
+// parseWarnings — env qiymati noto'g'ri formatda bo'lgani uchun default'ga tushgan
+// kalitlar (jimgina default = operator xatosi ko'rinmaydi). Load() ularni
+// Config.Warnings ga ko'chiradi, app logger tayyor bo'lgach WARN qiladi.
+var (
+	warnMu        sync.Mutex
+	parseWarnings []string
+)
+
+func warnParse(key, val, kind string, def any) {
+	warnMu.Lock()
+	parseWarnings = append(parseWarnings,
+		fmt.Sprintf("%s=%q %s sifatida o'qilmadi — default %v ishlatiladi", key, val, kind, def))
+	warnMu.Unlock()
 }
 
 // Load reads environment variables into Config.
 // In local development, set values via .env file loaded externally or shell exports.
 func Load() *Config {
-	return &Config{
+	warnMu.Lock()
+	parseWarnings = nil
+	warnMu.Unlock()
+	cfg := &Config{
 		App: AppConfig{
 			Port:                  getEnv("APP_PORT", "8080"),
 			Env:                   getEnv("APP_ENV", "development"),
@@ -299,6 +362,7 @@ func Load() *Config {
 			BcryptCost:            getEnvInt("BCRYPT_COST", 11),
 			SeedAdminEmail:        getEnv("SEED_ADMIN_EMAIL", ""),
 			SeedAdminPassword:     getEnv("SEED_ADMIN_PASSWORD", ""),
+			Role:                  getEnv("APP_ROLE", "all"),
 		},
 		Postgres: PostgresConfig{
 			Host:              getEnv("DB_HOST", "localhost"),
@@ -313,12 +377,14 @@ func Load() *Config {
 			HealthCheckPeriod: getEnvDuration("DB_HEALTH_CHECK_PERIOD", 1*time.Minute),
 		},
 		Redis: RedisConfig{
-			Host:         getEnv("REDIS_HOST", "localhost"),
-			Port:         getEnv("REDIS_PORT", "6379"),
-			Password:     getEnv("REDIS_PASSWORD", ""),
-			DB:           getEnvInt("REDIS_DB", 0),
-			PoolSize:     getEnvInt("REDIS_POOL_SIZE", 0),
-			MinIdleConns: getEnvInt("REDIS_MIN_IDLE_CONNS", 0),
+			Host:           getEnv("REDIS_HOST", "localhost"),
+			Port:           getEnv("REDIS_PORT", "6379"),
+			Password:       getEnv("REDIS_PASSWORD", ""),
+			DB:             getEnvInt("REDIS_DB", 0),
+			PoolSize:       getEnvInt("REDIS_POOL_SIZE", 0),
+			MinIdleConns:   getEnvInt("REDIS_MIN_IDLE_CONNS", 0),
+			SentinelAddrs:  splitCSV(getEnv("REDIS_SENTINEL_ADDRS", "")),
+			SentinelMaster: getEnv("REDIS_SENTINEL_MASTER", "mymaster"),
 		},
 		Minio: MinioConfig{
 			Endpoint:       getEnv("MINIO_ENDPOINT", "localhost:9000"),
@@ -333,8 +399,8 @@ func Load() *Config {
 			URL: getEnv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/"),
 		},
 		JWT: JWTConfig{
-			Secret:       getEnv("JWT_SECRET", ""),
-			AccessTTL:    getEnvDuration("JWT_ACCESS_TTL", 15*time.Minute),
+			Secret:    getEnv("JWT_SECRET", ""),
+			AccessTTL: getEnvDuration("JWT_ACCESS_TTL", 15*time.Minute),
 			// 14 kun (avval 30). Refresh token brauzerda `localStorage` da
 			// yashaydi — ya'ni XSS uni o'g'irlay oladi va o'g'irlangan token
 			// TTL tugagunicha ishlaydi. HttpOnly cookie'ga o'tish to'g'ri
@@ -345,6 +411,9 @@ func Load() *Config {
 			// bir marta kiradigan ustozni ham qayta login qilishga majburlamaydi.
 			RefreshTTL:   getEnvDuration("JWT_REFRESH_TTL", 336*time.Hour),
 			RefreshGrace: getEnvDuration("JWT_REFRESH_GRACE", 60*time.Second),
+			// 1 soat (avval usecase'da 24 soat qattiq yozilgan edi): reset havolasi
+			// pochta arxivida uzoq yotmasin.
+			PasswordResetTTL: getEnvDuration("PASSWORD_RESET_TTL", time.Hour),
 		},
 		Email: EmailConfig{
 			Enabled:  getEnvBool("EMAIL_ENABLED", true),
@@ -375,9 +444,10 @@ func Load() *Config {
 			// ajralib ketardi va env'siz muhitda eski layout ishlab qolardi.
 			EgressLayout: getEnv("LIVEKIT_EGRESS_LAYOUT", ""),
 			// 0 → `livekit.recCanvasSide` (1280). Kuchsiz serverda 1024 qo'ying.
-			RecordingCanvas:    getEnvInt("RECORDING_CANVAS", 0),
-			RecordingFPS:       getEnvInt("RECORDING_FPS", 0),
-			RecordingLocalMode: getEnv("RECORDING_MODE", "") == "local",
+			RecordingCanvas:     getEnvInt("RECORDING_CANVAS", 0),
+			RecordingFPS:        getEnvInt("RECORDING_FPS", 0),
+			RecordingLocalMode:  getEnv("RECORDING_MODE", "") == "local",
+			EgressMaxConcurrent: getEnvInt("EGRESS_MAX_CONCURRENT", 3),
 		},
 		Lesson: LessonConfig{
 			MaxDuration:   getEnvDuration("LESSON_MAX_DURATION", 4*time.Hour),
@@ -399,8 +469,8 @@ func Load() *Config {
 			CacheTTL:      time.Duration(getEnvInt("RECORDING_CACHE_TTL_HOURS", 24)) * time.Hour,
 		},
 		Telegram: TelegramConfig{
-			BotToken:      getEnv("TELEGRAM_BOT_TOKEN", ""),
-			APIURL:        getEnv("TELEGRAM_API_URL", ""),
+			BotToken: getEnv("TELEGRAM_BOT_TOKEN", ""),
+			APIURL:   getEnv("TELEGRAM_API_URL", ""),
 			// Chat ID 64-bitli va MANFIY (supergroup: -1001234567890) —
 			// `getEnvInt` emas, aniq int64 parser.
 			ArchiveChatID: getEnvInt64("TELEGRAM_ARCHIVE_CHAT_ID", 0),
@@ -416,6 +486,11 @@ func Load() *Config {
 			AndroidReleaseNotes:  getEnv("APP_ANDROID_RELEASE_NOTES", ""),
 		},
 	}
+	warnMu.Lock()
+	cfg.Warnings = parseWarnings
+	parseWarnings = nil
+	warnMu.Unlock()
+	return cfg
 }
 
 func getEnv(key, defaultValue string) string {
@@ -425,6 +500,22 @@ func getEnv(key, defaultValue string) string {
 	return defaultValue
 }
 
+// splitCSV — vergul bilan ajratilgan ro'yxatni tozalab bo'linadi. Bo'sh → nil.
+func splitCSV(s string) []string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 func getEnvInt(key string, def int) int {
 	v := os.Getenv(key)
 	if v == "" {
@@ -432,6 +523,7 @@ func getEnvInt(key string, def int) int {
 	}
 	n, err := strconv.Atoi(v)
 	if err != nil {
+		warnParse(key, v, "int", def)
 		return def
 	}
 	return n
@@ -444,6 +536,7 @@ func getEnvInt64(key string, def int64) int64 {
 	}
 	n, err := strconv.ParseInt(v, 10, 64)
 	if err != nil {
+		warnParse(key, v, "int64", def)
 		return def
 	}
 	return n
@@ -456,6 +549,7 @@ func getEnvBool(key string, def bool) bool {
 	}
 	b, err := strconv.ParseBool(v)
 	if err != nil {
+		warnParse(key, v, "bool", def)
 		return def
 	}
 	return b
@@ -468,6 +562,7 @@ func getEnvDuration(key string, def time.Duration) time.Duration {
 	}
 	d, err := time.ParseDuration(v)
 	if err != nil {
+		warnParse(key, v, "duration", def)
 		return def
 	}
 	return d
@@ -480,6 +575,7 @@ func getEnvFloat(key string, def float64) float64 {
 	}
 	f, err := strconv.ParseFloat(v, 64)
 	if err != nil {
+		warnParse(key, v, "float", def)
 		return def
 	}
 	return f

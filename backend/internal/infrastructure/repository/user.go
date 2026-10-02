@@ -16,6 +16,9 @@ type UserRepository interface {
 	UpdateLastLogin(ctx context.Context, userID string) error
 	SetDeletionRequested(ctx context.Context, userID string, requested bool) error
 	SoftDelete(ctx context.Context, id string) error
+	// CountActiveAdmins faol (is_active, o'chirilmagan) adminlar sonini qaytaradi —
+	// oxirgi adminni olib tashlashdan himoya uchun.
+	CountActiveAdmins(ctx context.Context) (int, error)
 	// DeleteHard qatorni butunlay o'chiradi (email'ni bo'shatadi) — registratsiya
 	// yarim yo'lda uzilganda kompensatsiya uchun.
 	DeleteHard(ctx context.Context, id string) error

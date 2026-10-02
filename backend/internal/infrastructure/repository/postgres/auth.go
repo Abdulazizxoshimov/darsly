@@ -170,6 +170,19 @@ func (r *authRepo) MarkPasswordResetUsed(ctx context.Context, id string) error {
 	return err
 }
 
+func (r *authRepo) InvalidateUserPasswordResets(ctx context.Context, userID string) error {
+	sql, args, err := r.builder.
+		Update("password_resets").
+		Set("used_at", sq.Expr("NOW()")).
+		Where(sq.And{sq.Eq{"user_id": userID}, sq.Eq{"used_at": nil}}).
+		ToSql()
+	if err != nil {
+		return fmt.Errorf("authRepo.InvalidateUserPasswordResets: %w", err)
+	}
+	_, err = r.db.Exec(ctx, sql, args...)
+	return err
+}
+
 func (r *authRepo) DeleteExpiredPasswordResets(ctx context.Context) error {
 	sql, args, err := r.builder.
 		Delete("password_resets").

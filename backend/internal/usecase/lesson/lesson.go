@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"math/big"
 	"time"
 
 	"github.com/google/uuid"
@@ -38,23 +39,23 @@ func (uc *useCase) Create(ctx context.Context, mentorID string, req *entity.Crea
 		duration = 60
 	}
 	l := &entity.Lesson{
-		ID:                   uuid.NewString(),
-		MentorID:             mentorID,
-		Title:                req.Title,
-		Description:          req.Description,
-		ScheduledAt:          req.ScheduledAt,
-		DurationMin:          duration,
-		RecurrenceRule:       req.RecurrenceRule,
-		JoinSlug:             slug,
+		ID:             uuid.NewString(),
+		MentorID:       mentorID,
+		Title:          req.Title,
+		Description:    req.Description,
+		ScheduledAt:    req.ScheduledAt,
+		DurationMin:    duration,
+		RecurrenceRule: req.RecurrenceRule,
+		JoinSlug:       slug,
 		// Berilmagan bo'lsa YOQILADI — mahsulot qoidasi serverda bajariladi.
 		IsRecordingEnabled:   req.RecordingEnabled(),
 		IsWaitingRoomEnabled: req.IsWaitingRoomEnabled,
 		// Zoom default'lari: kirganda mute YONIQ, o'zi ochishga ruxsat BOR (nil=default).
 		MuteOnEntry:     req.MuteOnEntryEnabled(),
 		AllowSelfUnmute: req.SelfUnmuteAllowed(),
-		Status:               entity.LessonStatusScheduled,
-		CreatedAt:            now,
-		UpdatedAt:            now,
+		Status:          entity.LessonStatusScheduled,
+		CreatedAt:       now,
+		UpdatedAt:       now,
 	}
 
 	if req.Passcode != nil && *req.Passcode != "" {
@@ -86,70 +87,59 @@ func (uc *useCase) ListByMentor(ctx context.Context, mentorID string, filter *en
 }
 
 func (uc *useCase) Update(ctx context.Context, mentorID, id string, req *entity.UpdateLessonReq) (*entity.Lesson, error) {
-	l, err := shared.OwnedLesson(ctx, uc.repo, mentorID, id)
-	if err != nil {
+	if _, err := shared.OwnedLesson(ctx, uc.repo, mentorID, id); err != nil {
 		return nil, err
 	}
 
-	if req.Title != nil {
-		l.Title = *req.Title
-	}
-	if req.Description != nil {
-		l.Description = req.Description
-	}
-	if req.ScheduledAt != nil {
-		l.ScheduledAt = req.ScheduledAt
-	}
-	if req.DurationMin != nil {
-		l.DurationMin = *req.DurationMin
-	}
-	if req.RecurrenceRule != nil {
-		l.RecurrenceRule = req.RecurrenceRule
-	}
-	if req.IsLocked != nil {
-		l.IsLocked = *req.IsLocked
-	}
-	if req.IsRecordingEnabled != nil {
-		l.IsRecordingEnabled = *req.IsRecordingEnabled
-	}
-	if req.IsWaitingRoomEnabled != nil {
-		l.IsWaitingRoomEnabled = *req.IsWaitingRoomEnabled
-	}
-	if req.MuteOnEntry != nil {
-		l.MuteOnEntry = *req.MuteOnEntry
-	}
-	if req.AllowSelfUnmute != nil {
-		l.AllowSelfUnmute = *req.AllowSelfUnmute
-	}
-	if req.Status != nil {
-		l.Status = *req.Status
+	// Faqat to'ldirilgan maydonlar yoziladi (qisman yangilash) — parallel
+	// HostToken/EndLesson o'zgarishlari (status/started_at) bosib ketilmaydi.
+	patch := &entity.LessonPatch{
+		Title:                req.Title,
+		Description:          req.Description,
+		ScheduledAt:          req.ScheduledAt,
+		DurationMin:          req.DurationMin,
+		RecurrenceRule:       req.RecurrenceRule,
+		IsLocked:             req.IsLocked,
+		IsRecordingEnabled:   req.IsRecordingEnabled,
+		IsWaitingRoomEnabled: req.IsWaitingRoomEnabled,
+		MuteOnEntry:          req.MuteOnEntry,
+		AllowSelfUnmute:      req.AllowSelfUnmute,
 	}
 
 	// Parol boshqaruvi: RemovePasscode > Passcode
 	switch {
 	case req.RemovePasscode:
-		l.PasscodeHash = nil
+		patch.ClearPasscode = true
 	case req.Passcode != nil && *req.Passcode != "":
 		hashed, err := uc.hasher.Hash(*req.Passcode)
 		if err != nil {
 			return nil, fmt.Errorf("lesson.Update hash passcode: %w", err)
 		}
-		l.PasscodeHash = &hashed
+		patch.PasscodeHash = &hashed
 	}
 
-	if err := uc.repo.Update(ctx, l); err != nil {
+	if err := uc.repo.UpdateFields(ctx, id, patch); err != nil {
 		uc.log.Error(ctx, "lesson.Update: db error", logger.String("id", id), logger.SafeString("err", err.Error()))
 		return nil, err
 	}
-	l.HasPasscode = l.PasscodeHash != nil
+	// Yangilangan (haqiqiy) holatni qaytaramiz.
+	l, err := uc.repo.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
 
 	uc.log.Info(ctx, "lesson updated", logger.String("id", id))
 	return l, nil
 }
 
 func (uc *useCase) Delete(ctx context.Context, actorID, actorRole, id string) error {
-	if _, err := shared.OwnedLessonOrAdmin(ctx, uc.repo, actorID, actorRole, id); err != nil {
+	l, err := shared.OwnedLessonOrAdmin(ctx, uc.repo, actorID, actorRole, id)
+	if err != nil {
 		return err
+	}
+	// Jonli darsni o'chirish xona/egress/Redis'ni yetim qoldirardi: avval yakunlash kerak.
+	if l.Status == entity.LessonStatusLive {
+		return apperr.Conflict("lesson is live: end it before deleting")
 	}
 	if err := uc.repo.SoftDelete(ctx, id); err != nil {
 		uc.log.Error(ctx, "lesson.Delete: db error", logger.String("id", id), logger.SafeString("err", err.Error()))
@@ -194,11 +184,12 @@ func generateSlug() string {
 	return string(buf)
 }
 
+// randIndex [0,n) oralig'ida modulo-biassiz tasodifiy indeks qaytaradi.
 func randIndex(n int) int {
-	b := make([]byte, 1)
-	// crypto/rand xato bermaydi deb faraz qilinadi; xato bo'lsa 0 qaytadi.
-	if _, err := rand.Read(b); err != nil {
+	v, err := rand.Int(rand.Reader, big.NewInt(int64(n)))
+	if err != nil {
+		// crypto/rand amalda xato bermaydi; bermasa ham 0 (xavfsiz, faqat entropiya kamayadi).
 		return 0
 	}
-	return int(b[0]) % n
+	return int(v.Int64())
 }

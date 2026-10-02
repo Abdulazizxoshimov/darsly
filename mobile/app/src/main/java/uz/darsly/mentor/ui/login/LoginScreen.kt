@@ -62,7 +62,8 @@ fun LoginScreen(
     val state by vm.state.collectAsStateWithLifecycle()
     val notice by vm.notice.collectAsStateWithLifecycle()
 
-    // Debug build'da local.properties'dan kelgan test hisobi bilan oldindan to'ldiramiz
+    // Oldindan to'ldirish FAQAT `darsly.devPrefill=true` (local.properties, S3)
+    // bilan qurilgan debug build'da — boshqa hamma holatda ikkalasi bo'sh satr
     // (sirlar kodda yo'q — BuildConfig'ga local.properties orqali tushadi).
     var email by rememberSaveable { mutableStateOf(BuildConfig.TEST_EMAIL) }
     var password by rememberSaveable { mutableStateOf(BuildConfig.TEST_PASSWORD) }

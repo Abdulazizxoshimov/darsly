@@ -18,10 +18,14 @@ export function me() {
   return api.get('/auth/me')
 }
 
+// Server joriy (access token'dagi) sessiyani HAR DOIM bekor qiladi; refresh
+// token ixtiyoriy — bo'lsa uning JTI'si ham o'chadi. Refresh yo'q bo'lsa tana
+// umuman yuborilmaydi (`{refresh_token:null}` emas): server bo'sh tanani
+// «faqat joriy sessiya» deb tushunadi.
 export async function logout() {
   const refresh_token = tokenStore.refresh
   try {
-    await api.post('/auth/logout', { refresh_token })
+    await api.post('/auth/logout', refresh_token ? { refresh_token } : undefined)
   } catch {
     /* lokal sessiyani baribir tozalaymiz */
   }

@@ -20,7 +20,7 @@ const HeaderRequestID = "X-Request-ID"
 func RequestID() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id := c.GetHeader(HeaderRequestID)
-		if id == "" {
+		if !validRequestID(id) {
 			id = uuid.NewString()
 		}
 		c.Set(HeaderRequestID, id)
@@ -34,4 +34,26 @@ func RequestID() gin.HandlerFunc {
 		c.Request = c.Request.WithContext(logger.WithTrace(c.Request.Context(), traceID, spanID))
 		c.Next()
 	}
+}
+
+// maxRequestIDLen — klient bergan X-Request-ID uchun yuqori chegara.
+const maxRequestIDLen = 64
+
+// validRequestID klient bergan ID'ni tekshiradi: 1..64 belgi, faqat [A-Za-z0-9._-].
+// Aks holda log-injection (yangi qator, JSON maxsus belgilari) va cheksiz hajmli
+// sarlavha loglarga/javob header'iga tushardi — bunday ID o'rniga yangisi yaratiladi.
+func validRequestID(id string) bool {
+	if id == "" || len(id) > maxRequestIDLen {
+		return false
+	}
+	for i := 0; i < len(id); i++ {
+		ch := id[i]
+		switch {
+		case ch >= 'a' && ch <= 'z', ch >= 'A' && ch <= 'Z', ch >= '0' && ch <= '9',
+			ch == '-', ch == '_', ch == '.':
+		default:
+			return false
+		}
+	}
+	return true
 }

@@ -13,13 +13,20 @@ import {
   WifiOff,
   Zap,
 } from 'lucide-react'
-import { getHostToken, getLesson, endLesson } from '../api/lessons'
 import { deleteChatMessage, roomChatHistory, roomChatSend, roomChatUpload } from '../api/chat'
 import { errorText } from '../api/api'
 import { useRoom } from '../livekit/useRoom'
-import { acceptData, decodeData, encodeData } from '../livekit/messaging'
+import { acceptData, chatEntryFromServer, decodeData, encodeData } from '../livekit/messaging'
 import * as roomstateApi from '../api/roomstate'
-import { applyHandEvent, isChatVisible, linkView, nextPipState, rateLimiter } from '../livekit/roomLogic'
+import {
+  applyHandEvent,
+  isChatVisible,
+  linkView,
+  nextPipState,
+  pollReplayMessage,
+  rateLimiter,
+  reconnectDelay,
+} from '../livekit/roomLogic'
 import { PIP_SUPPORTED, PresenterPanel, PresenterPip, pipWindowSize } from '../livekit/PresenterPip'
 import { Stage } from '../livekit/Stage'
 import { Whiteboard } from '../livekit/Whiteboard'
@@ -29,12 +36,29 @@ import { ReactionsOverlay } from '../livekit/ReactionsOverlay'
 import { ChatPanel } from '../panels/ChatPanel'
 import { ParticipantsPanel } from '../panels/ParticipantsPanel'
 import { PollsPanel } from '../panels/PollsPanel'
-import { useWaiting } from '../store/data'
-import { roomSession } from '../lib/roomSession'
+import {
+  useEndLesson,
+  useLesson,
+  useOpenRoom,
+  usePolls,
+  useRecordings,
+  useStartRecording,
+  useStopRecording,
+  useWaiting,
+} from '../store/data'
+import { readGuestRoom, roomSession } from '../lib/roomSession'
+import {
+  createRoomTokenSource,
+  guestMinter,
+  hostMinter,
+  isFatalRoomTokenError,
+  RENEW_RETRY_MS,
+  renewDelay,
+  roomErrorText,
+} from '../lib/roomToken'
 import { Button } from '../components/Button'
 import { isLiveRoomSupported } from '../lib/features'
 import { Modal } from '../components/Modal'
-import { listRecordings, startRecording, stopRecording } from '../api/recordings'
 import { toast } from '../lib/toast'
 
 // Token oladi (host: API; guest: sessiya), keyin RoomStage'ni yuklaydi.
@@ -45,29 +69,47 @@ export function LiveRoom({ mode }) {
   const lessonId = isHost ? params.id : undefined
   const slug = params.slug // guest join-slug — qayta ulanish yo'li
 
-  const [token, setToken] = useState(isHost ? null : roomSession.get().room?.token || null)
-  const [title, setTitle] = useState(isHost ? 'Jonli dars' : roomSession.get().room?.lesson.title || 'Jonli dars')
+  // Mehmon: sessiyadagi xona yozuvi SHAKLI tekshirib o'qiladi (`readGuestRoom`)
+  // — eskirgan/buzuq sessionStorage avval `room.lesson.title` da yiqilardi.
+  const [guest] = useState(() => (isHost ? null : readGuestRoom()))
+  const [token, setToken] = useState(isHost ? null : guest?.token || null)
+  const [loading, setLoading] = useState(isHost)
+  const [error, setError] = useState(null)
+
+  // Host: token darsni serverda `live` qiladi — bu mutatsiya (`useOpenRoom`)
+  // darslar keshini bekor qiladi, Dashboard ustoz qaytganda yangilangan bo'ladi.
+  const { mutateAsync: openRoom } = useOpenRoom()
+  const { mutateAsync: endLesson } = useEndLesson()
   // Dars obyekti — ovoz siyosati bayroqlari (`mute_on_entry`,
   // `allow_self_unmute`) shu yerdan boshlanadi. Host'da to'liq `Lesson` (API),
   // guest'da esa joinlink javobidagi `LessonPublic` — u ham AYNI ikki maydonni
   // beradi. Keyin siyosatni server yangilab turadi (roomstate + `policy`).
-  const [lesson, setLesson] = useState(() => (isHost ? null : roomSession.get().room?.lesson || null))
-  const [loading, setLoading] = useState(isHost)
-  const [error, setError] = useState(null)
+  const { data: hostLesson } = useLesson(lessonId)
+  const lesson = isHost ? hostLesson || null : guest?.lesson || null
+  const title = lesson?.title || 'Jonli dars'
 
   useEffect(() => {
     if (!isHost || !lessonId) return
-    Promise.all([getHostToken(lessonId), getLesson(lessonId).catch(() => null)])
-      .then(([rt, l]) => {
-        setToken(rt)
-        if (l) {
-          setTitle(l.title)
-          setLesson(l)
-        }
-      })
-      .catch((e) => setError(errorText(e, 'Xonaga ulanib bo‘lmadi')))
-      .finally(() => setLoading(false))
-  }, [isHost, lessonId])
+    let alive = true
+    openRoom(lessonId)
+      .then((rt) => alive && setToken(rt))
+      .catch((e) => alive && setError(errorText(e, 'Xonaga ulanib bo‘lmadi')))
+      .finally(() => alive && setLoading(false))
+    return () => {
+      alive = false
+    }
+  }, [isHost, lessonId, openRoom])
+
+  // Tokenning yagona manbai: muddatidan oldin va 401 da yangilanadi
+  // (`lib/roomToken`). Mehmonda yangi token sessiyaga ham yoziladi (F5 uchun).
+  const tokenSource = useMemo(() => {
+    if (!token) return null
+    return createRoomTokenSource({
+      initial: token,
+      mint: isHost ? hostMinter(lessonId) : guestMinter(guest?.join),
+      persist: isHost ? undefined : roomSession.setRoomToken,
+    })
+  }, [token, isHost, lessonId, guest])
 
   // Haqiqiy yakunlash. Tasdiq `RoomStage` da so'raladi (u yerda ishtirokchilar
   // soni va yozuv holati bor — tasdiq matnini shular aniq qiladi), bu yerda
@@ -86,7 +128,7 @@ export function LiveRoom({ mode }) {
     // O'quvchi uchun chiqish zararsiz — dars davom etadi, u qayta kira oladi.
     roomSession.clear()
     navigate(slug ? `/r/${slug}` : '/', { replace: true })
-  }, [isHost, lessonId, navigate, slug])
+  }, [isHost, lessonId, navigate, slug, endLesson])
 
   // `beforeunload` ogohlantirishi `RoomStage` da: u faqat xonaga HAQIQATAN
   // ulanganda o'rnatilishi kerak, yuklanish yoki xato ekranida emas.
@@ -119,7 +161,7 @@ export function LiveRoom({ mode }) {
       </div>
     )
 
-  if (error || !token)
+  if (error || !tokenSource)
     return (
       <div className="center-shell col center">
         <p style={{ color: 'var(--danger)', fontWeight: 600, marginBottom: 16 }}>
@@ -138,7 +180,8 @@ export function LiveRoom({ mode }) {
       slug={slug}
       title={title}
       lesson={lesson}
-      roomToken={token}
+      guest={guest}
+      tokenSource={tokenSource}
       onLeave={leave}
     />
   )
@@ -146,12 +189,21 @@ export function LiveRoom({ mode }) {
 
 let seq = 0
 
-function RoomStage({ isHost, lessonId, slug, title, lesson, roomToken, onLeave }) {
+function RoomStage({ isHost, lessonId, slug, title, lesson, guest, tokenSource, onLeave }) {
   const navigate = useNavigate()
   const [retryKey, setRetryKey] = useState(0)
+  // Joriy token — manbaga obuna. Yangilanganda server so'rovlari darhol yangi
+  // tokenni oladi; LiveKit esa faqat `identity` o'zgarsa qayta ulanadi.
+  const [roomToken, setRoomToken] = useState(() => tokenSource.current())
+  useEffect(() => tokenSource.subscribe(setRoomToken), [tokenSource])
+  const getToken = useCallback(() => tokenSource.current().token, [tokenSource])
+  // Token yangilash YAKUNAN mumkin emas (dars tugagan, chiqarilgan, qulflangan…).
+  const [fatal, setFatal] = useState(null)
+
   const {
     room,
     connState,
+    connectError,
     ended,
     quality,
     participants,
@@ -164,10 +216,115 @@ function RoomStage({ isHost, lessonId, slug, title, lesson, roomToken, onLeave }
     dismissMediaError,
   } = useRoom({
     wsUrl: roomToken.ws_url,
-    token: roomToken.token,
+    getToken,
+    identity: roomToken.identity,
     publish: isHost,
     retryKey,
   })
+
+  // Yangilash yiqildi. Kutish xonasi darsida qayta `join` YANGI kutish so'rovi
+  // yaratadi (backend cheklovi) — mehmon kutish sahifasiga qaytariladi va
+  // ustoz tasdig'idan keyin xonaga qaytadi. Qolgan sabablar yakuniy ekran.
+  const onRenewFailed = useCallback(
+    (e) => {
+      if (!isHost && e.kind === 'waiting_room') {
+        roomSession.setPending({
+          requestId: e.requestId,
+          lesson: e.lesson || lesson,
+          guestName: guest?.guestName,
+          join: guest?.join,
+        })
+        toast.info(roomErrorText(e))
+        navigate(`/r/${slug}/waiting`, { replace: true })
+        return
+      }
+      setFatal(e)
+    },
+    [isHost, lesson, guest, navigate, slug],
+  )
+
+  // Xona so'rovi: `fn(token)`, 401 da tokenni yangilab BIR MARTA takrorlaydi.
+  // Yangilash YAKUNAN yiqilsa (dars tugagan, chiqarilgan, kutish xonasi…)
+  // shu yerdan markaziy ishlov beriladi — chaqiruvchi faqat o'tkinchi xatoni
+  // (tarmoq, 429) toast qiladi (`notifyRoomError`), yakuniysini ekran ko'rsatadi.
+  const run = useCallback(
+    (fn) =>
+      tokenSource.run(fn).catch((e) => {
+        if (isFatalRoomTokenError(e)) onRenewFailed(e)
+        throw e
+      }),
+    [tokenSource, onRenewFailed],
+  )
+  const notifyRoomError = useCallback((e, fallback) => {
+    if (!isFatalRoomTokenError(e)) toast.error(roomErrorText(e, fallback))
+  }, [])
+
+  // Proaktiv yangilash — muddat tugashidan oldin. Tarmoq xatosida qayta
+  // uriniladi, yakuniy xatoda ekran ko'rsatiladi. Kutish xonasi YOQILGAN darsda
+  // jimgina yangilab bo'lmaydi (yuqoridagi sabab) — faqat talab bo'yicha (401).
+  useEffect(() => {
+    if (!isHost && lesson?.is_waiting_room_enabled) return
+    const delay = renewDelay(roomToken.token)
+    if (delay === null) return
+    let alive = true
+    let timer = null
+    const attempt = () => {
+      tokenSource.renew().catch((e) => {
+        if (!alive) return
+        if (isFatalRoomTokenError(e)) onRenewFailed(e)
+        else timer = setTimeout(attempt, RENEW_RETRY_MS)
+      })
+    }
+    timer = setTimeout(attempt, delay)
+    return () => {
+      alive = false
+      clearTimeout(timer)
+    }
+  }, [tokenSource, roomToken.token, isHost, lesson?.is_waiting_room_enabled, onRenewFailed])
+
+  // LiveKit tokenni rad etdi (`auth`) — bu qayta urinish bilan tuzalmaydi:
+  // avval token yangilanadi, so'ng ulanish. Yangi token bilan ham rad etilsa
+  // (masalan xona yopilgan) — yakuniy, cheksiz sikl yo'q.
+  const renewedForConnectRef = useRef(false)
+  useEffect(() => {
+    if (connState === 'connected') renewedForConnectRef.current = false
+  }, [connState])
+  useEffect(() => {
+    if (connectError !== 'auth') return
+    if (renewedForConnectRef.current) {
+      onRenewFailed(Object.assign(new Error('token rejected after renewal'), { kind: 'forbidden' }))
+      return
+    }
+    let alive = true
+    tokenSource
+      .renew()
+      .then(() => {
+        if (!alive) return
+        renewedForConnectRef.current = true
+        setRetryKey((k) => k + 1)
+      })
+      .catch((e) => {
+        if (!alive) return
+        if (isFatalRoomTokenError(e)) onRenewFailed(e)
+        // Tarmoq: quyidagi `Reconnect` ekrani backoff bilan o'zi qayta uradi.
+      })
+    return () => {
+      alive = false
+    }
+  }, [connectError, tokenSource, onRenewFailed])
+
+  // Tarmoq uzilishida avtomatik urinishlar CHEGARALANGAN (`reconnectDelay`):
+  // ulanish tiklangach sanoq nolga qaytadi.
+  const [reconnectAttempt, setReconnectAttempt] = useState(0)
+  useEffect(() => {
+    // LiveKit ulanish holati (tashqi) → urinish sanog'ini tiklash (ataylab).
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- ulanish holati sinxroni
+    if (connState === 'connected') setReconnectAttempt(0)
+  }, [connState])
+  const retryConnect = useCallback(() => {
+    setReconnectAttempt((n) => n + 1)
+    setRetryKey((k) => k + 1)
+  }, [])
 
   // Darsni yakunlash QAYTARIB BO'LMAYDI: xona o'chadi, hamma uziladi, yozuv
   // to'xtaydi. Bitta tasodifiy bosish 30 kishilik darsni tugatmasin — shuning
@@ -257,6 +414,9 @@ function RoomStage({ isHost, lessonId, slug, title, lesson, roomToken, onLeave }
   // kerak, aks holda har panel almashuvida qayta yaratilardi va u bilan birga
   // butun hodisa obunasi qayta o'rnatilardi.
   const panelRef = useRef('none')
+  // Joriy so'rovnoma ID'si — data-channel hodisasi render'siz o'qiydi
+  // (takroriy `open` — masalan qayta ulanishdan keyingi replay — bezovta qilmasin).
+  const guestPollIdRef = useRef(null)
 
   // Tezlik cheklovchilari (klient tomon) — spamni birinchi bo'lib shu to'xtatadi.
   const allowReaction = useRef(rateLimiter(1500)).current
@@ -277,6 +437,17 @@ function RoomStage({ isHost, lessonId, slug, title, lesson, roomToken, onLeave }
 
   const { data: waitingData } = useWaiting(lessonId, isHost && !!lessonId)
   const waiting = waitingData || [] // backend bo'sh ro'yxatni null qaytaradi → null.length crash bo'lmasin
+  // Host: faol so'rovnoma — kech kirganga takrorlash uchun (`pollReplayMessage`).
+  // Panel bilan bitta kesh, qo'shimcha so'rov yo'q.
+  const { data: hostPolls } = usePolls(isHost ? lessonId : undefined)
+  // Yozuv holati — serverdan. Yozuv odatda AVTOMATIK boshlanadi (`track_published`
+  // webhook'i), shuning uchun uni klientda taxmin qilib bo'lmaydi: ustoz REC
+  // indikatorini ko'rmasa "yozilmayapti" deb o'ylaydi, bu esa yolg'on bo'lardi.
+  // Yozuv media paydo bo'lgach boshlanadi — bir necha soniya kechikadi, shuning
+  // uchun birinchi daqiqada tez-tez qayta so'raladi.
+  const { data: hostRecordings } = useRecordings(isHost ? lessonId : undefined)
+  const startRec = useStartRecording()
+  const stopRec = useStopRecording()
 
   const localId = local?.identity || null
   const myHand = !!localId && raisedHands.has(localId)
@@ -321,6 +492,16 @@ function RoomStage({ isHost, lessonId, slug, title, lesson, roomToken, onLeave }
     })
     if (!e.self && !visible) setUnreadChat((n) => n + 1)
   }, [])
+
+  // Server javobidagi xabar (yuborish/fayl) → ekranga. Server o'zimizga ham
+  // tarqatadi; `addChat` ID bo'yicha dublikatni kesadi.
+  const addServerChat = useCallback(
+    (m) => {
+      const entry = chatEntryFromServer(m)
+      if (entry) addChat(toEntry(entry))
+    },
+    [addChat, toEntry],
+  )
 
   // Moderatsiya: xabar ro'yxatdan olib tashlanadi, LEKIN ID `chatIds` da
   // QOLADI — aks holda tarix qayta yuklanganda (yoki kech kelgan dublikatda)
@@ -424,24 +605,16 @@ function RoomStage({ isHost, lessonId, slug, title, lesson, roomToken, onLeave }
   useEffect(() => {
     if (!roomLessonId || !localId) return
     let alive = true
-    roomChatHistory(roomLessonId, roomToken.token)
+    run((t) => roomChatHistory(roomLessonId, t.token))
       .then((msgs) => {
         if (!alive) return
         setHistoryError(false)
         const entries = []
         for (const m of msgs || []) {
-          if (chatIds.current.has(m.id)) continue
-          chatIds.current.add(m.id)
-          entries.push(
-            toEntry({
-              id: m.id,
-              name: m.sender_name,
-              body: m.body,
-              senderIdentity: m.sender_identity,
-              toIdentity: m.to_identity || null,
-              file: m.file || null,
-            }),
-          )
+          const entry = chatEntryFromServer(m)
+          if (!entry || chatIds.current.has(entry.id)) continue
+          chatIds.current.add(entry.id)
+          entries.push(toEntry(entry))
         }
         setChat((prev) => [...entries.reverse(), ...prev])
       })
@@ -453,38 +626,26 @@ function RoomStage({ isHost, lessonId, slug, title, lesson, roomToken, onLeave }
     return () => {
       alive = false
     }
-  }, [roomLessonId, roomToken.token, localId, toEntry, historyKey])
+  }, [roomLessonId, run, localId, toEntry, historyKey])
 
-  // Yozuv holati — serverdan. Yozuv odatda AVTOMATIK boshlanadi (`track_published`
-  // webhook'i), shuning uchun uni klientda taxmin qilib bo'lmaydi: ustoz REC
-  // indikatorini ko'rmasa "yozilmayapti" deb o'ylaydi, bu esa yolg'on bo'lardi.
+  // Ustoz: yozuv holati ro'yxatdan (react-query keshi — start/stop mutatsiyalari
+  // uni bekor qiladi, ya'ni indikator va Yozuvlar sahifasi bir manbadan).
   useEffect(() => {
-    if (!isHost || !lessonId) return
-    let alive = true
-    const load = () =>
-      listRecordings(lessonId)
-        .then((items) => {
-          if (!alive) return
-          const active = (items || []).find((r) => r.status === 'recording')
-          setRecording(!!active)
-          setRecId(active ? active.id : null)
-        })
-        .catch(() => {})
-    load()
-    // Yozuv media paydo bo'lgach boshlanadi — bir necha soniya kechikadi.
-    const t = setTimeout(load, 8000)
-    return () => {
-      alive = false
-      clearTimeout(t)
-    }
-  }, [isHost, lessonId])
+    if (!isHost || !hostRecordings) return
+    const active = hostRecordings.find((r) => r.status === 'recording')
+    // Server holati (tashqi ma'lumot) → UI holatiga sinxronlash (ataylab).
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- yozuv holati sinxroni
+    setRecording(!!active)
+    setRecId(active ? active.id : null)
+  }, [isHost, hostRecordings])
 
   // Data-channel qabul
   useEffect(() => {
     if (!room) return
     // `participant` — LiveKit tasdiqlagan yuboruvchi (payload ichidagi maydonlar
     // EMAS, ular soxtalashtiriladi). `acceptData` shu asosda filtrlaydi; izohi
-    // `livekit/messaging.js` da.
+    // `livekit/messaging.js` da. Shakl tekshiruvi `decodeData` da — buzuq
+    // payload bu yerga yetib kelmaydi.
     const handler = (payload, participant) => {
       const msg = acceptData(decodeData(payload), participant)
       if (!msg) return
@@ -502,8 +663,10 @@ function RoomStage({ isHost, lessonId, slug, title, lesson, roomToken, onLeave }
       }
       else if (msg.kind === 'hand') applyHand(msg)
       else if (msg.kind === 'poll' && msg.action === 'open') {
+        // Takroriy `open` (qayta ulanishdan keyingi replay) — xabar/panel yo'q.
+        const isNew = guestPollIdRef.current !== msg.poll.id
         setGuestPoll(msg.poll)
-        if (!isHost) {
+        if (!isHost && isNew) {
           setPanel('polls')
           toast.info("Yangi so'rovnoma")
         }
@@ -516,12 +679,12 @@ function RoomStage({ isHost, lessonId, slug, title, lesson, roomToken, onLeave }
       } else if (msg.kind === 'poll_published') {
         // Ustoz natijani e'lon qildi. Yopish ≠ e'lon qilish: natija AYNAN shu
         // hodisadan keyin ko'rinadi (`public` rejimda).
-        if (msg.results) setPublishedResults(msg.results)
+        setPublishedResults(msg.results)
         // Kech kirgan o'quvchi so'rovnomaning O'ZINI ko'rmagan bo'lishi mumkin
         // (host `open` xabarini u ulanishdan oldin yuborgan). Natija payload'ida
         // to'liq `poll` bor — savol va variantlarni shundan tiklaymiz, aks holda
         // panel bo'sh qolardi.
-        if (msg.results?.poll) setGuestPoll((cur) => cur || msg.results.poll)
+        if (msg.results.poll) setGuestPoll((cur) => cur || msg.results.poll)
         if (!isHost) {
           setPanel('polls')
           toast.info("So'rovnoma natijasi e'lon qilindi")
@@ -541,6 +704,10 @@ function RoomStage({ isHost, lessonId, slug, title, lesson, roomToken, onLeave }
       room.off(RoomEvent.DataReceived, handler)
     }
   }, [room, addChat, removeChat, pushReaction, applyHand, isHost, applyWb, toEntry, localId])
+
+  useEffect(() => {
+    guestPollIdRef.current = guestPoll?.id || null
+  }, [guestPoll])
 
   // O'quvchi: siyosat o'zgarganda xabar beramiz — tugma "jimgina" o'chib
   // qolsa foydalanuvchi buzilgan deb o'ylardi. Boshlang'ich qiymat KIRISH
@@ -698,7 +865,7 @@ function RoomStage({ isHost, lessonId, slug, title, lesson, roomToken, onLeave }
     publish(msg)
   }, [applyWb, publish])
 
-  // Kech qo'shilgan ishtirokchiga to'liq holatni chunk'lab yuboradi (faqat o'shanga).
+  // Kech qo'shilgan ishtirokchiga to'liq doska holatini chunk'lab yuboradi (faqat o'shanga).
   const sendSnapshot = useCallback(
     (identity) => {
       const bg = bgRef.current
@@ -719,19 +886,25 @@ function RoomStage({ isHost, lessonId, slug, title, lesson, roomToken, onLeave }
     [publish, sendBg, wbOn],
   )
 
-  // Host: yangi ishtirokchi ulanganda doska snapshot'i.
+  // Host: yangi ishtirokchi ulanganda doska snapshot'i (doska yoniq bo'lsa) va
+  // FAOL SO'ROVNOMA (bo'lsa). So'rovnoma `open` xabari kirishdan oldin ketgan
+  // bo'lsa o'quvchi bo'sh panel ko'rar va ovoz bera olmasdi.
   //
   // Qo'llar bu yerda YUBORILMAYDI: ular endi server holati va har bir klient
   // xonaga kirganda `getRoomState` bilan o'zi oladi (pastdagi effekt). Host orqali
   // uzatish ustoz kech ulansa yoki brauzerini yangilasa ishlamay qolardi.
   useEffect(() => {
-    if (!room || !isHost || !wbOn) return
-    const onJoin = (p) => sendSnapshot(p.identity)
+    if (!room || !isHost) return
+    const onJoin = (p) => {
+      if (wbOn) sendSnapshot(p.identity)
+      const replay = pollReplayMessage(hostPolls)
+      if (replay) publish(replay, [p.identity])
+    }
     room.on(RoomEvent.ParticipantConnected, onJoin)
     return () => {
       room.off(RoomEvent.ParticipantConnected, onJoin)
     }
-  }, [room, isHost, wbOn, sendSnapshot])
+  }, [room, isHost, wbOn, sendSnapshot, hostPolls, publish])
 
   // Xonaga kirganda (va qayta ulanganda) ko'tarilgan qo'llar holatini serverdan
   // tiklaymiz — kech kirgan ham to'liq navbatni ko'radi.
@@ -739,8 +912,7 @@ function RoomStage({ isHost, lessonId, slug, title, lesson, roomToken, onLeave }
     if (!room || !roomLessonId) return
     let alive = true
     const load = () =>
-      roomstateApi
-        .getRoomState(roomLessonId, roomToken.token)
+      run((t) => roomstateApi.getRoomState(roomLessonId, t.token))
         .then((st) => {
           if (!alive || !st) return
           const next = new Map()
@@ -755,7 +927,7 @@ function RoomStage({ isHost, lessonId, slug, title, lesson, roomToken, onLeave }
           setAllowSelfUnmute(st.allow_self_unmute !== false)
           // O'quvchi yozuv holatini FAQAT shu yerdan biladi: `listRecordings`
           // mentor huquqini talab qiladi. Ustozda esa o'z manbasi bor
-          // (quyidagi effekt), shuning uchun uni bu yerda ustiga yozmaymiz.
+          // (yuqoridagi effekt), shuning uchun uni bu yerda ustiga yozmaymiz.
           if (!isHost) setRecording(!!st.recording)
         })
         .catch(() => {
@@ -769,7 +941,7 @@ function RoomStage({ isHost, lessonId, slug, title, lesson, roomToken, onLeave }
       alive = false
       if (t) clearInterval(t)
     }
-  }, [room, roomLessonId, roomToken.token, isHost])
+  }, [room, roomLessonId, run, isHost])
 
   // Chat SERVER orqali: saqlanadi (tarix + yozuv), moderatsiya qilinadi va
   // shaxsiy xabar faqat ikki tomonga yetkaziladi. Host ham, o'quvchi ham AYNI
@@ -778,23 +950,13 @@ function RoomStage({ isHost, lessonId, slug, title, lesson, roomToken, onLeave }
   const sendChatNow = useCallback(
     async (body, to) => {
       try {
-        const m = await roomChatSend(roomLessonId, roomToken.token, body, to)
-        // Server o'zimizga ham tarqatadi; `addChat` ID bo'yicha dublikatni kesadi.
-        addChat(
-          toEntry({
-            id: m.id,
-            name: m.sender_name,
-            body: m.body,
-            senderIdentity: m.sender_identity,
-            toIdentity: m.to_identity || null,
-            file: m.file || null,
-          }),
-        )
+        const m = await run((t) => roomChatSend(roomLessonId, t.token, body, to))
+        addServerChat(m)
       } catch (e) {
-        toast.error(errorText(e, 'Xabar yuborilmadi'))
+        notifyRoomError(e, 'Xabar yuborilmadi')
       }
     },
-    [roomLessonId, roomToken.token, addChat, toEntry],
+    [roomLessonId, run, addServerChat, notifyRoomError],
   )
 
   // `false` qaytishi = xabar YUBORILMADI (klient tomondagi tezlik cheklovi).
@@ -814,22 +976,14 @@ function RoomStage({ isHost, lessonId, slug, title, lesson, roomToken, onLeave }
   // yo'li, bitta xatti-harakat va bitta tezlik cheklovi. Xato YUQORIGA
   // uzatiladi: `ChatPanel` uni panel ichida ko'rsatadi (toast emas — 20 MB
   // yuklab, so'ng 4 soniyalik toast'ni o'tkazib yuborish oson).
+  // `signal` — panelning «Bekor qilish» tugmasi; u XHR'gacha yetib borishi shart.
   const handleSendFile = useCallback(
-    async (file, to, onProgress) => {
+    async (file, to, onProgress, signal) => {
       if (!roomLessonId) throw new Error('lesson yo‘q')
-      const m = await roomChatUpload(roomLessonId, roomToken.token, file, { to, onProgress })
-      addChat(
-        toEntry({
-          id: m.id,
-          name: m.sender_name,
-          body: m.body,
-          senderIdentity: m.sender_identity,
-          toIdentity: m.to_identity || null,
-          file: m.file || null,
-        }),
-      )
+      const m = await run((t) => roomChatUpload(roomLessonId, t.token, file, { to, onProgress, signal }))
+      addServerChat(m)
     },
-    [roomLessonId, roomToken.token, addChat, toEntry],
+    [roomLessonId, run, addServerChat],
   )
 
   // Xabarni o'chirish — FAQAT ustoz (JWT yo'li; `lessonId` faqat host'da bor).
@@ -856,11 +1010,11 @@ function RoomStage({ isHost, lessonId, slug, title, lesson, roomToken, onLeave }
     (emoji) => {
       if (!allowReaction() || !roomLessonId) return
       pushReaction(emoji, local?.name || 'Men')
-      roomstateApi.sendReaction(roomLessonId, roomToken.token, emoji).catch(() => {
+      run((t) => roomstateApi.sendReaction(roomLessonId, t.token, emoji)).catch(() => {
         /* 429 yoki tarmoq — emoji o'tkinchi, foydalanuvchini bezovta qilmaymiz */
       })
     },
-    [allowReaction, roomLessonId, roomToken.token, local, pushReaction],
+    [allowReaction, roomLessonId, run, local, pushReaction],
   )
 
   // Qo'l — SERVER holati. Optimistik qo'llaymiz (tugma darhol javob bersin),
@@ -872,12 +1026,12 @@ function RoomStage({ isHost, lessonId, slug, title, lesson, roomToken, onLeave }
     const name = local?.name || 'Men'
     applyHand({ identity: localId, name, raised, at: Date.now() })
     try {
-      await roomstateApi.setHand(roomLessonId, roomToken.token, raised)
+      await run((t) => roomstateApi.setHand(roomLessonId, t.token, raised))
     } catch (e) {
       applyHand({ identity: localId, name, raised: !raised, at: Date.now() })
-      toast.error(errorText(e, raised ? "Qo'l ko'tarilmadi" : "Qo'l tushirilmadi"))
+      notifyRoomError(e, raised ? "Qo'l ko'tarilmadi" : "Qo'l tushirilmadi")
     }
-  }, [localId, roomLessonId, roomToken.token, myHand, local, applyHand])
+  }, [localId, roomLessonId, run, myHand, local, applyHand, notifyRoomError])
 
   const lowerHand = useCallback(
     async (identity) => {
@@ -904,12 +1058,12 @@ function RoomStage({ isHost, lessonId, slug, title, lesson, roomToken, onLeave }
     if (!lessonId) return
     try {
       if (recording && recId) {
-        await stopRecording(recId)
+        await stopRec.mutateAsync({ recordingId: recId, lessonId })
         setRecording(false)
         setRecId(null)
         toast.info('Yozib olish to‘xtatildi')
       } else {
-        const rec = await startRecording(lessonId)
+        const rec = await startRec.mutateAsync(lessonId)
         setRecording(true)
         setRecId(rec.id)
         toast.success('Yozib olish boshlandi')
@@ -917,16 +1071,17 @@ function RoomStage({ isHost, lessonId, slug, title, lesson, roomToken, onLeave }
     } catch (e) {
       toast.error(errorText(e, 'Yozib olishda xatolik'))
     }
-  }, [lessonId, recording, recId])
+  }, [lessonId, recording, recId, startRec, stopRec])
 
   const broadcastPoll = useCallback((action, poll) => publish({ kind: 'poll', action, poll }), [publish])
 
+  // Xabar `setState` yangilovchisining ICHIDA emas: StrictMode yangilovchini
+  // ikki marta chaqiradi va toast ikki marta chiqardi.
   const toggleDataSaver = useCallback(() => {
-    setDataSaver((v) => {
-      toast.info(v ? 'Tejamkor rejim o‘chirildi' : 'Tejamkor rejim: kameralar o‘chirildi, ovoz va ekran qoladi')
-      return !v
-    })
-  }, [setDataSaver])
+    const next = !dataSaver
+    setDataSaver(next)
+    toast.info(next ? 'Tejamkor rejim: kameralar o‘chirildi, ovoz va ekran qoladi' : 'Tejamkor rejim o‘chirildi')
+  }, [dataSaver, setDataSaver])
 
   const enableMic = useCallback(async () => {
     try {
@@ -990,11 +1145,50 @@ function RoomStage({ isHost, lessonId, slug, title, lesson, roomToken, onLeave }
     [pipChatOpen, pipHandsOpen, handQueue.length],
   )
 
-  if (!room) {
-    if (connState === 'disconnected')
-      // `key={retryKey}` — har urinishda sanoq qaytadan boshlansin (urinish muvaffaqiyatsiz
-    // bo'lsa yana 5 soniyadan keyin avtomatik takrorlanadi).
-    return <Reconnect key={retryKey} onRetry={() => setRetryKey((k) => k + 1)} onLeave={onLeave} />
+  // Yakuniy holat: token yangilab bo'lmaydi (dars tugagan / chiqarilgan /
+  // qulflangan). Qayta urinish BEFOYDA — sabab aytiladi va chiqish beriladi.
+  if (fatal)
+    return (
+      <div className="center-shell col center">
+        <div className="empty__icon" style={{ background: 'var(--danger-soft)', color: 'var(--danger)' }}>
+          <AlertTriangle size={28} />
+        </div>
+        <h2 className="h1" style={{ marginBottom: 6 }}>{roomErrorText(fatal)}</h2>
+        <p className="text-2" style={{ fontSize: 14, marginBottom: 20, textAlign: 'center', maxWidth: 340 }}>
+          {fatal.kind === 'not_live'
+            ? 'Ustoz darsni boshlashi bilan havola orqali qayta qo‘shilishingiz mumkin.'
+            : 'Xonaga qayta ulanib bo‘lmaydi.'}
+        </p>
+        <Button onClick={onLeave}>{isHost ? 'Orqaga' : 'Chiqish'}</Button>
+      </div>
+    )
+
+  // Ulanish yo'q: `auth` — token yangilanmoqda (yuqoridagi effekt), `network`
+  // yoki ulangandan keyingi uzilish — backoff bilan qayta urinish.
+  // Sessiya O'CHIRILMAYDI va sahifadan uloqtirilmaydi: "Qayta ulanish" bilan
+  // darsga qaytiladi.
+  if (connState === 'disconnected' && !ended) {
+    if (connectError === 'auth')
+      return (
+        <div className="center-shell">
+          <div className="page-loader">
+            <Loader2 size={28} style={{ animation: 'spin 0.7s linear infinite', color: 'var(--accent)' }} />
+            <p>Sessiya yangilanmoqda…</p>
+          </div>
+        </div>
+      )
+    // `key={retryKey}` — har urinishda sanoq qaytadan boshlansin.
+    return (
+      <Reconnect
+        key={retryKey}
+        delayMs={reconnectDelay(reconnectAttempt)}
+        onRetry={retryConnect}
+        onLeave={onLeave}
+      />
+    )
+  }
+
+  if (!room)
     return (
       <div className="center-shell">
         <div className="page-loader">
@@ -1003,14 +1197,6 @@ function RoomStage({ isHost, lessonId, slug, title, lesson, roomToken, onLeave }
         </div>
       </div>
     )
-  }
-
-  // Ulangandan keyin uzilib qolsa — sessiyani O'CHIRMAYMIZ va sahifadan
-  // uloqtirmaymiz: ustoz/o'quvchi "Qayta ulanish" bilan darsga qaytadi.
-  if (connState === 'disconnected' && !ended)
-    // `key={retryKey}` — har urinishda sanoq qaytadan boshlansin (urinish muvaffaqiyatsiz
-    // bo'lsa yana 5 soniyadan keyin avtomatik takrorlanadi).
-    return <Reconnect key={retryKey} onRetry={() => setRetryKey((k) => k + 1)} onLeave={onLeave} />
 
   const reconnecting = connState === 'reconnecting' || connState === 'connecting'
   const link = linkView(reconnecting, quality)
@@ -1171,6 +1357,7 @@ function RoomStage({ isHost, lessonId, slug, title, lesson, roomToken, onLeave }
             isHost={isHost}
             lessonId={lessonId}
             roomToken={roomToken}
+            withRoomToken={run}
             guestActivePoll={guestPoll}
             publishedResults={publishedResults}
             votedPollId={votedPollId}
@@ -1263,13 +1450,17 @@ function RoomStage({ isHost, lessonId, slug, title, lesson, roomToken, onLeave }
 // Uzilishdan keyingi ekran. MUHIM: guest sessiyasi TOZALANMAYDI — avvalgi
 // versiya har uzilishda uni o'chirib, foydalanuvchini bosh sahifaga uloqtirardi
 // va u darsga qaytish uchun havolani qaytadan qidirishga majbur bo'lardi.
-function Reconnect({ onRetry, onLeave }) {
-  const [secs, setSecs] = useState(5)
+//
+// `delayMs` — avtomatik urinishgacha kutish (`roomLogic.reconnectDelay`);
+// `null` — avtomatik urinishlar tugagan, faqat qo'lda.
+function Reconnect({ delayMs, onRetry, onLeave }) {
+  const [secs, setSecs] = useState(delayMs === null ? null : Math.round(delayMs / 1000))
   // Bir marta ishlash kafolati: `onRetry` har renderda yangi funksiya bo'lgani uchun
   // guard'siz effekt secs=0 da qayta-qayta ishga tushib CHEKSIZ SIKL yasardi
   // (retry → parent render → yangi onRetry → effekt → retry …).
   const fired = useRef(false)
   useEffect(() => {
+    if (secs === null) return
     if (secs <= 0) {
       if (!fired.current) {
         fired.current = true
@@ -1288,7 +1479,9 @@ function Reconnect({ onRetry, onLeave }) {
       </div>
       <h2 className="h1" style={{ marginBottom: 6 }}>Aloqa uzildi</h2>
       <p className="text-2" style={{ fontSize: 14, marginBottom: 20, textAlign: 'center', maxWidth: 340 }}>
-        Dars davom etmoqda. {secs > 0 ? `${secs} soniyadan so‘ng avtomatik qayta ulanamiz.` : 'Qayta ulanmoqda…'}
+        {secs === null
+          ? 'Avtomatik qayta ulanib bo‘lmadi — internetni tekshirib, qo‘lda urinib ko‘ring.'
+          : `Dars davom etmoqda. ${secs > 0 ? `${secs} soniyadan so‘ng avtomatik qayta ulanamiz.` : 'Qayta ulanmoqda…'}`}
       </p>
       <div className="row gap-3">
         <Button onClick={onRetry}>Hoziroq qayta ulanish</Button>

@@ -11,15 +11,26 @@ import (
 	ws "github.com/zoom/darsly/internal/infrastructure/websocket"
 	"github.com/zoom/darsly/internal/pkg/logger"
 	"github.com/zoom/darsly/internal/pkg/metrics"
+	"github.com/zoom/darsly/internal/usecase/shared"
 )
+
+// Notifier — real-time WS push uchun minimal port (DIP; consumer-side, audit R7).
+//
+// Avval bu yerda konkret `*ws.Hub` turardi va har test HAQIQIY hub qurishga
+// majbur edi. Endi interfeys: `*ws.Hub` uni strukturaviy qondiradi, testlar esa
+// yengil fake bera oladi. WS fan-out (Redis) tufayli worker-only jarayonda ham
+// bu Send ishlaydi — xabar Redis orqali API jarayoniga o'tadi.
+type Notifier interface {
+	Send(userID string, msg ws.Message)
+}
 
 type useCase struct {
 	repo repository.NotificationRepository
-	hub  *ws.Hub
+	hub  Notifier
 	log  logger.Logger
 }
 
-func New(repo repository.NotificationRepository, hub *ws.Hub, log logger.Logger) UseCase {
+func New(repo repository.NotificationRepository, hub Notifier, log logger.Logger) UseCase {
 	return &useCase{repo: repo, hub: hub, log: log}
 }
 
@@ -55,6 +66,10 @@ func (uc *useCase) UnreadCount(ctx context.Context, userID string) (int, error) 
 }
 
 func (uc *useCase) MarkRead(ctx context.Context, userID, id string) error {
+	// Yaroqsiz UUID Postgres'ga yetmasin (22P02 → 500); NotFound qaytadi.
+	if err := shared.ValidateID(id, "notification"); err != nil {
+		return err
+	}
 	return uc.repo.MarkRead(ctx, id, userID)
 }
 

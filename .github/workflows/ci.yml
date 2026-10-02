@@ -1,9 +1,19 @@
 name: CI
 
 on:
+  # Har branch push'da (feature-branch'lar ham) — PR merge'dan OLDIN testlar ishlashi uchun.
+  # Sabab: bu repoda GitHub `pull_request` triggerini ishga tushirmaydi (tarixda 0 run);
+  # push esa ishonchli ishlaydi. Push'dagi checklar commit SHA'ga tushadi va branch
+  # protection (required checks) shu bilan qanoatlanadi.
   push:
-    branches: [main, master]
   pull_request:
+  # Jadval bo'yicha to'liq regressiya (QA batareyasi) — har kuni 02:00 UTC (~07:00 Toshkent).
+  # Kod o'zgarmasa ham tashqi bog'liqliklar (Docker image'lar, npm/go modul yangilanishlari)
+  # sabab CI YIQILISHINI ertalab ko'ramiz — deploy paytida emas.
+  schedule:
+    - cron: "0 2 * * *"
+  # Actions sahifasidan qo'lda ("Run workflow") ishga tushirish uchun.
+  workflow_dispatch: {}
 
 jobs:
   # ─── Backend (Go module: backend/) — build + vet + lint + test ───────────────
@@ -30,9 +40,22 @@ jobs:
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 5s --health-timeout 3s --health-retries 10
+      # MinIO — audit presign testlari (minio.TestPresignedURL_*) uchun. Rasmiy
+      # minio/minio:latest Docker Hub'dan OLIB TASHLANGAN (pull yiqiladi), shuning
+      # uchun bitnamilegacy/minio (public, avtomatik server). Bucket'ni test yasaydi.
+      minio:
+        image: bitnamilegacy/minio:latest
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin
+        ports: ["9000:9000"]
 
     env:
+      # Redis test manzili — apitests/fanout TEST_REDIS_HOST/PORT o'qiydi (default 6399),
+      # jwt/rotate testlari esa TEST_REDIS_ADDR. CI redis xizmati 6379'da → uchalasi ham.
       TEST_REDIS_ADDR: localhost:6379
+      TEST_REDIS_HOST: localhost
+      TEST_REDIS_PORT: "6379"
       # ⚠️ F-1 TUZATISHI. Bu ikki qator bo'lmasa CI 50+ integratsiya testini
       # JIMGINA o'tkazib yuboradi va paket baribir `ok` bo'lib ko'rinadi:
       #   · TEST_DB_PORT — `testutil` default'i 5442 (dev compose), CI'da esa 5432;
@@ -41,6 +64,8 @@ jobs:
       #     qizil bo'ladi, "yashil, lekin hech nima sinalmagan" holat qaytmaydi.
       TEST_DB_PORT: "5432"
       TEST_REQUIRE_INFRA: "1"
+      # MinIO presign testlari uchun (bitnamilegacy/minio xizmati, yuqorida).
+      TEST_MINIO_ENDPOINT: localhost:9000
 
     steps:
       - uses: actions/checkout@v4
@@ -60,15 +85,29 @@ jobs:
       # Versiya ANIQ pin qilingan. `latest` bilan konfiguratsiya formati
       # major yangilanishda mos kelmay qolardi va lint bosqichi kod
       # o'zgarmasa ham bir kuni yiqilardi (`.golangci.yml` izohiga qara).
+      #
+      # ⚠️ VAQTINCHA BLOKLAMAYDI (continue-on-error). Sabab: go.mod `go 1.26` juda
+      # yangi va HECH BIR golangci-lint hali go1.26 bilan QURILMAGAN (v2.5.0 ham
+      # go1.25) → lint ishga tushganda go1.26 stdlib'ni parse qilolmay panic/exit 3
+      # beradi (kod muammosi EMAS, toolchain bo'shlig'i). Build+Vet+Test baribir
+      # gate qiladi. golangci-lint go1.26 build chiqargach continue-on-error olib
+      # tashlanadi (va kerak bo'lsa versiya pin yangilanadi).
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        continue-on-error: true
+        uses: golangci/golangci-lint-action@v7
         with:
           version: v2.1.6
           working-directory: backend
           args: --timeout=5m
 
       - name: Test (race + coverage)
-        run: go test -race -coverprofile=coverage.out ./...
+        run: |
+          echo "MinIO tayyor bo'lguncha kutamiz (service container, health-cmd'siz)..."
+          for i in $(seq 1 30); do
+            curl -sf -o /dev/null http://localhost:9000/minio/health/live && { echo "MinIO tayyor ($i)"; break; }
+            sleep 2
+          done
+          go test -race -coverprofile=coverage.out ./...
 
       - name: Coverage summary
         run: go tool cover -func=coverage.out | tail -1

@@ -162,10 +162,21 @@ func newZapLogger(level string) *zap.Logger {
 	encoderCfg.EncodeTime = func(t time.Time, enc zapcore.PrimitiveArrayEncoder) {
 		enc.AppendString(t.UTC().Format(time.RFC3339Nano))
 	}
-	encoderCfg.EncodeLevel = zapcore.CapitalColorLevelEncoder
+
+	// Production yoki stdout TTY bo'lmasa (docker/systemd/pipe) — mashina o'qiydigan JSON,
+	// ANSI rang kodlarisiz (aks holda journald/Loki'da "\x1b[31m" axlati qoladi).
+	// Faqat lokal terminalda rangli konsol.
+	var enc zapcore.Encoder
+	if useJSONEncoder() {
+		encoderCfg.EncodeLevel = zapcore.LowercaseLevelEncoder
+		enc = zapcore.NewJSONEncoder(encoderCfg)
+	} else {
+		encoderCfg.EncodeLevel = zapcore.CapitalColorLevelEncoder
+		enc = zapcore.NewConsoleEncoder(encoderCfg)
+	}
 
 	consoleCore := zapcore.NewCore(
-		zapcore.NewConsoleEncoder(encoderCfg),
+		enc,
 		zapcore.AddSync(os.Stdout),
 		atomicLevel,
 	)
@@ -190,4 +201,16 @@ func parseLevel(level string) zapcore.Level {
 	default:
 		return zapcore.InfoLevel
 	}
+}
+
+// useJSONEncoder — JSON format tanlanadimi: APP_ENV=production yoki stdout terminal emas.
+func useJSONEncoder() bool {
+	if os.Getenv("APP_ENV") == "production" {
+		return true
+	}
+	fi, err := os.Stdout.Stat()
+	if err != nil {
+		return true
+	}
+	return fi.Mode()&os.ModeCharDevice == 0
 }

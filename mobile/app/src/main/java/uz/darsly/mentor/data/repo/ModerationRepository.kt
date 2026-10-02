@@ -1,9 +1,11 @@
 package uz.darsly.mentor.data.repo
 
+import retrofit2.HttpException
+import retrofit2.Response
 import uz.darsly.mentor.data.api.DarslyApi
+import uz.darsly.mentor.data.api.LowerHandReq
 import uz.darsly.mentor.data.api.MuteAllReq
 import uz.darsly.mentor.data.api.RemoveParticipantReq
-import uz.darsly.mentor.data.api.LowerHandReq
 import javax.inject.Inject
 
 /**
@@ -16,39 +18,54 @@ import javax.inject.Inject
  *
  * Har biri `Result` qaytaradi — xatoni ko'rsatish qarori (snackbar? banner?)
  * UI qatlamining ishi, repozitoriyniki emas.
+ *
+ * ## `Response<Unit>` tuzog'i (H2)
+ * Endpointlar 204 tanasiz qaytaradi, shuning uchun API'da `Response<Unit>`.
+ * Lekin `Response` bilan Retrofit **4xx/5xx da ham muvaffaqiyat** qaytaradi —
+ * avval `runCatching { api.mute(...) }.map { }` 403/404/500 ni ham "bajarildi"
+ * deb ko'rsatardi: ustoz "mute qildim" deb o'ylar, o'quvchi esa gapiraverardi.
+ * Endi har javob [ok] darvozasidan o'tadi va xato `HttpException` sifatida
+ * (`ApiErrors.humanError` tanish shakli) qaytadi — `DarslyApi.unblock`
+ * izohidagi qoida bilan bir xil.
  */
 class ModerationRepository @Inject constructor(
     private val api: DarslyApi,
 ) {
 
-    /** Host'dan tashqari hammani mute qiladi. */
-    /** [allowSelfUnmute] null bo'lsa bayroq o'zgarmaydi (faqat mute qilinadi). */
+    /** Host'dan tashqari hammani mute qiladi. [allowSelfUnmute] null bo'lsa bayroq o'zgarmaydi. */
     suspend fun muteAll(lessonId: String, allowSelfUnmute: Boolean? = null): Result<Unit> =
-        runCatching { api.muteAll(lessonId, MuteAllReq(allowSelfUnmute)) }.map { }
+        ok { api.muteAll(lessonId, MuteAllReq(allowSelfUnmute)) }
 
     suspend fun mute(lessonId: String, identity: String): Result<Unit> =
-        runCatching { api.muteParticipant(lessonId, identity) }.map { }
+        ok { api.muteParticipant(lessonId, identity) }
 
     /**
      * Ishtirokchini darsdan chiqaradi.
      *
      * Server buni Redis'dagi ban ro'yxatiga ham yozadi — aks holda chiqarilgan
      * odam eski tokeni bilan darhol qaytib kelardi (backend `room.EnforceJoin`).
+     *
+     * [scope]: "lesson" — shu darsdan; "mentor" — doimiy qora ro'yxat.
      */
-    /** [scope]: "lesson" — shu darsdan; "mentor" — doimiy qora ro'yxat. */
     suspend fun remove(lessonId: String, identity: String, scope: String = "lesson"): Result<Unit> =
-        runCatching { api.removeParticipant(lessonId, identity, RemoveParticipantReq(scope)) }.map { }
+        ok { api.removeParticipant(lessonId, identity, RemoveParticipantReq(scope)) }
 
     /** O'quvchiga vaqtincha media publish (so'zlash) ruxsatini beradi. */
     suspend fun allowSpeak(lessonId: String, identity: String): Result<Unit> =
-        runCatching { api.allowSpeak(lessonId, identity) }.map { }
+        ok { api.allowSpeak(lessonId, identity) }
 
     suspend fun revokeSpeak(lessonId: String, identity: String): Result<Unit> =
-        runCatching { api.revokeSpeak(lessonId, identity) }.map { }
+        ok { api.revokeSpeak(lessonId, identity) }
 
     suspend fun lowerHand(lessonId: String, identity: String): Result<Unit> =
-        runCatching { api.lowerHand(lessonId, LowerHandReq(identity)) }.map { }
+        ok { api.lowerHand(lessonId, LowerHandReq(identity)) }
 
     suspend fun lowerAllHands(lessonId: String): Result<Unit> =
-        runCatching { api.lowerAllHands(lessonId) }.map { }
+        ok { api.lowerAllHands(lessonId) }
+
+    /** Tarmoq istisnosi ham, muvaffaqiyatsiz HTTP status ham — `Result.failure`. */
+    private suspend inline fun ok(call: () -> Response<Unit>): Result<Unit> = runCatching {
+        val resp = call()
+        if (!resp.isSuccessful) throw HttpException(resp)
+    }
 }

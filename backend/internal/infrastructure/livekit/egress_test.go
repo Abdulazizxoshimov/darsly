@@ -156,7 +156,10 @@ func TestNewClient_LayoutFromConfig(t *testing.T) {
 
 // fps sozlamasi: chegaradan tashqari qiymat yozuvni buzmasin.
 func TestPickFramerate(t *testing.T) {
-	cases := []struct{ in int; want int32 }{
+	cases := []struct {
+		in   int
+		want int32
+	}{
 		{0, recFramerate}, {-5, recFramerate}, {1, recFramerate}, {100, recFramerate},
 		{15, 15}, {25, 25}, {5, 5}, {30, 30},
 	}

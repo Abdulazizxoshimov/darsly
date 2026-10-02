@@ -164,4 +164,3 @@ func IsBadRequest(err error) bool {
 	ae := As(err)
 	return ae != nil && ae.Code == CodeBadRequest
 }
-

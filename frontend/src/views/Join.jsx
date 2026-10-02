@@ -39,14 +39,22 @@ export function Join() {
     setSubmitting(true)
     try {
       const resp = await joinLink(slug, { guest_name: name, passcode: passcode || undefined })
+      // Kirish ma'lumotlari sessiyada qoladi: xona tokeni 30 daqiqalik va uni
+      // yangilash uchun shu so'rov qayta yuboriladi (`lib/roomToken`).
+      const join = { slug, guestName: name, passcode }
       if (resp.next_step === 'lesson_ended') {
         setWaitingStart(false)
         setEndedFromJoin(true)
+      } else if (resp.next_step === 'waiting_for_host') {
+        // Dars hali `live` emas — token berilmaydi (preview eskirgan bo'lishi
+        // mumkin). Kutish rejimi: status poll qilinadi, ustoz kirgach avto-kirish.
+        autoJoinRef.current = false
+        setWaitingStart(true)
       } else if (resp.next_step === 'waiting_room' && resp.request_id) {
-        roomSession.setPending({ requestId: resp.request_id, lesson: resp.lesson, guestName: name })
+        roomSession.setPending({ requestId: resp.request_id, lesson: resp.lesson, guestName: name, join })
         navigate(`/r/${slug}/waiting`)
       } else if (resp.next_step === 'join' && resp.room) {
-        roomSession.setRoom({ token: resp.room, lesson: resp.lesson, guestName: name })
+        roomSession.setRoom({ token: resp.room, lesson: resp.lesson, guestName: name, join })
         navigate(`/r/${slug}/room`)
       }
     } catch (err) {

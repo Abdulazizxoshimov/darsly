@@ -34,6 +34,20 @@ services:
     image: postgres:16-alpine
     container_name: darsly-postgres
     restart: unless-stopped
+    # Tuning (DB audit M7): default 128MB shared_buffers 4-core/7GB hostda kam;
+    # lock_timeout — navbatga tushgan ALTER butun trafikni bloklamasin;
+    # idle_in_transaction_session_timeout — tashlab ketilgan tranzaksiya
+    # (kelajakdagi WithTx chaqiruvchisi) qulflarni ushlab qolmasin.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=768MB
+      - -c
+      - effective_cache_size=2GB
+      - -c
+      - lock_timeout=5000
+      - -c
+      - idle_in_transaction_session_timeout=30000
     environment:
       POSTGRES_USER: darsly
       POSTGRES_PASSWORD: ${DB_PASSWORD}
@@ -46,6 +60,12 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 1536M
+        reservations:
+          memory: 512M
 
   redis:
     image: redis:7-alpine
@@ -67,6 +87,13 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    # Ceiling generous va maxmemory-policy ATAYLAB o'zgartirilmaydi: Redis
+    # sessiya/JTI/ban'ni tutadi — eviction ularni o'chirib foydalanuvchilarni
+    # tizimdan chiqarardi. Redis yuki kichik, limit faqat runaway'ga qarshi.
+    deploy:
+      resources:
+        limits:
+          memory: 768M
 
   minio:
     image: minio/minio:latest
@@ -84,14 +111,29 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 1G
 
   backend:
+    # Serverda ghcr'dan TAYYOR image tortiladi (CI quradi — `.github/workflows/deploy.yml`):
+    #   docker compose pull backend && docker compose up -d   (BACKEND_TAG=commit-sha)
+    # `build:` lokal dev uchun QOLADI: `docker compose up --build` hali ham quradi.
+    # BACKEND_TAG .env yoki shell'dan keladi; yo'q bo'lsa `latest`.
+    image: ghcr.io/abdulazizxoshimov/darsly-backend:${BACKEND_TAG:-latest}
     build:
       context: ../../backend
       dockerfile: deployments/Dockerfile
     container_name: darsly-backend
     restart: unless-stopped
     env_file: [.env]
+    # APP_ROLE'ni env orqali boshqarish (audit R5): default "all" (bitta jarayon).
+    # Yukni ajratish uchun .env ga BACKEND_ROLE=api qo'ying va `--profile worker`
+    # bilan `backend-worker` konteynerini yoqing — shunda ffmpeg/Telegram-upload
+    # yuki API konteyneridan chiqadi (bitta hostda ham cgroup izolyatsiyasi).
+    environment:
+      APP_ROLE: ${BACKEND_ROLE:-all}
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
@@ -112,6 +154,56 @@ services:
       timeout: 5s
       retries: 5
       start_period: 40s
+    # Resurs cheklovi (audit R1): backend runaway (masalan transcode ffmpeg,
+    # katta upload) SFU/PG'ni och qoldirmasin. Transcode allaqachon nice=19 +
+    # 2 thread bilan ichida cheklangan, bu esa qattiq ceiling.
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1536M
+        reservations:
+          memory: 256M
+
+  # ── Worker jarayoni (APP_ROLE=worker) — IXTIYORIY, `--profile worker` ────────
+  #
+  # Fon ishchilarini (ffmpeg transkod, Telegram upload, reminder, auto-end,
+  # retention) API konteyneridan AJRATADI (system-design audit R5). Bitta hostda
+  # ham foydali: og'ir ffmpeg/Chrome-adjacent yuk alohida cgroup'da bo'ladi va
+  # API so'rovlariga sekinlik bermaydi.
+  #
+  # Yoqish:
+  #   1) .env ga qo'shing:  BACKEND_ROLE=api   (backend endi FAQAT HTTP)
+  #   2) docker compose --profile worker up -d
+  # Aks holda (default) backend "all" bo'lib ishchilarni ham o'zi yuritadi —
+  # bu holda worker konteynerini YOQMANG (aks holda ishchilar ikki marta ketadi;
+  # ular claim-based, ya'ni dublikat xavfsiz, lekin ffmpeg 2× bekorga yuklanadi).
+  backend-worker:
+    image: ghcr.io/abdulazizxoshimov/darsly-backend:${BACKEND_TAG:-latest}
+    build:
+      context: ../../backend
+      dockerfile: deployments/Dockerfile
+    container_name: darsly-backend-worker
+    restart: unless-stopped
+    profiles: ["worker"]
+    env_file: [.env]
+    environment:
+      APP_ROLE: worker
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      minio: {condition: service_healthy}
+    networks: [darsly_net]
+    volumes:
+      - darsly_tgapi:/var/lib/telegram-bot-api:ro
+    # ffmpeg transkod shu yerda ishlaydi — CPU ceiling API'ni himoya qiladi.
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+        reservations:
+          memory: 256M
 
   caddy:
     image: caddy:2-alpine
@@ -186,6 +278,20 @@ services:
       - SYS_ADMIN
     # Chrome headless /dev/shm ni to'ldiradi → tab crash. 1G yetarli.
     shm_size: "1gb"
+    # ⭐ RESURS LIMITI (system-design audit R1) — ENG MUHIMI.
+    #
+    # Egress = headless Chrome + ffmpeg, bir yozuv ~1-1.5 yadro. Bir NECHA
+    # yozuv AYNI shu konteyner ichida ochiladi, shuning uchun bu ceiling
+    # BARCHA bir vaqtli yozuvlarni birgalikda cheklaydi: 4 yadroli hostda
+    # 2 yadrodan oshmasin — qolgan 2 yadro SFU (livekit) uchun kafolatlanadi,
+    # aks holda yozuvli darslar SFU'ni och qoldirib BARCHA xonalarda jitter
+    # keltirib chiqarardi. Backend'dagi EGRESS_MAX_CONCURRENT bilan birga
+    # ishlaydi (u soni cheklaydi, bu CPU'ni).
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2560M
 
   # ── Telegram Local Bot API Server (dars arxivi) ─────────────────────────────
   #
@@ -292,3 +398,57 @@ services:
       - darsly_grafana:/var/lib/grafana
     networks: [darsly_net]
     depends_on: [prometheus]
+
+# =============================================================================
+# FAZA C — SCALE SKELETI (system-design audit P2). Hozir YOQILMAGAN: bitta host.
+# Ikkinchi host paydo bo'lganda quyidagilarni faollashtiring.
+# =============================================================================
+#
+# ── Redis Sentinel (HA, audit R2) ───────────────────────────────────────────
+# Redis compound SPOF: u o'chsa video + yangi login + ban holati yo'qoladi.
+# Sentinel bilan master o'chsa replica avtomatik ko'tariladi.
+# Yoqish:
+#   1) redis'ni master, 2-hostda redis-replica, va 3 sentinel ishga tushiring;
+#   2) .env: REDIS_SENTINEL_ADDRS=sentinel1:26379,sentinel2:26379,sentinel3:26379
+#            REDIS_SENTINEL_MASTER=mymaster
+#   (backend kodi allaqachon failover-klientni qo'llaydi — redis.New).
+# Namuna (bir host, minimal — production'da sentinel'lar alohida hostlarda):
+#
+#   redis-replica:
+#     image: redis:7-alpine
+#     command: ["redis-server","--replicaof","redis","6379",
+#               "--requirepass","${REDIS_PASSWORD}","--masterauth","${REDIS_PASSWORD}",
+#               "--appendonly","yes"]
+#     networks: [darsly_net]
+#     depends_on: [redis]
+#
+#   sentinel:
+#     image: redis:7-alpine
+#     entrypoint: ["redis-sentinel","/etc/sentinel.conf"]
+#     # sentinel.conf: "sentinel monitor mymaster redis 6379 2" + auth-pass
+#     networks: [darsly_net]
+#     depends_on: [redis]
+#
+# ── PgBouncer (3+ API nusxasi bo'lganda, audit R5/DEPLOYMENT §6.1) ────────────
+# Ko'p API nusxasi × pgxpool = PG max_connections'ni bosib ketishi mumkin.
+# PgBouncer transaction-pooling bilan ulanishlarni multipleks qiladi.
+# Yoqish: backend DATABASE_URL/DB_HOST'ni pgbouncer'ga qarating (port 6432).
+#
+#   pgbouncer:
+#     image: edoburu/pgbouncer:latest
+#     environment:
+#       DB_HOST: postgres
+#       DB_USER: darsly
+#       DB_PASSWORD: ${DB_PASSWORD}
+#       DB_NAME: darsly
+#       POOL_MODE: transaction
+#       MAX_CLIENT_CONN: "500"
+#       DEFAULT_POOL_SIZE: "20"
+#     networks: [darsly_net]
+#     depends_on: [postgres]
+#
+# ── Multi-node LiveKit (media scale, audit R1/scalability) ────────────────────
+# LiveKit distributed rejim allaqachon Redis'ni ishlatadi (recording uchun
+# livekit.yaml `redis:` bloki). Ko'p SFU tugun uchun: har hostda livekit-server,
+# oldida NLB (yoki DNS), hammasi AYNI Redis'ga ulanadi. Egress'ni ALOHIDA
+# hostga chiqarish birinchi qadam (u faqat Redis+MinIO+signaling talab qiladi).

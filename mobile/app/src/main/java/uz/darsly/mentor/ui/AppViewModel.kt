@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.StateFlow
 import uz.darsly.mentor.data.api.SessionManager
+import uz.darsly.mentor.data.livekit.LessonSessionStore
 import uz.darsly.mentor.data.repo.NotificationsBadge
 import javax.inject.Inject
 
@@ -25,7 +26,17 @@ import javax.inject.Inject
 class AppViewModel @Inject constructor(
     private val session: SessionManager,
     badge: NotificationsBadge,
+    private val lessons: LessonSessionStore,
 ) : ViewModel() {
+
+    /**
+     * Sessiya tugadi (tugma, refresh o'limi, boshqa qurilma) — jonli dars bo'lsa
+     * u egasi orqali bo'shatiladi: yozuv yakunlanadi, xona yopiladi, foreground
+     * servis to'xtaydi. Bo'shatish ilova qamrovida — navigatsiya kutmaydi.
+     */
+    fun onLoggedOut() {
+        lessons.releaseAllAsync()
+    }
 
     /** `true` — yaroqli sessiya bor. Navigatsiya AYNAN shunga bog'lanadi. */
     val loggedIn: StateFlow<Boolean> = session.loggedIn

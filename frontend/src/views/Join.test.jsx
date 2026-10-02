@@ -104,6 +104,44 @@ describe('Join — dars holatlari', () => {
     expect(await screen.findByText('ROOM_PAGE', {}, { timeout: 3000 })).toBeInTheDocument()
   }, 15000)
 
+  // Backend kontrakti: jonli bo'lmagan darsda POST token BERMAYDI —
+  // `waiting_for_host`. Bu xato emas: kutish sahifasi ochiladi va dars
+  // boshlanganda avto-kirish ishlaydi.
+  it('POST waiting_for_host qaytarsa — kutish sahifasi (xato/toast emas)', async () => {
+    previewJoinLink.mockResolvedValue({ ...LESSON, status: 'live' })
+    joinLink.mockResolvedValue({ lesson: { ...LESSON, status: 'scheduled' }, next_step: 'waiting_for_host' })
+    const user = userEvent.setup()
+    setup()
+
+    await user.type(await screen.findByPlaceholderText('Ismingizni kiriting'), 'Ali')
+    await user.click(screen.getByRole('button', { name: /qo'shilish/i }))
+
+    expect(await screen.findByText('Dars boshlanishini kuting')).toBeInTheDocument()
+    expect(screen.queryByText('ROOM_PAGE')).not.toBeInTheDocument()
+  })
+
+  it('join: kirish ma’lumotlari (slug/ism/parol) sessiyaga token bilan birga yoziladi', async () => {
+    previewJoinLink.mockResolvedValue({ ...LESSON, has_passcode: true })
+    joinLink.mockResolvedValue({
+      lesson: LESSON,
+      next_step: 'join',
+      room: { token: 't', ws_url: 'ws://x', identity: 'g1', role: 'participant' },
+    })
+    const user = userEvent.setup()
+    setup()
+
+    await user.type(await screen.findByPlaceholderText('Ismingizni kiriting'), 'Ali')
+    await user.type(screen.getByPlaceholderText('Dars paroli'), '1234')
+    await user.click(screen.getByRole('button', { name: /qo'shilish/i }))
+
+    expect(await screen.findByText('ROOM_PAGE')).toBeInTheDocument()
+    expect(JSON.parse(sessionStorage.getItem('jonly.roomSession')).room.join).toEqual({
+      slug: 'demo123',
+      guestName: 'Ali',
+      passcode: '1234',
+    })
+  })
+
   it('POST lesson_ended qaytarsa (preview eskirgan) — «Dars yakunlangan»', async () => {
     previewJoinLink.mockResolvedValue({ ...LESSON, status: 'live' })
     joinLink.mockResolvedValue({ lesson: { ...LESSON, status: 'ended' }, next_step: 'lesson_ended' })

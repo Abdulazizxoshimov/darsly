@@ -1,0 +1,13 @@
+# Python muhiti va kesh — git'ga TUSHMAYDI
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Sirlar (.env.example shablon sifatida qoladi)
+.env
+
+# Hisobotlar (CI artefakt sifatida yuklanadi, repoda saqlanmaydi)
+report.html
+assets/
+*.report.html

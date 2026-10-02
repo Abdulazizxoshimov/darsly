@@ -68,7 +68,13 @@ DATABASE_URL=postgres://darsly:${DB_PASSWORD}@postgres:5432/darsly?sslmode=disab
 REDIS_HOST=redis
 REDIS_PORT=6379
 REDIS_PASSWORD=${REDIS_PASSWORD}
-REDIS_DB=0
+# Backend logik DB 1'da — LiveKit/egress AYNI Redis'ning db 0'ini ishlatadi
+# (compose egress config: db: 0). Ajratish sabab (system-design audit R2/M11):
+#   • kalit collision yo'q (ikkalasi ham `room:` prefiksli kalit ishlatadi);
+#   • bittasidagi FLUSHDB ikkinchisini nurata olmaydi.
+# ⚠️ Bu qiymatni 0→1 o'zgartirish bir martalik: eski sessiyalar (db0) ko'rinmay
+# qoladi, ya'ni birinchi deployda hamma qaytadan login qiladi. Kutilgan.
+REDIS_DB=1
 
 MINIO_ENDPOINT=minio:9000
 MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}

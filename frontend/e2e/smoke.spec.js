@@ -24,11 +24,16 @@ test('landing → auth → dashboard → dars yaratish', async ({ page }) => {
   await expect(page).toHaveURL(/\/app/)
   await expect(page.getByText('Mening darslarim')).toBeVisible()
 
-  // Dars yaratish
-  await page.getByRole('button', { name: 'Yangi dars' }).first().click()
+  // Tezkor dars yaratish: header tugmasi → modal → nom → «Yaratish va boshlash».
+  // «Dars yaratish» = tezkor dars (Zoom "New meeting" kabi): yaratilishi bilan
+  // server darsni LIVE qiladi va ilova DARHOL xona sahifasiga o'tadi
+  // (CreateLessonModal → navigate(`/app/lesson/:id/room`)). Xona ichi real SFU
+  // talab qilgani uchun smoke faqat SHU navigatsiyagacha tekshiradi — dars
+  // muvaffaqiyatli yaratilgani va oqim to'g'ri ulanganining isboti shu.
+  await page.getByRole('button', { name: 'Dars yaratish' }).first().click()
   await page.getByPlaceholder('Masalan: Kvadrat tenglamalar').fill('Test dars')
-  await page.getByRole('button', { name: 'Yaratish' }).click()
-  await expect(page.getByText('Test dars')).toBeVisible()
+  await page.getByRole('button', { name: 'Yaratish va boshlash' }).click()
+  await expect(page).toHaveURL(/\/app\/lesson\/.+\/room/)
 })
 
 test('join-link preview ko‘rinadi', async ({ page }) => {

@@ -5,6 +5,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import { Auth } from './Auth'
 import { setLogoutReason } from '../lib/logoutReason'
+import { toast } from '../lib/toast'
+import { ApiError } from '../api/api'
 
 // MAHSULOT QOIDASI: ochiq ro'yxatdan o'tish server bayrog'i bilan boshqariladi.
 //  · `allow_open_registration=false` → "Ro'yxatdan o'tish" UMUMAN ko'rinmaydi,
@@ -113,5 +115,20 @@ describe('Auth — ochiq registratsiya bayrog‘i', () => {
     await user.click(screen.getByRole('button', { name: /kirish/i }))
     await waitFor(() => expect(doLogin).toHaveBeenCalledWith('mentor@darsly.uz', 'parol12345'))
     expect(doRegister).not.toHaveBeenCalled()
+  })
+
+  // Bug: noto'g'ri parolda umumiy "Kirish amalga oshmadi" ko'rsatilsa, foydalanuvchi
+  // parol xatosini emas, tizim nosozligini o'ylaydi. UNAUTHORIZED aynan
+  // «Email yoki parol noto'g'ri» ga xaritalanishi kerak (errorText orqali).
+  it('noto‘g‘ri parolda «Email yoki parol noto‘g‘ri» toast chiqadi', async () => {
+    getAppConfig.mockResolvedValue({ allow_open_registration: false })
+    doLogin.mockRejectedValue(new ApiError('UNAUTHORIZED', 'invalid credentials', 401))
+    const errSpy = vi.spyOn(toast, 'error').mockImplementation(() => {})
+    const user = userEvent.setup()
+    setup()
+    await user.type(screen.getByPlaceholderText('email@misol.uz'), 'mentor@darsly.uz')
+    await user.type(screen.getByPlaceholderText('••••••••'), 'notogri')
+    await user.click(screen.getByRole('button', { name: /kirish/i }))
+    await waitFor(() => expect(errSpy).toHaveBeenCalledWith(expect.stringMatching(/email yoki parol noto‘g‘ri/i)))
   })
 })

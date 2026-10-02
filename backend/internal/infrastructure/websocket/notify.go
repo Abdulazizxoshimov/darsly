@@ -9,8 +9,6 @@ type MessageType string
 
 const (
 	TypeNotification MessageType = "notification"
-	TypeSubscribe    MessageType = "subscribe"
-	TypeUnsubscribe  MessageType = "unsubscribe"
 )
 
 // Message is the envelope sent over the WebSocket connection.

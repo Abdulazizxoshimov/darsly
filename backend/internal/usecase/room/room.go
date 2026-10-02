@@ -51,6 +51,18 @@ func lkCtx(ctx context.Context) (context.Context, context.CancelFunc) {
 // qatlamiga sizdirardi (CLAUDE.md: "Handler faqat HTTP parse").
 type Recorder interface {
 	StopActiveForLesson(ctx context.Context, lessonID string) error
+	// EnsureRecording — dars jonli va media chiqarilayotgan bo'lsa yozuvni
+	// (agar hali boshlanmagan bo'lsa) boshlaydi. Idempotent. Avto-yakun sweep'i
+	// buni RECONCILIATION uchun chaqiradi: `track_published` webhook'i yo'qolsa
+	// (deploy, 429, retry tugashi) dars jimgina yozilmay qolardi — sweep buni
+	// tuzatadi (system-design audit R3).
+	EnsureRecording(ctx context.Context, lessonID string) error
+	// IsRecording — shu dars hozir yozilyaptimi (reconciliation'da ortiqcha
+	// EnsureRecording chaqiruvining oldini oladi).
+	IsRecording(ctx context.Context, lessonID string) bool
+	// ReapStaleRecordings — eskirgan `recording` yozuvlarni failed qiladi
+	// (SweepAutoEnd chaqiradi).
+	ReapStaleRecordings(ctx context.Context, olderThan time.Time) int
 }
 
 // Hands — qo'l ko'tarish holatining minimal shartnomasi (DIP; iste'molchi tomonda
@@ -82,13 +94,17 @@ type useCase struct {
 	// blocklist — mentor darajasidagi doimiy qora ro'yxat (№4). nil bo'lishi
 	// mumkin (eski testlar); har chaqiruvdan oldin tekshiriladi.
 	blocklist repository.BlocklistRepository
+	// banRepo — dars-darajali ban'ning DURABLE nusxasi (audit R2). nil bo'lishi
+	// mumkin (eski testlar): u holda faqat Redis kesh ishlaydi (eski xulq).
+	// Berilganda ban PG'ga ham yoziladi va Redis miss/uzilishida PG'dan o'qiladi.
+	banRepo repository.BanRepository
 	// ensureG — bir xona uchun bir vaqtda faqat bitta EnsureRoom (thundering herd:
 	// 500 talaba bir vaqtda kirsa 500 ta SFU CreateRoom o'rniga bitta chaqiruv).
 	ensureG singleflight.Group
 }
 
-func New(lessonRepo repository.LessonRepository, userRepo repository.UserRepository, lk LiveKit, cache redis.Cache, log logger.Logger, recorder Recorder, hands Hands, blocklist repository.BlocklistRepository) UseCase {
-	return &useCase{lessonRepo: lessonRepo, userRepo: userRepo, livekit: lk, cache: cache, log: log, recorder: recorder, hands: hands, blocklist: blocklist}
+func New(lessonRepo repository.LessonRepository, userRepo repository.UserRepository, lk LiveKit, cache redis.Cache, log logger.Logger, recorder Recorder, hands Hands, blocklist repository.BlocklistRepository, banRepo repository.BanRepository) UseCase {
+	return &useCase{lessonRepo: lessonRepo, userRepo: userRepo, livekit: lk, cache: cache, log: log, recorder: recorder, hands: hands, blocklist: blocklist, banRepo: banRepo}
 }
 
 func roomReadyKey(lessonID string) string { return "room:ready:" + lessonID }
@@ -164,12 +180,8 @@ func (uc *useCase) HostToken(ctx context.Context, mentorID, lessonID string) (*e
 
 	// Darsni jonli holatga o'tkazish (birinchi marta host qo'shilganda).
 	if l.Status != entity.LessonStatusLive {
-		now := time.Now().UTC()
-		l.Status = entity.LessonStatusLive
-		if l.StartedAt == nil {
-			l.StartedAt = &now
-		}
-		if err := uc.lessonRepo.Update(ctx, l); err != nil {
+		// Atomik: faqat scheduled/live bo'lsa (parallel EndLesson'ni bosib ketmaydi).
+		if _, err := uc.lessonRepo.ClaimStart(ctx, l.ID, time.Now().UTC()); err != nil {
 			uc.log.Warn(ctx, "room.HostToken: could not mark lesson live", logger.String("lesson_id", l.ID), logger.SafeString("err", err.Error()))
 		}
 	}
@@ -259,12 +271,18 @@ func (uc *useCase) EndLesson(ctx context.Context, mentorID, lessonID string) err
 	opCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 25*time.Second)
 	defer cancel()
 
-	now := time.Now().UTC()
-	l.Status = entity.LessonStatusEnded
-	l.EndedAt = &now
-	if err := uc.lessonRepo.Update(opCtx, l); err != nil {
+	// Atomik yakunlash: faqat hamon `live` bo'lsa. Allaqachon tugagan bo'lsa
+	// idempotent (ended_at qayta yozilmaydi), lekin teardown baribir best-effort
+	// takrorlanadi (oldingi chaqiruv yarim yo'lda uzilgan bo'lishi mumkin).
+	claimed, err := uc.lessonRepo.ClaimEnd(opCtx, l.ID, time.Now().UTC())
+	if err != nil {
 		uc.log.Error(ctx, "room.EndLesson: update failed", logger.String("lesson_id", l.ID), logger.SafeString("err", err.Error()))
 		return err
+	}
+	if !claimed {
+		uc.log.Info(ctx, "room.EndLesson: already ended", logger.String("lesson_id", l.ID))
+		uc.teardown(opCtx, l.ID)
+		return nil
 	}
 
 	uc.teardown(opCtx, l.ID)
@@ -325,9 +343,45 @@ func (uc *useCase) teardown(ctx context.Context, lessonID string) {
 	}
 }
 
-// isBanned — ishtirokchi shu darsdan chiqarilganmi (`shared.IsBanned` ustidan).
+// isBanned — ishtirokchi shu darsdan chiqarilganmi.
+//
+// Avval Redis kesh (tez), keyin — miss/uzilishda va banRepo mavjud bo'lsa —
+// PG'dan DURABLE tekshiruv (audit R2). Redis qayta ishga tushib kesh yo'qolsa
+// ham kick amalda qoladi: PG'da topilsa Redis qayta isitiladi.
 func (uc *useCase) isBanned(ctx context.Context, lessonID, identity string) bool {
-	return shared.IsBanned(ctx, uc.cache, lessonID, identity)
+	if identity == "" {
+		return false
+	}
+	if shared.IsBanned(ctx, uc.cache, lessonID, identity) {
+		return true
+	}
+	if uc.banRepo == nil {
+		return false
+	}
+	banned, err := uc.banRepo.IsBanned(ctx, lessonID, identity)
+	if err != nil {
+		uc.log.Warn(ctx, "room.isBanned: PG tekshiruvi xato — Redis natijasiga tayanamiz",
+			logger.String("lesson_id", lessonID), logger.SafeString("err", err.Error()))
+		return false
+	}
+	if banned {
+		// Keshni qayta isitamiz (keyingi tekshiruv Redis'dan tez o'tsin).
+		_ = shared.Ban(ctx, uc.cache, lessonID, identity)
+	}
+	return banned
+}
+
+// banParticipant — ban'ni DURABLE (PG, agar banRepo bor) + tezkor (Redis) yozadi.
+func (uc *useCase) banParticipant(ctx context.Context, lessonID, identity, displayName string) error {
+	if uc.banRepo != nil {
+		if err := uc.banRepo.AddBan(ctx, lessonID, identity, displayName); err != nil {
+			// PG yozib bo'lmadi — Redis'ga baribir yozamiz (hech bo'lmasa joriy
+			// sessiya himoyalansin), lekin xatoni yuqoriga qaytaramiz.
+			_ = shared.Ban(ctx, uc.cache, lessonID, identity)
+			return err
+		}
+	}
+	return shared.Ban(ctx, uc.cache, lessonID, identity)
 }
 
 // EnforceJoin — `participant_joined` webhook'i uchun: chiqarilgan ishtirokchi
@@ -356,7 +410,7 @@ func (uc *useCase) EnforceJoin(ctx context.Context, rn, identity, displayName st
 	if !ok {
 		return // bizniki bo'lmagan xona
 	}
-	if !shared.IsBanned(ctx, uc.cache, lessonID, identity) &&
+	if !uc.isBanned(ctx, lessonID, identity) &&
 		!uc.isMentorBlockedByLesson(ctx, lessonID, identity, displayName) {
 		return
 	}
@@ -534,7 +588,7 @@ func (uc *useCase) MuteAll(ctx context.Context, mentorID, lessonID string, allow
 	// (ruxsat beruvchi) siyosatga tushib qolardi.
 	if allowSelfUnmute != nil && l.AllowSelfUnmute != *allowSelfUnmute {
 		l.AllowSelfUnmute = *allowSelfUnmute
-		if err := uc.lessonRepo.Update(ctx, l); err != nil {
+		if err := uc.lessonRepo.UpdateFields(ctx, l.ID, &entity.LessonPatch{AllowSelfUnmute: allowSelfUnmute}); err != nil {
 			return err
 		}
 	}
@@ -641,7 +695,7 @@ func (uc *useCase) RemoveParticipant(ctx context.Context, mentorID, lessonID, id
 	// AVVAL ban, KEYIN uzish. Tartib muhim: teskarisi bo'lsa, uzilish bilan ban
 	// yozilishi orasidagi bir necha millisekundda ishtirokchi qayta ulanib
 	// ulgurishi mumkin (klient SDK'si uzilishda darhol qayta urinadi).
-	if err := shared.Ban(ctx, uc.cache, lessonID, identity); err != nil {
+	if err := uc.banParticipant(ctx, lessonID, identity, ""); err != nil {
 		uc.log.Error(ctx, "room.RemoveParticipant: ban yozib bo'lmadi — chiqarilgan qaytib kirishi mumkin",
 			logger.String("lesson_id", lessonID), logger.SafeString("err", err.Error()))
 	}

@@ -34,7 +34,7 @@ func testCache(t *testing.T) redis.Cache {
 }
 
 func registerFake(h *Hub, userID string) *client {
-	c := &client{userID: userID, send: make(chan []byte, 8), hub: h, rooms: map[string]struct{}{}}
+	c := &client{userID: userID, send: make(chan []byte, 8), hub: h}
 	h.register(c)
 	return c
 }

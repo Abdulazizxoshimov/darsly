@@ -1,12 +1,15 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
 import { AlertTriangle, Download, Film, Loader2, PlayCircle, Send, Trash2 } from 'lucide-react'
-import { useLessons, useRecordings } from '../store/data'
-import { downloadRecording } from '../api/recordings'
+import { qk, useLessons } from '../store/data'
+import { downloadRecording, listRecordings } from '../api/recordings'
 import { errorText } from '../api/api'
 import { PageLoader } from '../components/Spinner'
+import { mapLimited } from '../lib/batch'
+import { safeUrl } from '../lib/url'
 import {
-  formatSize,
+  formatBytes,
   formatDuration,
   formatExpiry,
   expiresInDays,
@@ -15,10 +18,52 @@ import {
 } from '../lib/format'
 import { toast } from '../lib/toast'
 
+// Backend'da «hamma yozuvlar» endpoint'i yo'q — har dars alohida so'raladi.
+// Avval bu har qator o'z `useQuery`si bilan 100 tagacha PARALLEL so'rov edi;
+// mentor limiti 30 so'rov/s (burst 60), ya'ni sahifa o'zini 429 ga urar va
+// jadvalning yarmi «yuklab bo'lmadi» bo'lib chiqardi. Endi BITTA so'rov
+// cheklangan parallellik va tezlik bilan hammasini yig'adi (`lib/batch`).
+export const RECORDINGS_CONCURRENCY = 4
+export const RECORDINGS_MIN_INTERVAL_MS = 60 // ≤ ~16 so'rov/s — limitdan ancha past
+
+/** Yozuvi bo'lishi MUMKIN bo'lgan darslar: yozuv yoqilgan va boshlangan. */
+export function lessonsWithRecordings(lessons) {
+  return (lessons || []).filter((l) => l.is_recording_enabled)
+}
+function mayHaveRecordings(l) {
+  return l.status === 'live' || l.status === 'ended'
+}
+
+// Dars → { recs } yoki { error }. Boshlanmagan dars so'ralmaydi (yozuvi bo'lmaydi).
+export async function fetchRecordingsByLesson(lessons, fetchOne = listRecordings) {
+  const targets = lessons.filter(mayHaveRecordings)
+  const results = await mapLimited(targets, (l) => fetchOne(l.id), {
+    concurrency: RECORDINGS_CONCURRENCY,
+    minIntervalMs: RECORDINGS_MIN_INTERVAL_MS,
+  })
+  const byLesson = {}
+  for (const l of lessons) byLesson[l.id] = { recs: [] }
+  targets.forEach((l, i) => {
+    const r = results[i]
+    byLesson[l.id] = r.ok ? { recs: r.value } : { error: r.error }
+  })
+  return byLesson
+}
+
+function useRecordingsByLesson(lessons) {
+  const ids = lessons.map((l) => l.id)
+  return useQuery({
+    queryKey: [...qk.recordings, 'by-lessons', ids],
+    queryFn: () => fetchRecordingsByLesson(lessons),
+    enabled: ids.length > 0,
+  })
+}
+
 // Yozuvlar — jadval: dars · sana · davomiylik · hajm · holat · yuklab olish.
 export function Recordings() {
   const { data, isLoading, isError } = useLessons({ limit: 100 })
-  const recLessons = (data?.data || []).filter((l) => l.is_recording_enabled)
+  const recLessons = useMemo(() => lessonsWithRecordings(data?.data), [data])
+  const byLesson = useRecordingsByLesson(recLessons)
 
   return (
     <div className="page">
@@ -29,7 +74,7 @@ export function Recordings() {
         Darslarning saqlangan video yozuvlari. Har bir yozuv 30 kun saqlanadi — muddat tugagach
         avtomatik o‘chadi, shuning uchun kerakli darsni oldindan yuklab oling.
       </p>
-      {isLoading ? (
+      {isLoading || (recLessons.length > 0 && byLesson.isLoading) ? (
         <div style={{ height: 260 }}>
           <PageLoader />
         </div>
@@ -58,7 +103,7 @@ export function Recordings() {
             </thead>
             <tbody>
               {recLessons.map((l) => (
-                <LessonRows key={l.id} lesson={l} />
+                <LessonRows key={l.id} lesson={l} entry={byLesson.data?.[l.id]} />
               ))}
             </tbody>
           </table>
@@ -68,20 +113,19 @@ export function Recordings() {
   )
 }
 
-function LessonRows({ lesson }) {
-  const { data: recs = [], isLoading, isError } = useRecordings(lesson.id)
-  if (isLoading) return null
+function LessonRows({ lesson, entry }) {
+  const recs = entry?.recs || []
 
   /*
     Yozuvi yo'q dars ham jadvalda ko'rinadi va NEGA bo'shligi yozib qo'yiladi —
     aks holda "yozib olish yoqilgan-u, yozuv qani?" degan savol nosozlikdek tuyuladi.
   */
-  if (isError || !recs.length) {
+  if (entry?.error || !recs.length) {
     return (
       <tr>
         <td className="table__title">{lesson.title}</td>
         <td colSpan={6} className="muted" style={{ fontSize: 13 }}>
-          {isError
+          {entry?.error
             ? "Bu dars yozuvlarini yuklab bo'lmadi."
             : lesson.status === 'live'
               ? 'Dars davom etmoqda — yozuv dars yakunlangach tayyor bo‘ladi.'
@@ -104,11 +148,15 @@ function RecordingRow({ rec, lessonTitle }) {
     // `window.open` foydalanuvchi harakati bilan bog'lanmaydi va Safari/Firefox
     // uni popup deb bloklaydi — natijada tugma "hech nima qilmaydi".
     const win = window.open('', '_blank')
+    // Yangi oyna bizning sahifamizga (`opener`) qaytib ta'sir qila olmasin.
+    if (win) win.opener = null
     setDownloading(true)
     try {
       const dl = await downloadRecording(rec.id)
-      if (win) win.location.href = dl.url
-      else window.location.href = dl.url // popup bloklangan bo'lsa shu tabda
+      const url = safeUrl(dl?.url)
+      if (!url) throw new Error('yaroqsiz havola')
+      if (win) win.location.href = url
+      else window.location.href = url // popup bloklangan bo'lsa shu tabda
     } catch (e) {
       win?.close()
       toast.error(errorText(e, 'Yuklab olib bo‘lmadi'))
@@ -141,7 +189,7 @@ function RecordingRow({ rec, lessonTitle }) {
       <td className="table__meta">{ready ? formatDuration(rec.duration_sec) : '—'}</td>
       {/* Muddati tugagan yozuvda HAJM ko'rsatilmaydi: fayl MinIO'dan
           o'chirilgan va "500 MB" raqami uni hali turibdi deb tushuntirardi. */}
-      <td className="table__meta">{ready ? formatSize(rec.size_bytes) : '—'}</td>
+      <td className="table__meta">{ready ? formatBytes(rec.size_bytes) : '—'}</td>
       <td>
         {expired ? (
           <span className="expiry expiry--gone">O‘chirilgan</span>

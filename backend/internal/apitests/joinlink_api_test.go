@@ -124,7 +124,10 @@ func TestJoinDirect(t *testing.T) {
 	_, _ = mustRegister(t, cl, "Dilnoza", "jd@darsly.uz", "parol12345")
 	promoteMentor(t, pg, "jd@darsly.uz")
 	tok := loginToken(t, cl, "jd@darsly.uz", "parol12345")
-	_, slug := createLesson(t, cl, tok, map[string]any{"title": "To'g'ridan dars", "is_waiting_room_enabled": false})
+	lessonID, slug := createLesson(t, cl, tok, map[string]any{"title": "To'g'ridan dars", "is_waiting_room_enabled": false})
+	// Audit `waiting_for_host` gate'ini qo'shdi: scheduled dars join'ga token bermaydi.
+	// "join" + token olish uchun dars JONLI bo'lishi kerak (fake LiveKit token mint qiladi).
+	setLessonLive(t, pg, lessonID)
 
 	code, body := cl.post("/api/v1/joinlink/"+slug, "", map[string]string{"guest_name": "Aziz"})
 	require.Equal(t, http.StatusOK, code, "body: %s", body)
@@ -212,9 +215,10 @@ func TestJoinEndedLesson(t *testing.T) {
 	tok := loginToken(t, cl, "je@darsly.uz", "parol12345")
 	id, slug := createLesson(t, cl, tok, map[string]any{"title": "Tugagan dars", "is_waiting_room_enabled": true})
 
-	// Darsni yakunlaymiz (status PATCH orqali — LiveKit'siz yo'l).
-	code, _ := cl.do(http.MethodPatch, "/api/v1/lessons/"+id, tok, map[string]any{"status": "ended"})
-	require.Equal(t, http.StatusOK, code)
+	// Darsni yakunlaymiz. `status` PATCH'dan ATAYLAB chiqarilgan (entity/lesson.go —
+	// hayot sikli HostToken/EndLesson bilan), shuning uchun DB orqali 'ended' qilamiz.
+	// Test maqsadi — tugagan darsga JOIN xulqi (next_step=lesson_ended), yakunlash usuli emas.
+	setLessonEnded(t, pg, id)
 
 	// Preview — 200, status ichida (avval 400 edi).
 	code, body := cl.get("/api/v1/joinlink/"+slug, "")
