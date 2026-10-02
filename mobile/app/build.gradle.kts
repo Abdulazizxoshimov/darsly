@@ -71,6 +71,8 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = 14
+        // Instrumented (to'liq-flow E2E) testlar uchun Hilt runner — androidTest manbasida.
+        testInstrumentationRunner = "uz.darsly.mentor.HiltTestRunner"
         // DIQQAT (M42): bu qiymat `GET /api/v1/app-config` dagi `min_version` bilan
         // solishtiriladi. Serverda hozir min_version=1.0.0 — spike'dagi "0.1.0-spike"
         // qolsa ilova o'zini bloklab qo'yardi. R1 bloki = 1.0.0.
@@ -292,4 +294,14 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.okhttp.mockwebserver)
     testImplementation(libs.kotlinx.coroutines.test)
+
+    // ── Instrumented to'liq-flow E2E (qurilma/emulyator → real backend → DB) ──
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test:rules:1.6.1")
+    androidTestImplementation("com.google.dagger:hilt-android-testing:2.52")
+    kspAndroidTest("com.google.dagger:hilt-android-compiler:2.52")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
